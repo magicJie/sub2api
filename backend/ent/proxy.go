@@ -3,6 +3,7 @@
 package ent
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -45,6 +46,12 @@ type Proxy struct {
 	BackupProxyID *int64 `json:"backup_proxy_id,omitempty"`
 	// Days before expiry to flag as expiring-soon (per proxy).
 	ExpiryWarnDays int `json:"expiry_warn_days,omitempty"`
+	// Upstream (front) proxy mode: direct | default | proxy.
+	UpstreamMode string `json:"upstream_mode,omitempty"`
+	// Upstream proxy id when upstream_mode=proxy (self-reference, app-level checked).
+	UpstreamProxyID *int64 `json:"upstream_proxy_id,omitempty"`
+	// Protocol/transport options for ss/vmess/vless/trojan (cipher, network, security, sni ...).
+	Options map[string]string `json:"options,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the ProxyQuery when eager-loading is set.
 	Edges        ProxyEdges `json:"edges"`
@@ -98,9 +105,11 @@ func (*Proxy) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case proxy.FieldID, proxy.FieldPort, proxy.FieldBackupProxyID, proxy.FieldExpiryWarnDays:
+		case proxy.FieldOptions:
+			values[i] = new([]byte)
+		case proxy.FieldID, proxy.FieldPort, proxy.FieldBackupProxyID, proxy.FieldExpiryWarnDays, proxy.FieldUpstreamProxyID:
 			values[i] = new(sql.NullInt64)
-		case proxy.FieldName, proxy.FieldProtocol, proxy.FieldHost, proxy.FieldUsername, proxy.FieldPassword, proxy.FieldStatus, proxy.FieldFallbackMode:
+		case proxy.FieldName, proxy.FieldProtocol, proxy.FieldHost, proxy.FieldUsername, proxy.FieldPassword, proxy.FieldStatus, proxy.FieldFallbackMode, proxy.FieldUpstreamMode:
 			values[i] = new(sql.NullString)
 		case proxy.FieldCreatedAt, proxy.FieldUpdatedAt, proxy.FieldDeletedAt, proxy.FieldExpiresAt:
 			values[i] = new(sql.NullTime)
@@ -214,6 +223,27 @@ func (_m *Proxy) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.ExpiryWarnDays = int(value.Int64)
 			}
+		case proxy.FieldUpstreamMode:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field upstream_mode", values[i])
+			} else if value.Valid {
+				_m.UpstreamMode = value.String
+			}
+		case proxy.FieldUpstreamProxyID:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field upstream_proxy_id", values[i])
+			} else if value.Valid {
+				_m.UpstreamProxyID = new(int64)
+				*_m.UpstreamProxyID = value.Int64
+			}
+		case proxy.FieldOptions:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field options", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.Options); err != nil {
+					return fmt.Errorf("unmarshal field options: %w", err)
+				}
+			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
 		}
@@ -316,6 +346,17 @@ func (_m *Proxy) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("expiry_warn_days=")
 	builder.WriteString(fmt.Sprintf("%v", _m.ExpiryWarnDays))
+	builder.WriteString(", ")
+	builder.WriteString("upstream_mode=")
+	builder.WriteString(_m.UpstreamMode)
+	builder.WriteString(", ")
+	if v := _m.UpstreamProxyID; v != nil {
+		builder.WriteString("upstream_proxy_id=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	builder.WriteString("options=")
+	builder.WriteString(fmt.Sprintf("%v", _m.Options))
 	builder.WriteByte(')')
 	return builder.String()
 }

@@ -67,6 +67,9 @@ func RegisterAdminRoutes(
 		// Kiro OAuth，Kiro（fork），见 routes/kiro.go
 		registerKiroOAuthRoutes(admin, h)
 
+		// 链式代理，链式代理（fork），见 routes/proxy_chain.go
+		registerProxyChainRoutes(admin, h)
+
 		// 代理管理
 		registerProxyRoutes(admin, h, stepUpAuth)
 

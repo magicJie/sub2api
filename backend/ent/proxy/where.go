@@ -125,6 +125,16 @@ func ExpiryWarnDays(v int) predicate.Proxy {
 	return predicate.Proxy(sql.FieldEQ(FieldExpiryWarnDays, v))
 }
 
+// UpstreamMode applies equality check predicate on the "upstream_mode" field. It's identical to UpstreamModeEQ.
+func UpstreamMode(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldEQ(FieldUpstreamMode, v))
+}
+
+// UpstreamProxyID applies equality check predicate on the "upstream_proxy_id" field. It's identical to UpstreamProxyIDEQ.
+func UpstreamProxyID(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldEQ(FieldUpstreamProxyID, v))
+}
+
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
 func CreatedAtEQ(v time.Time) predicate.Proxy {
 	return predicate.Proxy(sql.FieldEQ(FieldCreatedAt, v))
@@ -888,6 +898,131 @@ func ExpiryWarnDaysLT(v int) predicate.Proxy {
 // ExpiryWarnDaysLTE applies the LTE predicate on the "expiry_warn_days" field.
 func ExpiryWarnDaysLTE(v int) predicate.Proxy {
 	return predicate.Proxy(sql.FieldLTE(FieldExpiryWarnDays, v))
+}
+
+// UpstreamModeEQ applies the EQ predicate on the "upstream_mode" field.
+func UpstreamModeEQ(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldEQ(FieldUpstreamMode, v))
+}
+
+// UpstreamModeNEQ applies the NEQ predicate on the "upstream_mode" field.
+func UpstreamModeNEQ(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldNEQ(FieldUpstreamMode, v))
+}
+
+// UpstreamModeIn applies the In predicate on the "upstream_mode" field.
+func UpstreamModeIn(vs ...string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldIn(FieldUpstreamMode, vs...))
+}
+
+// UpstreamModeNotIn applies the NotIn predicate on the "upstream_mode" field.
+func UpstreamModeNotIn(vs ...string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldNotIn(FieldUpstreamMode, vs...))
+}
+
+// UpstreamModeGT applies the GT predicate on the "upstream_mode" field.
+func UpstreamModeGT(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldGT(FieldUpstreamMode, v))
+}
+
+// UpstreamModeGTE applies the GTE predicate on the "upstream_mode" field.
+func UpstreamModeGTE(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldGTE(FieldUpstreamMode, v))
+}
+
+// UpstreamModeLT applies the LT predicate on the "upstream_mode" field.
+func UpstreamModeLT(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldLT(FieldUpstreamMode, v))
+}
+
+// UpstreamModeLTE applies the LTE predicate on the "upstream_mode" field.
+func UpstreamModeLTE(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldLTE(FieldUpstreamMode, v))
+}
+
+// UpstreamModeContains applies the Contains predicate on the "upstream_mode" field.
+func UpstreamModeContains(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldContains(FieldUpstreamMode, v))
+}
+
+// UpstreamModeHasPrefix applies the HasPrefix predicate on the "upstream_mode" field.
+func UpstreamModeHasPrefix(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldHasPrefix(FieldUpstreamMode, v))
+}
+
+// UpstreamModeHasSuffix applies the HasSuffix predicate on the "upstream_mode" field.
+func UpstreamModeHasSuffix(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldHasSuffix(FieldUpstreamMode, v))
+}
+
+// UpstreamModeEqualFold applies the EqualFold predicate on the "upstream_mode" field.
+func UpstreamModeEqualFold(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldEqualFold(FieldUpstreamMode, v))
+}
+
+// UpstreamModeContainsFold applies the ContainsFold predicate on the "upstream_mode" field.
+func UpstreamModeContainsFold(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldContainsFold(FieldUpstreamMode, v))
+}
+
+// UpstreamProxyIDEQ applies the EQ predicate on the "upstream_proxy_id" field.
+func UpstreamProxyIDEQ(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldEQ(FieldUpstreamProxyID, v))
+}
+
+// UpstreamProxyIDNEQ applies the NEQ predicate on the "upstream_proxy_id" field.
+func UpstreamProxyIDNEQ(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldNEQ(FieldUpstreamProxyID, v))
+}
+
+// UpstreamProxyIDIn applies the In predicate on the "upstream_proxy_id" field.
+func UpstreamProxyIDIn(vs ...int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldIn(FieldUpstreamProxyID, vs...))
+}
+
+// UpstreamProxyIDNotIn applies the NotIn predicate on the "upstream_proxy_id" field.
+func UpstreamProxyIDNotIn(vs ...int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldNotIn(FieldUpstreamProxyID, vs...))
+}
+
+// UpstreamProxyIDGT applies the GT predicate on the "upstream_proxy_id" field.
+func UpstreamProxyIDGT(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldGT(FieldUpstreamProxyID, v))
+}
+
+// UpstreamProxyIDGTE applies the GTE predicate on the "upstream_proxy_id" field.
+func UpstreamProxyIDGTE(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldGTE(FieldUpstreamProxyID, v))
+}
+
+// UpstreamProxyIDLT applies the LT predicate on the "upstream_proxy_id" field.
+func UpstreamProxyIDLT(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldLT(FieldUpstreamProxyID, v))
+}
+
+// UpstreamProxyIDLTE applies the LTE predicate on the "upstream_proxy_id" field.
+func UpstreamProxyIDLTE(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldLTE(FieldUpstreamProxyID, v))
+}
+
+// UpstreamProxyIDIsNil applies the IsNil predicate on the "upstream_proxy_id" field.
+func UpstreamProxyIDIsNil() predicate.Proxy {
+	return predicate.Proxy(sql.FieldIsNull(FieldUpstreamProxyID))
+}
+
+// UpstreamProxyIDNotNil applies the NotNil predicate on the "upstream_proxy_id" field.
+func UpstreamProxyIDNotNil() predicate.Proxy {
+	return predicate.Proxy(sql.FieldNotNull(FieldUpstreamProxyID))
+}
+
+// OptionsIsNil applies the IsNil predicate on the "options" field.
+func OptionsIsNil() predicate.Proxy {
+	return predicate.Proxy(sql.FieldIsNull(FieldOptions))
+}
+
+// OptionsNotNil applies the NotNil predicate on the "options" field.
+func OptionsNotNil() predicate.Proxy {
+	return predicate.Proxy(sql.FieldNotNull(FieldOptions))
 }
 
 // HasAccounts applies the HasEdge predicate on the "accounts" edge.

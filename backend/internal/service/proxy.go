@@ -28,6 +28,11 @@ type Proxy struct {
 	FallbackMode   string
 	BackupProxyID  *int64
 	ExpiryWarnDays int
+
+	// 链式代理（fork）：前置代理与 ss/vmess/vless/trojan 协议参数，见 proxy_chain.go。
+	UpstreamMode    string
+	UpstreamProxyID *int64
+	Options         map[string]string
 }
 
 func (p *Proxy) IsActive() bool {
@@ -40,6 +45,9 @@ func (p *Proxy) IsExpired(now time.Time) bool {
 }
 
 func (p *Proxy) URL() string {
+	if chainURL, ok := proxyChainURL(p); ok { // 链式代理（fork）
+		return chainURL
+	}
 	u := &url.URL{
 		Scheme: p.Protocol,
 		Host:   net.JoinHostPort(p.Host, strconv.Itoa(p.Port)),

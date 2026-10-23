@@ -25,6 +25,7 @@ func ProvideAdminHandlers(
 	grokOAuthHandler *admin.GrokOAuthHandler,
 	cnProviderHandler *admin.CNProviderHandler,
 	kiroOAuthHandler *admin.KiroOAuthHandler, // Kiro（fork）
+	proxyChainHandler *admin.ProxyChainHandler, // 链式代理（fork）
 	proxyHandler *admin.ProxyHandler,
 	redeemHandler *admin.RedeemHandler,
 	promoHandler *admin.PromoHandler,
@@ -72,6 +73,7 @@ func ProvideAdminHandlers(
 		GrokOAuth:              grokOAuthHandler,
 		CNProvider:             cnProviderHandler,
 		KiroOAuth:              kiroOAuthHandler,
+		ProxyChain:             proxyChainHandler, // 链式代理（fork）
 		Proxy:                  proxyHandler,
 		Redeem:                 redeemHandler,
 		Promo:                  promoHandler,
@@ -272,6 +274,8 @@ var ProviderSet = wire.NewSet(
 	admin.NewGrokOAuthHandler,
 	admin.NewCNProviderHandler,
 	admin.NewKiroOAuthHandler, // Kiro（fork）
+	// 链式代理（fork）
+	admin.NewProxyChainHandler,
 	admin.NewProxyHandler,
 	admin.NewRedeemHandler,
 	admin.NewPromoHandler,

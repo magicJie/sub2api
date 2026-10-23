@@ -44,6 +44,9 @@ type AdminHandlers struct {
 	Affiliate              *admin.AffiliateHandler
 	Compliance             *admin.ComplianceHandler
 	AuditLog               *admin.AuditLogHandler
+
+	// 链式代理（fork）
+	ProxyChain *admin.ProxyChainHandler
 }
 
 // Handlers contains all HTTP handlers

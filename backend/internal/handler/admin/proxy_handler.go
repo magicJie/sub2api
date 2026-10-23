@@ -28,7 +28,7 @@ func NewProxyHandler(adminService service.AdminService) *ProxyHandler {
 // CreateProxyRequest represents create proxy request
 type CreateProxyRequest struct {
 	Name           string `json:"name" binding:"required"`
-	Protocol       string `json:"protocol" binding:"required,oneof=http https socks5 socks5h"`
+	Protocol       string `json:"protocol" binding:"required,oneof=http https socks5 socks5h ss vmess vless trojan"`
 	Host           string `json:"host" binding:"required"`
 	Port           int    `json:"port" binding:"required,min=1,max=65535"`
 	Username       string `json:"username"`
@@ -37,12 +37,14 @@ type CreateProxyRequest struct {
 	FallbackMode   string `json:"fallback_mode" binding:"omitempty,oneof=none proxy direct"`
 	BackupProxyID  *int64 `json:"backup_proxy_id"`
 	ExpiryWarnDays int    `json:"expiry_warn_days" binding:"omitempty,min=0"`
+
+	ProxyChainRequest // 链式代理（fork）
 }
 
 // UpdateProxyRequest represents update proxy request
 type UpdateProxyRequest struct {
 	Name           string                 `json:"name"`
-	Protocol       string                 `json:"protocol" binding:"omitempty,oneof=http https socks5 socks5h"`
+	Protocol       string                 `json:"protocol" binding:"omitempty,oneof=http https socks5 socks5h ss vmess vless trojan"`
 	Host           string                 `json:"host"`
 	Port           int                    `json:"port" binding:"omitempty,min=1,max=65535"`
 	Username       *string                `json:"username"`
@@ -52,6 +54,8 @@ type UpdateProxyRequest struct {
 	FallbackMode   string                 `json:"fallback_mode" binding:"omitempty,oneof=none proxy direct"`
 	BackupProxyID  dto.NullableInt64Field `json:"backup_proxy_id"`
 	ExpiryWarnDays *int                   `json:"expiry_warn_days" binding:"omitempty,min=0"`
+
+	ProxyChainUpdateRequest // 链式代理（fork）
 }
 
 // List handles listing all proxies with pagination
@@ -159,6 +163,8 @@ func (h *ProxyHandler) Create(c *gin.Context) {
 			FallbackMode:   strings.TrimSpace(req.FallbackMode),
 			BackupProxyID:  req.BackupProxyID,
 			ExpiryWarnDays: req.ExpiryWarnDays,
+
+			ProxyChainInput: req.ProxyChainRequest.toInput(), // 链式代理（fork）
 		})
 		if err != nil {
 			return nil, err
@@ -207,6 +213,8 @@ func (h *ProxyHandler) Update(c *gin.Context) {
 		BackupProxyID:  req.BackupProxyID.Value,
 		ClearBackupID:  req.BackupProxyID.Set && req.BackupProxyID.Value == nil,
 		ExpiryWarnDays: req.ExpiryWarnDays,
+
+		ProxyChainUpdateInput: req.ProxyChainUpdateRequest.toInput(), // 链式代理（fork）
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -335,12 +343,14 @@ func (h *ProxyHandler) GetProxyAccounts(c *gin.Context) {
 }
 
 // BatchCreateProxyItem represents a single proxy in batch create request
+// 链式代理（fork）：Link 非空时按分享链接（ss/vmess/vless/trojan）创建，其余字段忽略。
 type BatchCreateProxyItem struct {
-	Protocol string `json:"protocol" binding:"required,oneof=http https socks5 socks5h"`
-	Host     string `json:"host" binding:"required"`
-	Port     int    `json:"port" binding:"required,min=1,max=65535"`
+	Protocol string `json:"protocol" binding:"required_without=Link,omitempty,oneof=http https socks5 socks5h"`
+	Host     string `json:"host" binding:"required_without=Link"`
+	Port     int    `json:"port" binding:"required_without=Link,omitempty,min=1,max=65535"`
 	Username string `json:"username"`
 	Password string `json:"password"`
+	Link     string `json:"link"`
 }
 
 // BatchCreateRequest represents batch create proxies request
@@ -361,6 +371,14 @@ func (h *ProxyHandler) BatchCreate(c *gin.Context) {
 	skipped := 0
 
 	for _, item := range req.Proxies {
+		if strings.TrimSpace(item.Link) != "" { // 链式代理（fork）
+			if h.batchCreateFromLink(c.Request.Context(), item.Link) {
+				created++
+			} else {
+				skipped++
+			}
+			continue
+		}
 		// Trim all string fields
 		host := strings.TrimSpace(item.Host)
 		protocol := strings.TrimSpace(item.Protocol)

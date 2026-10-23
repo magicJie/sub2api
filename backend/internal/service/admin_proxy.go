@@ -85,9 +85,13 @@ func (s *adminServiceImpl) CreateProxy(ctx context.Context, input *CreateProxyIn
 		BackupProxyID:  input.BackupProxyID,
 		ExpiryWarnDays: input.ExpiryWarnDays,
 	}
+	if err := applyProxyChainCreate(ctx, s.proxyRepo, s.proxyChainSettingRepo(), proxy, &input.ProxyChainInput); err != nil { // 链式代理（fork）
+		return nil, err
+	}
 	if err := s.proxyRepo.Create(ctx, proxy); err != nil {
 		return nil, err
 	}
+	RefreshProxyChainSnapshot(ctx) // 链式代理（fork）
 	// Probe latency asynchronously so creation isn't blocked by network timeout.
 	go s.probeProxyLatency(context.Background(), proxy)
 	return proxy, nil
@@ -151,10 +155,14 @@ func (s *adminServiceImpl) UpdateProxy(ctx context.Context, id int64, input *Upd
 	if input.ExpiryWarnDays != nil {
 		proxy.ExpiryWarnDays = *input.ExpiryWarnDays
 	}
+	if err := applyProxyChainUpdate(ctx, s.proxyRepo, s.proxyChainSettingRepo(), proxy, &input.ProxyChainUpdateInput); err != nil { // 链式代理（fork）
+		return nil, err
+	}
 
 	if err := s.proxyRepo.Update(ctx, proxy); err != nil {
 		return nil, err
 	}
+	RefreshProxyChainSnapshot(ctx) // 链式代理（fork）
 	return proxy, nil
 }
 
@@ -166,7 +174,14 @@ func (s *adminServiceImpl) DeleteProxy(ctx context.Context, id int64) error {
 	if count > 0 {
 		return ErrProxyInUse
 	}
-	return s.proxyRepo.Delete(ctx, id)
+	if err := checkProxyUpstreamInUse(ctx, s.proxyRepo, s.proxyChainSettingRepo(), id); err != nil { // 链式代理（fork）
+		return err
+	}
+	if err := s.proxyRepo.Delete(ctx, id); err != nil {
+		return err
+	}
+	RefreshProxyChainSnapshot(ctx) // 链式代理（fork）
+	return nil
 }
 
 func (s *adminServiceImpl) BatchDeleteProxies(ctx context.Context, ids []int64) (*ProxyBatchDeleteResult, error) {
@@ -191,6 +206,10 @@ func (s *adminServiceImpl) BatchDeleteProxies(ctx context.Context, ids []int64) 
 			})
 			continue
 		}
+		if err := checkProxyUpstreamInUse(ctx, s.proxyRepo, s.proxyChainSettingRepo(), id); err != nil { // 链式代理（fork）
+			result.Skipped = append(result.Skipped, ProxyBatchDeleteSkipped{ID: id, Reason: err.Error()})
+			continue
+		}
 		if err := s.proxyRepo.Delete(ctx, id); err != nil {
 			result.Skipped = append(result.Skipped, ProxyBatchDeleteSkipped{
 				ID:     id,
@@ -200,6 +219,7 @@ func (s *adminServiceImpl) BatchDeleteProxies(ctx context.Context, ids []int64) 
 		}
 		result.DeletedIDs = append(result.DeletedIDs, id)
 	}
+	RefreshProxyChainSnapshot(ctx) // 链式代理（fork）
 
 	return result, nil
 }

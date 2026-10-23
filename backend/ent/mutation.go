@@ -37525,6 +37525,10 @@ type ProxyMutation struct {
 	fallback_mode          *string
 	expiry_warn_days       *int
 	addexpiry_warn_days    *int
+	upstream_mode          *string
+	upstream_proxy_id      *int64
+	addupstream_proxy_id   *int64
+	options                *map[string]string
 	clearedFields          map[string]struct{}
 	accounts               map[int64]struct{}
 	removedaccounts        map[int64]struct{}
@@ -38246,6 +38250,161 @@ func (m *ProxyMutation) ResetExpiryWarnDays() {
 	m.addexpiry_warn_days = nil
 }
 
+// SetUpstreamMode sets the "upstream_mode" field.
+func (m *ProxyMutation) SetUpstreamMode(s string) {
+	m.upstream_mode = &s
+}
+
+// UpstreamMode returns the value of the "upstream_mode" field in the mutation.
+func (m *ProxyMutation) UpstreamMode() (r string, exists bool) {
+	v := m.upstream_mode
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpstreamMode returns the old "upstream_mode" field's value of the Proxy entity.
+// If the Proxy object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProxyMutation) OldUpstreamMode(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpstreamMode is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpstreamMode requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpstreamMode: %w", err)
+	}
+	return oldValue.UpstreamMode, nil
+}
+
+// ResetUpstreamMode resets all changes to the "upstream_mode" field.
+func (m *ProxyMutation) ResetUpstreamMode() {
+	m.upstream_mode = nil
+}
+
+// SetUpstreamProxyID sets the "upstream_proxy_id" field.
+func (m *ProxyMutation) SetUpstreamProxyID(i int64) {
+	m.upstream_proxy_id = &i
+	m.addupstream_proxy_id = nil
+}
+
+// UpstreamProxyID returns the value of the "upstream_proxy_id" field in the mutation.
+func (m *ProxyMutation) UpstreamProxyID() (r int64, exists bool) {
+	v := m.upstream_proxy_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpstreamProxyID returns the old "upstream_proxy_id" field's value of the Proxy entity.
+// If the Proxy object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProxyMutation) OldUpstreamProxyID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpstreamProxyID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpstreamProxyID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpstreamProxyID: %w", err)
+	}
+	return oldValue.UpstreamProxyID, nil
+}
+
+// AddUpstreamProxyID adds i to the "upstream_proxy_id" field.
+func (m *ProxyMutation) AddUpstreamProxyID(i int64) {
+	if m.addupstream_proxy_id != nil {
+		*m.addupstream_proxy_id += i
+	} else {
+		m.addupstream_proxy_id = &i
+	}
+}
+
+// AddedUpstreamProxyID returns the value that was added to the "upstream_proxy_id" field in this mutation.
+func (m *ProxyMutation) AddedUpstreamProxyID() (r int64, exists bool) {
+	v := m.addupstream_proxy_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearUpstreamProxyID clears the value of the "upstream_proxy_id" field.
+func (m *ProxyMutation) ClearUpstreamProxyID() {
+	m.upstream_proxy_id = nil
+	m.addupstream_proxy_id = nil
+	m.clearedFields[proxy.FieldUpstreamProxyID] = struct{}{}
+}
+
+// UpstreamProxyIDCleared returns if the "upstream_proxy_id" field was cleared in this mutation.
+func (m *ProxyMutation) UpstreamProxyIDCleared() bool {
+	_, ok := m.clearedFields[proxy.FieldUpstreamProxyID]
+	return ok
+}
+
+// ResetUpstreamProxyID resets all changes to the "upstream_proxy_id" field.
+func (m *ProxyMutation) ResetUpstreamProxyID() {
+	m.upstream_proxy_id = nil
+	m.addupstream_proxy_id = nil
+	delete(m.clearedFields, proxy.FieldUpstreamProxyID)
+}
+
+// SetOptions sets the "options" field.
+func (m *ProxyMutation) SetOptions(value map[string]string) {
+	m.options = &value
+}
+
+// Options returns the value of the "options" field in the mutation.
+func (m *ProxyMutation) Options() (r map[string]string, exists bool) {
+	v := m.options
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldOptions returns the old "options" field's value of the Proxy entity.
+// If the Proxy object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProxyMutation) OldOptions(ctx context.Context) (v map[string]string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldOptions is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldOptions requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldOptions: %w", err)
+	}
+	return oldValue.Options, nil
+}
+
+// ClearOptions clears the value of the "options" field.
+func (m *ProxyMutation) ClearOptions() {
+	m.options = nil
+	m.clearedFields[proxy.FieldOptions] = struct{}{}
+}
+
+// OptionsCleared returns if the "options" field was cleared in this mutation.
+func (m *ProxyMutation) OptionsCleared() bool {
+	_, ok := m.clearedFields[proxy.FieldOptions]
+	return ok
+}
+
+// ResetOptions resets all changes to the "options" field.
+func (m *ProxyMutation) ResetOptions() {
+	m.options = nil
+	delete(m.clearedFields, proxy.FieldOptions)
+}
+
 // AddAccountIDs adds the "accounts" edge to the Account entity by ids.
 func (m *ProxyMutation) AddAccountIDs(ids ...int64) {
 	if m.accounts == nil {
@@ -38415,7 +38574,7 @@ func (m *ProxyMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ProxyMutation) Fields() []string {
-	fields := make([]string, 0, 14)
+	fields := make([]string, 0, 17)
 	if m.created_at != nil {
 		fields = append(fields, proxy.FieldCreatedAt)
 	}
@@ -38458,6 +38617,15 @@ func (m *ProxyMutation) Fields() []string {
 	if m.expiry_warn_days != nil {
 		fields = append(fields, proxy.FieldExpiryWarnDays)
 	}
+	if m.upstream_mode != nil {
+		fields = append(fields, proxy.FieldUpstreamMode)
+	}
+	if m.upstream_proxy_id != nil {
+		fields = append(fields, proxy.FieldUpstreamProxyID)
+	}
+	if m.options != nil {
+		fields = append(fields, proxy.FieldOptions)
+	}
 	return fields
 }
 
@@ -38494,6 +38662,12 @@ func (m *ProxyMutation) Field(name string) (ent.Value, bool) {
 		return m.BackupProxyID()
 	case proxy.FieldExpiryWarnDays:
 		return m.ExpiryWarnDays()
+	case proxy.FieldUpstreamMode:
+		return m.UpstreamMode()
+	case proxy.FieldUpstreamProxyID:
+		return m.UpstreamProxyID()
+	case proxy.FieldOptions:
+		return m.Options()
 	}
 	return nil, false
 }
@@ -38531,6 +38705,12 @@ func (m *ProxyMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldBackupProxyID(ctx)
 	case proxy.FieldExpiryWarnDays:
 		return m.OldExpiryWarnDays(ctx)
+	case proxy.FieldUpstreamMode:
+		return m.OldUpstreamMode(ctx)
+	case proxy.FieldUpstreamProxyID:
+		return m.OldUpstreamProxyID(ctx)
+	case proxy.FieldOptions:
+		return m.OldOptions(ctx)
 	}
 	return nil, fmt.Errorf("unknown Proxy field %s", name)
 }
@@ -38638,6 +38818,27 @@ func (m *ProxyMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetExpiryWarnDays(v)
 		return nil
+	case proxy.FieldUpstreamMode:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpstreamMode(v)
+		return nil
+	case proxy.FieldUpstreamProxyID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpstreamProxyID(v)
+		return nil
+	case proxy.FieldOptions:
+		v, ok := value.(map[string]string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetOptions(v)
+		return nil
 	}
 	return fmt.Errorf("unknown Proxy field %s", name)
 }
@@ -38652,6 +38853,9 @@ func (m *ProxyMutation) AddedFields() []string {
 	if m.addexpiry_warn_days != nil {
 		fields = append(fields, proxy.FieldExpiryWarnDays)
 	}
+	if m.addupstream_proxy_id != nil {
+		fields = append(fields, proxy.FieldUpstreamProxyID)
+	}
 	return fields
 }
 
@@ -38664,6 +38868,8 @@ func (m *ProxyMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedPort()
 	case proxy.FieldExpiryWarnDays:
 		return m.AddedExpiryWarnDays()
+	case proxy.FieldUpstreamProxyID:
+		return m.AddedUpstreamProxyID()
 	}
 	return nil, false
 }
@@ -38687,6 +38893,13 @@ func (m *ProxyMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddExpiryWarnDays(v)
 		return nil
+	case proxy.FieldUpstreamProxyID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddUpstreamProxyID(v)
+		return nil
 	}
 	return fmt.Errorf("unknown Proxy numeric field %s", name)
 }
@@ -38709,6 +38922,12 @@ func (m *ProxyMutation) ClearedFields() []string {
 	}
 	if m.FieldCleared(proxy.FieldBackupProxyID) {
 		fields = append(fields, proxy.FieldBackupProxyID)
+	}
+	if m.FieldCleared(proxy.FieldUpstreamProxyID) {
+		fields = append(fields, proxy.FieldUpstreamProxyID)
+	}
+	if m.FieldCleared(proxy.FieldOptions) {
+		fields = append(fields, proxy.FieldOptions)
 	}
 	return fields
 }
@@ -38738,6 +38957,12 @@ func (m *ProxyMutation) ClearField(name string) error {
 		return nil
 	case proxy.FieldBackupProxyID:
 		m.ClearBackupProxyID()
+		return nil
+	case proxy.FieldUpstreamProxyID:
+		m.ClearUpstreamProxyID()
+		return nil
+	case proxy.FieldOptions:
+		m.ClearOptions()
 		return nil
 	}
 	return fmt.Errorf("unknown Proxy nullable field %s", name)
@@ -38788,6 +39013,15 @@ func (m *ProxyMutation) ResetField(name string) error {
 		return nil
 	case proxy.FieldExpiryWarnDays:
 		m.ResetExpiryWarnDays()
+		return nil
+	case proxy.FieldUpstreamMode:
+		m.ResetUpstreamMode()
+		return nil
+	case proxy.FieldUpstreamProxyID:
+		m.ResetUpstreamProxyID()
+		return nil
+	case proxy.FieldOptions:
+		m.ResetOptions()
 		return nil
 	}
 	return fmt.Errorf("unknown Proxy field %s", name)

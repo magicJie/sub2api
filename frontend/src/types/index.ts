@@ -945,7 +945,24 @@ export type KnownAccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigrav
 export type AccountPlatform = KnownAccountPlatform | (string & {})
 export type AccountType = 'oauth' | 'setup-token' | 'apikey' | 'upstream' | 'bedrock' | 'service_account'
 export type OAuthAddMethod = 'oauth' | 'setup-token'
-export type ProxyProtocol = 'http' | 'https' | 'socks5' | 'socks5h'
+export type ProxyProtocol =
+  | 'http'
+  | 'https'
+  | 'socks5'
+  | 'socks5h'
+  | 'ss'
+  | 'vmess'
+  | 'vless'
+  | 'trojan'
+/** 前置代理模式：direct=直连；default=跟随全局默认前置代理；proxy=使用 upstream_proxy_id 指定的代理 */
+export type ProxyUpstreamMode = 'direct' | 'default' | 'proxy'
+
+/** 链路中的一跳（先拨号的在前，不含代理自身） */
+export interface ProxyChainHop {
+  id: number
+  name: string
+  protocol: string
+}
 
 // Claude Model type (returned by /v1/models and account models API)
 export interface ClaudeModel {
@@ -982,8 +999,31 @@ export interface Proxy {
   fallback_mode: 'none' | 'proxy' | 'direct'
   backup_proxy_id?: number | null
   expiry_warn_days: number
+  upstream_mode?: ProxyUpstreamMode
+  upstream_proxy_id?: number | null
+  /** 加密协议参数（ss/vmess/vless/trojan），可能缺失或为 null */
+  options?: Record<string, string> | null
+  /** 已解析的前置链路（先拨号的在前，不含自身；直连时为空） */
+  chain?: ProxyChainHop[]
+  /** 链路无法解析时的错误（前置代理缺失/停用、成环、过深） */
+  chain_error?: string
   created_at: string
   updated_at: string
+}
+
+/** POST /admin/proxies/parse-link 返回的分享链接解析结果 */
+export interface ParsedProxyLink {
+  name: string
+  protocol: ProxyProtocol
+  host: string
+  port: number
+  username?: string | null
+  password?: string | null
+  options?: Record<string, string> | null
+}
+
+export interface ProxyChainSettings {
+  default_upstream_proxy_id: number | null
 }
 
 export interface ProxyAccountSummary {
@@ -1629,6 +1669,9 @@ export interface CreateProxyRequest {
   fallback_mode?: 'none' | 'proxy' | 'direct'
   backup_proxy_id?: number | null
   expiry_warn_days?: number
+  upstream_mode?: ProxyUpstreamMode
+  upstream_proxy_id?: number | null
+  options?: Record<string, string>
 }
 
 export interface UpdateProxyRequest {
@@ -1643,6 +1686,9 @@ export interface UpdateProxyRequest {
   fallback_mode?: 'none' | 'proxy' | 'direct'
   backup_proxy_id?: number | null
   expiry_warn_days?: number
+  upstream_mode?: ProxyUpstreamMode
+  upstream_proxy_id?: number | null
+  options?: Record<string, string>
 }
 
 export interface AdminDataPayload {

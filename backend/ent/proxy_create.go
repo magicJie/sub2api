@@ -187,6 +187,40 @@ func (_c *ProxyCreate) SetNillableExpiryWarnDays(v *int) *ProxyCreate {
 	return _c
 }
 
+// SetUpstreamMode sets the "upstream_mode" field.
+func (_c *ProxyCreate) SetUpstreamMode(v string) *ProxyCreate {
+	_c.mutation.SetUpstreamMode(v)
+	return _c
+}
+
+// SetNillableUpstreamMode sets the "upstream_mode" field if the given value is not nil.
+func (_c *ProxyCreate) SetNillableUpstreamMode(v *string) *ProxyCreate {
+	if v != nil {
+		_c.SetUpstreamMode(*v)
+	}
+	return _c
+}
+
+// SetUpstreamProxyID sets the "upstream_proxy_id" field.
+func (_c *ProxyCreate) SetUpstreamProxyID(v int64) *ProxyCreate {
+	_c.mutation.SetUpstreamProxyID(v)
+	return _c
+}
+
+// SetNillableUpstreamProxyID sets the "upstream_proxy_id" field if the given value is not nil.
+func (_c *ProxyCreate) SetNillableUpstreamProxyID(v *int64) *ProxyCreate {
+	if v != nil {
+		_c.SetUpstreamProxyID(*v)
+	}
+	return _c
+}
+
+// SetOptions sets the "options" field.
+func (_c *ProxyCreate) SetOptions(v map[string]string) *ProxyCreate {
+	_c.mutation.SetOptions(v)
+	return _c
+}
+
 // AddAccountIDs adds the "accounts" edge to the Account entity by IDs.
 func (_c *ProxyCreate) AddAccountIDs(ids ...int64) *ProxyCreate {
 	_c.mutation.AddAccountIDs(ids...)
@@ -285,6 +319,10 @@ func (_c *ProxyCreate) defaults() error {
 		v := proxy.DefaultExpiryWarnDays
 		_c.mutation.SetExpiryWarnDays(v)
 	}
+	if _, ok := _c.mutation.UpstreamMode(); !ok {
+		v := proxy.DefaultUpstreamMode
+		_c.mutation.SetUpstreamMode(v)
+	}
 	return nil
 }
 
@@ -351,6 +389,14 @@ func (_c *ProxyCreate) check() error {
 	}
 	if _, ok := _c.mutation.ExpiryWarnDays(); !ok {
 		return &ValidationError{Name: "expiry_warn_days", err: errors.New(`ent: missing required field "Proxy.expiry_warn_days"`)}
+	}
+	if _, ok := _c.mutation.UpstreamMode(); !ok {
+		return &ValidationError{Name: "upstream_mode", err: errors.New(`ent: missing required field "Proxy.upstream_mode"`)}
+	}
+	if v, ok := _c.mutation.UpstreamMode(); ok {
+		if err := proxy.UpstreamModeValidator(v); err != nil {
+			return &ValidationError{Name: "upstream_mode", err: fmt.Errorf(`ent: validator failed for field "Proxy.upstream_mode": %w`, err)}
+		}
 	}
 	return nil
 }
@@ -430,6 +476,18 @@ func (_c *ProxyCreate) createSpec() (*Proxy, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.ExpiryWarnDays(); ok {
 		_spec.SetField(proxy.FieldExpiryWarnDays, field.TypeInt, value)
 		_node.ExpiryWarnDays = value
+	}
+	if value, ok := _c.mutation.UpstreamMode(); ok {
+		_spec.SetField(proxy.FieldUpstreamMode, field.TypeString, value)
+		_node.UpstreamMode = value
+	}
+	if value, ok := _c.mutation.UpstreamProxyID(); ok {
+		_spec.SetField(proxy.FieldUpstreamProxyID, field.TypeInt64, value)
+		_node.UpstreamProxyID = &value
+	}
+	if value, ok := _c.mutation.Options(); ok {
+		_spec.SetField(proxy.FieldOptions, field.TypeJSON, value)
+		_node.Options = value
 	}
 	if nodes := _c.mutation.AccountsIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -730,6 +788,60 @@ func (u *ProxyUpsert) AddExpiryWarnDays(v int) *ProxyUpsert {
 	return u
 }
 
+// SetUpstreamMode sets the "upstream_mode" field.
+func (u *ProxyUpsert) SetUpstreamMode(v string) *ProxyUpsert {
+	u.Set(proxy.FieldUpstreamMode, v)
+	return u
+}
+
+// UpdateUpstreamMode sets the "upstream_mode" field to the value that was provided on create.
+func (u *ProxyUpsert) UpdateUpstreamMode() *ProxyUpsert {
+	u.SetExcluded(proxy.FieldUpstreamMode)
+	return u
+}
+
+// SetUpstreamProxyID sets the "upstream_proxy_id" field.
+func (u *ProxyUpsert) SetUpstreamProxyID(v int64) *ProxyUpsert {
+	u.Set(proxy.FieldUpstreamProxyID, v)
+	return u
+}
+
+// UpdateUpstreamProxyID sets the "upstream_proxy_id" field to the value that was provided on create.
+func (u *ProxyUpsert) UpdateUpstreamProxyID() *ProxyUpsert {
+	u.SetExcluded(proxy.FieldUpstreamProxyID)
+	return u
+}
+
+// AddUpstreamProxyID adds v to the "upstream_proxy_id" field.
+func (u *ProxyUpsert) AddUpstreamProxyID(v int64) *ProxyUpsert {
+	u.Add(proxy.FieldUpstreamProxyID, v)
+	return u
+}
+
+// ClearUpstreamProxyID clears the value of the "upstream_proxy_id" field.
+func (u *ProxyUpsert) ClearUpstreamProxyID() *ProxyUpsert {
+	u.SetNull(proxy.FieldUpstreamProxyID)
+	return u
+}
+
+// SetOptions sets the "options" field.
+func (u *ProxyUpsert) SetOptions(v map[string]string) *ProxyUpsert {
+	u.Set(proxy.FieldOptions, v)
+	return u
+}
+
+// UpdateOptions sets the "options" field to the value that was provided on create.
+func (u *ProxyUpsert) UpdateOptions() *ProxyUpsert {
+	u.SetExcluded(proxy.FieldOptions)
+	return u
+}
+
+// ClearOptions clears the value of the "options" field.
+func (u *ProxyUpsert) ClearOptions() *ProxyUpsert {
+	u.SetNull(proxy.FieldOptions)
+	return u
+}
+
 // UpdateNewValues updates the mutable fields using the new values that were set on create.
 // Using this option is equivalent to using:
 //
@@ -1003,6 +1115,69 @@ func (u *ProxyUpsertOne) AddExpiryWarnDays(v int) *ProxyUpsertOne {
 func (u *ProxyUpsertOne) UpdateExpiryWarnDays() *ProxyUpsertOne {
 	return u.Update(func(s *ProxyUpsert) {
 		s.UpdateExpiryWarnDays()
+	})
+}
+
+// SetUpstreamMode sets the "upstream_mode" field.
+func (u *ProxyUpsertOne) SetUpstreamMode(v string) *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.SetUpstreamMode(v)
+	})
+}
+
+// UpdateUpstreamMode sets the "upstream_mode" field to the value that was provided on create.
+func (u *ProxyUpsertOne) UpdateUpstreamMode() *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.UpdateUpstreamMode()
+	})
+}
+
+// SetUpstreamProxyID sets the "upstream_proxy_id" field.
+func (u *ProxyUpsertOne) SetUpstreamProxyID(v int64) *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.SetUpstreamProxyID(v)
+	})
+}
+
+// AddUpstreamProxyID adds v to the "upstream_proxy_id" field.
+func (u *ProxyUpsertOne) AddUpstreamProxyID(v int64) *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.AddUpstreamProxyID(v)
+	})
+}
+
+// UpdateUpstreamProxyID sets the "upstream_proxy_id" field to the value that was provided on create.
+func (u *ProxyUpsertOne) UpdateUpstreamProxyID() *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.UpdateUpstreamProxyID()
+	})
+}
+
+// ClearUpstreamProxyID clears the value of the "upstream_proxy_id" field.
+func (u *ProxyUpsertOne) ClearUpstreamProxyID() *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.ClearUpstreamProxyID()
+	})
+}
+
+// SetOptions sets the "options" field.
+func (u *ProxyUpsertOne) SetOptions(v map[string]string) *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.SetOptions(v)
+	})
+}
+
+// UpdateOptions sets the "options" field to the value that was provided on create.
+func (u *ProxyUpsertOne) UpdateOptions() *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.UpdateOptions()
+	})
+}
+
+// ClearOptions clears the value of the "options" field.
+func (u *ProxyUpsertOne) ClearOptions() *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.ClearOptions()
 	})
 }
 
@@ -1445,6 +1620,69 @@ func (u *ProxyUpsertBulk) AddExpiryWarnDays(v int) *ProxyUpsertBulk {
 func (u *ProxyUpsertBulk) UpdateExpiryWarnDays() *ProxyUpsertBulk {
 	return u.Update(func(s *ProxyUpsert) {
 		s.UpdateExpiryWarnDays()
+	})
+}
+
+// SetUpstreamMode sets the "upstream_mode" field.
+func (u *ProxyUpsertBulk) SetUpstreamMode(v string) *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.SetUpstreamMode(v)
+	})
+}
+
+// UpdateUpstreamMode sets the "upstream_mode" field to the value that was provided on create.
+func (u *ProxyUpsertBulk) UpdateUpstreamMode() *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.UpdateUpstreamMode()
+	})
+}
+
+// SetUpstreamProxyID sets the "upstream_proxy_id" field.
+func (u *ProxyUpsertBulk) SetUpstreamProxyID(v int64) *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.SetUpstreamProxyID(v)
+	})
+}
+
+// AddUpstreamProxyID adds v to the "upstream_proxy_id" field.
+func (u *ProxyUpsertBulk) AddUpstreamProxyID(v int64) *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.AddUpstreamProxyID(v)
+	})
+}
+
+// UpdateUpstreamProxyID sets the "upstream_proxy_id" field to the value that was provided on create.
+func (u *ProxyUpsertBulk) UpdateUpstreamProxyID() *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.UpdateUpstreamProxyID()
+	})
+}
+
+// ClearUpstreamProxyID clears the value of the "upstream_proxy_id" field.
+func (u *ProxyUpsertBulk) ClearUpstreamProxyID() *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.ClearUpstreamProxyID()
+	})
+}
+
+// SetOptions sets the "options" field.
+func (u *ProxyUpsertBulk) SetOptions(v map[string]string) *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.SetOptions(v)
+	})
+}
+
+// UpdateOptions sets the "options" field to the value that was provided on create.
+func (u *ProxyUpsertBulk) UpdateOptions() *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.UpdateOptions()
+	})
+}
+
+// ClearOptions clears the value of the "options" field.
+func (u *ProxyUpsertBulk) ClearOptions() *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.ClearOptions()
 	})
 }
 
