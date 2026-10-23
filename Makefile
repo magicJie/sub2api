@@ -56,3 +56,15 @@ test-frontend:
 
 test-frontend-critical:
 	@pnpm --dir frontend exec vitest run $(FRONTEND_CRITICAL_VITEST)
+
+# 本地 Docker 测试环境（见 deploy/testenv/README.md）
+.PHONY: testenv-up testenv-smoke testenv-down
+
+testenv-up:
+	@./deploy/testenv/testenv.sh up
+
+testenv-smoke:
+	@./deploy/testenv/testenv.sh smoke
+
+testenv-down:
+	@./deploy/testenv/testenv.sh down
