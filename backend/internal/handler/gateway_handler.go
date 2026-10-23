@@ -295,7 +295,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		UserAgent: c.GetHeader("User-Agent"),
 		APIKeyID:  apiKey.ID,
 	}
-	sessionHash := h.gatewayService.GenerateSessionHash(parsedReq)
+	sessionHash := h.gatewayService.GenerateSessionHashForPlatform(parsedReq, effectiveAPIKeyPlatform(c, apiKey)) // Kiro（fork）：Kiro 平台使用专用会话 hash
 
 	// [DEBUG-STICKY] 打印会话 hash 生成结果
 	reqLog.Info("sticky.session_hash_generated",
@@ -1503,6 +1503,8 @@ func defaultModelIDsForPlatform(platform string) []string {
 		return service.DefaultOpenCodeGoModelIDs()
 	case service.PlatformTypeSafe:
 		return []string{"jev-latest"}
+	case service.PlatformKiro:
+		return service.KiroDefaultModelIDs() // Kiro（fork）
 	case service.PlatformComposite:
 		ids := make([]string, 0)
 		seen := make(map[string]struct{})
@@ -2626,8 +2628,8 @@ func (h *GatewayHandler) getUserMsgQueueMode(account *service.Account, parsed *s
 	if h.userMsgQueueHelper == nil {
 		return ""
 	}
-	// 仅适用于 Anthropic OAuth/SetupToken 账号
-	if !account.IsAnthropicOAuthOrSetupToken() {
+	// 仅适用于 Anthropic OAuth/SetupToken 账号；Kiro（fork）OAuth 账号同样需要串行化真实用户消息
+	if !account.IsAnthropicOAuthOrSetupToken() && !service.IsKiroOAuthAccount(account) {
 		return ""
 	}
 	if !service.IsRealUserMessage(parsed) {

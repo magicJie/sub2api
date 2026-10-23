@@ -300,6 +300,8 @@ func defaultModelsListCandidateIDs(platform string) []string {
 		return DefaultOpenCodeGoModelIDs()
 	case PlatformTypeSafe:
 		return []string{typesafe.JevLatestModel}
+	case PlatformKiro:
+		return KiroDefaultModelIDs() // Kiro（fork）
 	case PlatformComposite:
 		return compositeDefaultModelsListCandidateIDs()
 	default:

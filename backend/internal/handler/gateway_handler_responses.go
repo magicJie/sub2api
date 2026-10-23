@@ -182,7 +182,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		UserAgent: c.GetHeader("User-Agent"),
 		APIKeyID:  apiKey.ID,
 	}
-	sessionHash := h.gatewayService.GenerateSessionHash(parsedReq)
+	sessionHash := h.gatewayService.GenerateSessionHashForPlatform(parsedReq, effectiveAPIKeyPlatform(c, apiKey)) // Kiro（fork）：Kiro 平台使用专用会话 hash
 
 	// 3. Account selection + failover loop
 	fs := NewFailoverState(h.maxAccountSwitches, false)

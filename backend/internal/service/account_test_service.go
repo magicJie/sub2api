@@ -154,6 +154,7 @@ type AccountTestService struct {
 	openaiGatewayService      *OpenAIGatewayService
 	agentIdentityTaskMu       sync.Mutex
 	agentIdentityWS           agentIdentityWSConnectionInvalidator
+	kiroTokenProvider         *KiroTokenProvider // Kiro（fork），见 kiro_wire.go
 	// grokWSDialer is optional; realtime account tests use the default OpenAI-style
 	// WS dialer when nil (supports proxy + coder/websocket handshake).
 	grokWSDialer openAIWSClientDialer
@@ -422,6 +423,10 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 
 	if account.IsTypeSafe() {
 		return s.testTypeSafeAccountConnection(c, account, prompt)
+	}
+
+	if isKiroDirectModeAccount(account) {
+		return s.testKiroAccountConnection(c, account, modelID) // Kiro（fork）
 	}
 
 	return s.testClaudeAccountConnection(c, account, modelID)
