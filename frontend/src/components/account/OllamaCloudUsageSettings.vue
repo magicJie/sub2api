@@ -153,10 +153,11 @@ import type { Account, OllamaCloudUsageState, OllamaCloudUsageWindow } from '@/t
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import Icon from '@/components/icons/Icon.vue'
+import { formatOllamaResetText } from '@/utils/ollamaUsage'
 
 const props = defineProps<{ account: Account }>()
 const emit = defineEmits<{ updated: [state: OllamaCloudUsageState] }>()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const appStore = useAppStore()
 const state = ref<OllamaCloudUsageState | null>(props.account.ollama_cloud_usage ?? null)
 const session = ref('')
@@ -190,7 +191,7 @@ const formatDate = (value?: string) => {
 }
 const windowSummary = (window?: OllamaCloudUsageWindow) => {
   if (!window) return '-'
-  const reset = window.reset_at ? formatDate(window.reset_at) : window.reset_text
+  const reset = window.reset_at ? formatDate(window.reset_at) : formatOllamaResetText(window.reset_text, locale?.value || 'en', t)
   return reset
     ? t('admin.accounts.ollamaCloud.windowWithReset', { percent: formatPercent(window.used_percent), reset })
     : formatPercent(window.used_percent)
@@ -254,8 +255,15 @@ const setAutoRefresh = async (enabled: boolean) => {
 const refreshUsage = async () => {
   refreshing.value = true
   try {
-    applyState(await adminAPI.accounts.refreshOllamaCloudUsage(props.account.id))
-    appStore.showSuccess(t('admin.accounts.ollamaCloud.refreshSuccess'))
+    const next = await adminAPI.accounts.refreshOllamaCloudUsage(props.account.id)
+    applyState(next)
+    if (next.snapshot?.status === 'ok') {
+      appStore.showSuccess(t('admin.accounts.ollamaCloud.refreshSuccess'))
+    } else {
+      appStore.showError(next.snapshot?.last_error === 'incomplete_usage'
+        ? t('admin.accounts.ollamaCloud.errors.incomplete_usage')
+        : t('admin.accounts.ollamaCloud.refreshFailed'))
+    }
   } catch (error) {
     appStore.showError(extractI18nErrorMessage(
       error,

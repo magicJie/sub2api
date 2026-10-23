@@ -1151,6 +1151,7 @@ export interface OllamaCloudUsageModel {
 }
 
 export interface OllamaCloudUsageData {
+  email?: string
   plan?: string
   five_hour?: OllamaCloudUsageWindow
   seven_day?: OllamaCloudUsageWindow
