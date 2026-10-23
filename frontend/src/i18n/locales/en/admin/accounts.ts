@@ -287,6 +287,8 @@ export default {
       },
       usageWindowsHint: '"5h / 7d" are the upstream account\'s official rolling usage windows (e.g. OpenAI ChatGPT, Claude). They are imposed by the upstream provider on the account itself — not configured by sub2api, and unrelated to the models you map. Usage resets automatically once each window rolls over, and the limit cannot be lifted from within sub2api.',
       ollamaCloud: {
+        approximateReset: '{time} (approx.)',
+        staleData: 'Showing previous data.',
         title: 'Ollama Cloud usage',
         sessionSecurityHint: 'The browser session is encrypted at rest and sent only to the fixed official settings URL.',
         configured: 'Configured',
@@ -300,7 +302,7 @@ export default {
         deleteConfirm: 'Delete the stored Ollama browser session and its usage snapshot?',
         refreshNow: 'Refresh usage',
         autoRefresh: 'Automatic usage refresh',
-        autoRefreshHint: 'Runs only when the account switch and the global switch are both enabled.',
+        autoRefreshHint: 'Requires both account and global switches. Refreshes only after model requests newer than the last fetch, using the global quiet period and max wait. Idle accounts are not polled.',
         plan: 'Plan',
         fiveHour: '5 hour',
         fiveHourShort: '5h',
@@ -334,6 +336,7 @@ export default {
           response_read_failed: 'Failed to read the response',
           response_too_large: 'Settings page exceeded the response limit',
           invalid_html: 'Settings page format was not recognized',
+          incomplete_usage: 'Usage data is incomplete; refresh could not be verified.',
           OLLAMA_CLOUD_USAGE_REFRESH_RATE_LIMITED: 'Refresh is limited. Try again in {retry_after_seconds} seconds.'
         }
       },
