@@ -35,6 +35,10 @@ func (s *GatewayService) ForwardAsChatCompletions(
 ) (*ForwardResult, error) {
 	startTime := time.Now()
 
+	if isKiroDirectModeAccount(account) {
+		return s.forwardKiroAsChatCompletions(ctx, c, account, body, parsed, startTime) // Kiro（fork）
+	}
+
 	// 1. Parse Chat Completions request
 	var ccReq apicompat.ChatCompletionsRequest
 	if err := json.Unmarshal(body, &ccReq); err != nil {

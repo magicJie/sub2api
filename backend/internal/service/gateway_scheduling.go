@@ -702,6 +702,9 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				"total_accounts", len(accounts))
 			return nil, fmt.Errorf("%w supporting model: %s (channel pricing restriction)", ErrNoAvailableAccounts, requestedModel)
 		}
+		if retryCtx, ok := s.tryRecoverKiroCooldownPoolCtx(ctx, accounts, requestedModel, excludedIDs, useMixed); ok { // Kiro（fork）
+			return s.SelectAccountWithLoadAwareness(retryCtx, groupID, sessionHash, requestedModel, excludedIDs, metadataUserID, sub2apiUserID)
+		}
 		return nil, ErrNoAvailableAccounts
 	}
 
@@ -1162,14 +1165,14 @@ func (s *GatewayService) isAccountSchedulableForSelection(account *Account) bool
 	if account == nil {
 		return false
 	}
-	return account.IsSchedulable()
+	return account.IsSchedulable() && s.isKiroRuntimeSchedulable(context.Background(), account) // Kiro（fork）
 }
 
 func (s *GatewayService) isAccountSchedulableForModelSelection(ctx context.Context, account *Account, requestedModel string) bool {
 	if account == nil {
 		return false
 	}
-	return account.IsSchedulableForModelWithContext(ctx, requestedModel)
+	return account.IsSchedulableForModelWithContext(ctx, requestedModel) && s.isKiroRuntimeSchedulable(ctx, account) // Kiro（fork）
 }
 
 // isAccountInGroup checks if the account belongs to the specified group.

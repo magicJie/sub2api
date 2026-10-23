@@ -452,6 +452,8 @@ type OpsUpstreamErrorEvent struct {
 	// Helps debug 404/routing errors by showing which endpoint was targeted.
 	UpstreamURL string `json:"upstream_url,omitempty"`
 
+	KiroOpsDiagnostics // Kiro（fork）模型诊断字段，见 kiro_runtime.go
+
 	// Best-effort upstream response capture (sanitized+trimmed).
 	UpstreamResponseBody string `json:"upstream_response_body,omitempty"`
 

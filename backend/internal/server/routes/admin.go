@@ -64,6 +64,9 @@ func RegisterAdminRoutes(
 		// 国产供应商（kimi/zhipu/deepseek）额度与余额
 		registerCNProviderRoutes(admin, h)
 
+		// Kiro OAuth，Kiro（fork），见 routes/kiro.go
+		registerKiroOAuthRoutes(admin, h)
+
 		// 代理管理
 		registerProxyRoutes(admin, h, stepUpAuth)
 

@@ -277,6 +277,7 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 		OverloadUntil:           a.OverloadUntil,
 		TempUnschedulableUntil:  a.TempUnschedulableUntil,
 		TempUnschedulableReason: a.TempUnschedulableReason,
+		KiroAccountRuntimeDTO:   kiroAccountRuntimeDTO(a), // Kiro（fork）
 		SessionWindowStart:      a.SessionWindowStart,
 		SessionWindowEnd:        a.SessionWindowEnd,
 		SessionWindowStatus:     a.SessionWindowStatus,
@@ -473,7 +474,7 @@ func AccountListItemFromAccount(a *Account) *AccountListItem {
 		AutoPauseOnExpired: a.AutoPauseOnExpired, CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt,
 		Schedulable: a.Schedulable, RateLimitedAt: a.RateLimitedAt, RateLimitResetAt: a.RateLimitResetAt,
 		OverloadUntil: a.OverloadUntil, TempUnschedulableUntil: a.TempUnschedulableUntil,
-		TempUnschedulableReason: a.TempUnschedulableReason, SessionWindowStart: a.SessionWindowStart,
+		TempUnschedulableReason: a.TempUnschedulableReason, KiroAccountRuntimeDTO: a.KiroAccountRuntimeDTO, SessionWindowStart: a.SessionWindowStart,
 		SessionWindowEnd: a.SessionWindowEnd, SessionWindowStatus: a.SessionWindowStatus,
 		WindowCostLimit: a.WindowCostLimit, WindowCostStickyReserve: a.WindowCostStickyReserve,
 		MaxSessions: a.MaxSessions, SessionIdleTimeoutMin: a.SessionIdleTimeoutMin, BaseRPM: a.BaseRPM,

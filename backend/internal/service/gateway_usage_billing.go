@@ -654,6 +654,7 @@ func writeUsageLogBestEffort(ctx context.Context, repo UsageLogRepository, usage
 
 // RecordUsage 记录使用量并扣费（或更新订阅用量）
 func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInput) error {
+	ctx = withKiroBillingAccount(ctx, input.Account) // Kiro（fork）
 	return s.recordUsageCore(ctx, &recordUsageCoreInput{
 		Result:             input.Result,
 		APIKey:             input.APIKey,
@@ -1254,6 +1255,9 @@ func (s *GatewayService) calculateTokenCost(
 		Resolved:        resolved,
 	})
 	if err != nil {
+		if fallbackCost := s.kiroConservativeCostOnPricingError(ctx, result, tokens, multiplier); fallbackCost != nil { // Kiro（fork）
+			return fallbackCost
+		}
 		logger.LegacyPrintf("service.gateway", "Calculate cost failed: %v", err)
 		return &CostBreakdown{ActualCost: 0}
 	}

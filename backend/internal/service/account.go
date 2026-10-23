@@ -15,6 +15,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
+	kiropkg "github.com/Wei-Shaw/sub2api/internal/kiro"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/typesafe"
@@ -54,6 +55,8 @@ type Account struct {
 
 	TempUnschedulableUntil  *time.Time
 	TempUnschedulableReason string
+
+	KiroAccountRuntime // Kiro（fork）运行时派生状态，非持久化，见 kiro_usage_fetcher.go
 
 	SessionWindowStart  *time.Time
 	SessionWindowEnd    *time.Time
@@ -678,6 +681,9 @@ func (a *Account) PrepareSharedSnapshot() {
 }
 
 func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]string {
+	if mapping, ok := kiroResolveModelMapping(a, rawMapping); ok { // Kiro（fork）
+		return mapping
+	}
 	if a.Credentials == nil {
 		// Antigravity 平台使用默认映射
 		if a.Platform == domain.PlatformAntigravity {
@@ -914,6 +920,9 @@ func normalizeRequestedModelForLookup(platform, requestedModel string) string {
 	trimmed := strings.TrimSpace(requestedModel)
 	if trimmed == "" {
 		return ""
+	}
+	if platform == PlatformKiro {
+		return kiropkg.NormalizeClientModelID(trimmed) // Kiro（fork）
 	}
 	if platform != PlatformGemini && platform != PlatformAntigravity {
 		return trimmed

@@ -805,6 +805,10 @@ type GatewayService struct {
 	tlsFPProfileService   *TLSFingerprintProfileService
 	balanceNotifyService  *BalanceNotifyService
 	userPlatformQuotaRepo UserPlatformQuotaRepository
+	// Kiro（fork）运行时依赖，由 KiroRuntimeBinding 注入，见 kiro_wire.go。
+	kiroTokenProvider     *KiroTokenProvider
+	kiroCooldownStore     KiroCooldownStore
+	kiroContinuationStore KiroContinuationStore
 }
 
 // NewGatewayService creates a new GatewayService

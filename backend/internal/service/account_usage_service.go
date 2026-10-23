@@ -124,6 +124,8 @@ type UsageCache struct {
 	antigravityFlight singleflight.Group // 防止同一 Antigravity 账号的并发请求击穿缓存
 	openAIProbeCache  sync.Map           // accountID -> time.Time
 	grokProbeCache    sync.Map           // accountID -> last billing probe attempt
+	kiroUsageCache    sync.Map           // Kiro（fork）：accountID -> *kiroUsageCache
+	kiroUsageFlight   singleflight.Group // Kiro（fork）
 }
 
 // NewUsageCache 创建 UsageCache 实例
@@ -244,6 +246,8 @@ type UsageInfo struct {
 
 	// 获取 usage 时的错误信息（降级返回，而非 500）
 	Error string `json:"error,omitempty"`
+
+	KiroUsageInfo // Kiro（fork）额度字段，见 kiro_wire.go
 }
 
 // ClaudeUsageWindow Anthropic /api/oauth/usage 返回的单个用量窗口
@@ -303,6 +307,7 @@ type AccountUsageService struct {
 	tlsFPProfileService     *TLSFingerprintProfileService
 	agentIdentityTaskMu     sync.Mutex
 	agentIdentityWS         agentIdentityWSConnectionInvalidator
+	kiroCooldownStore       KiroCooldownStore // Kiro（fork），见 kiro_wire.go
 }
 
 // NewAccountUsageService 创建AccountUsageService实例
@@ -362,6 +367,10 @@ func (s *AccountUsageService) getUsageForAccount(ctx context.Context, account *A
 		// Usage can come from a stored snapshot even when a probe fails. Neither
 		// that nor a working access token proves a rejected refresh token recovered.
 		return s.getOpenAIUsage(ctx, account, forceProbe)
+	}
+
+	if account.Platform == PlatformKiro {
+		return s.getKiroUsageForAccount(ctx, account, forceProbe) // Kiro（fork）
 	}
 
 	if account.Platform == PlatformGemini {

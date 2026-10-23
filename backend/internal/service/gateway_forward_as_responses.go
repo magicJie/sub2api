@@ -51,6 +51,10 @@ func (s *GatewayService) ForwardAsResponses(
 		return nil, fmt.Errorf("adapt responses client tools: %w", err)
 	}
 
+	if isKiroDirectModeAccount(account) {
+		return s.forwardKiroAsResponses(ctx, c, account, adaptedBody, parsed, startTime, clientToolMapping) // Kiro（fork）
+	}
+
 	// 2. Parse Responses request
 	var responsesReq apicompat.ResponsesRequest
 	if err := json.Unmarshal(adaptedBody, &responsesReq); err != nil {

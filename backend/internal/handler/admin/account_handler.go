@@ -366,6 +366,9 @@ func (h *AccountHandler) isSimpleMode() bool {
 }
 
 func (h *AccountHandler) buildAccountResponseWithRuntime(ctx context.Context, account *service.Account) AccountWithConcurrency {
+	if account != nil && h.accountUsageService != nil {
+		h.accountUsageService.EnrichAccountWithKiroRuntimeState(ctx, account) // Kiro（fork）
+	}
 	item := AccountWithConcurrency{
 		Account:            h.accountResponseFromService(account),
 		simpleMode:         h.isSimpleMode(),
@@ -2801,6 +2804,11 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
 	if err != nil {
 		response.NotFound(c, "Account not found")
+		return
+	}
+
+	if account.Platform == service.PlatformKiro {
+		response.Success(c, service.KiroAvailableModels(account)) // Kiro（fork）
 		return
 	}
 
