@@ -575,8 +575,9 @@ func ProxyFromServiceAdmin(p *service.Proxy) *AdminProxy {
 		return nil
 	}
 	return &AdminProxy{
-		Proxy:    *base,
-		Password: p.Password,
+		Proxy:            *base,
+		Password:         p.Password,
+		ProxyChainFields: proxyChainFieldsFromService(p), // 链式代理（fork）
 	}
 }
 

@@ -52,6 +52,16 @@ cd backend && go build ./... && go test -tags=unit ./...
 
 建议开启 `git config rerere.enabled true`，同一冲突只需解决一次。
 
+## 链式代理（fork）
+
+代理支持前置代理（链式，最多 5 跳）与 ss / vmess / vless（含 Reality）/ trojan 加密协议，由进程内嵌的 Xray-core 承载：
+
+- 逻辑：`backend/internal/pkg/proxychain/`（Xray 配置、本地 SOCKS5 入口、分享链接解析）、`service/proxy_chain.go`、`handler/admin/proxy_chain_*.go`、`handler/dto/proxy_chain.go`、`repository/proxy_chain_repo.go`、`server/routes/proxy_chain.go`。
+- 与 Kiro 不同，这里**改了 ent schema 并新增迁移** `247_proxy_chain.sql`（`proxies.upstream_mode / upstream_proxy_id / options`）。上游若占用同号迁移，需要把本迁移改名为更大的编号（文件名排序执行，内容幂等）。
+- `Proxy.URL()` 在需要链路时返回本地 `socks5h://127.0.0.1:<port>` 入口；链路不可用时返回无法拨通的地址（fail-closed，绝不直连）。
+- 上游文件挂钩：`git grep -n '链式代理（fork）' -- backend`（`service/proxy.go`、`admin_proxy.go`、`admin_service.go`、`wire.go`，`repository/proxy_repo.go`，`handler/admin/{proxy_handler,proxy_data,account_data}.go`，`handler/{handler,wire}.go`，`dto/{types,mappers}.go`，`routes/admin.go`）。
+- Xray 版本固定在 v1.260206.0：更新的版本会把 `refraction-networking/utls` 升到预发布版，影响上游 TLS 指纹功能。
+
 ## 未移植 / 待办
 
 - 前端：Kiro 账号创建/编辑、OAuth 流程、用量展示（第二阶段）。

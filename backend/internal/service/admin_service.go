@@ -534,6 +534,8 @@ type CreateProxyInput struct {
 	FallbackMode   string
 	BackupProxyID  *int64
 	ExpiryWarnDays int
+
+	ProxyChainInput // 链式代理（fork）
 }
 
 // UpdateProxyInput preserves omitted expiry/backup values; Clear flags explicitly
@@ -552,6 +554,8 @@ type UpdateProxyInput struct {
 	BackupProxyID  *int64
 	ClearBackupID  bool
 	ExpiryWarnDays *int
+
+	ProxyChainUpdateInput // 链式代理（fork）
 }
 
 type GenerateRedeemCodesInput struct {

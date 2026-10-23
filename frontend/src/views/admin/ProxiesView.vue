@@ -79,7 +79,11 @@
             <button @click="showExportDataDialog = true" class="btn btn-secondary">
               {{ selectedCount > 0 ? t('admin.proxies.dataExportSelected') : t('admin.proxies.dataExport') }}
             </button>
-            <button @click="showCreateModal = true" class="btn btn-primary">
+            <button @click="openChainSettings" class="btn btn-secondary">
+              <Icon name="link" size="md" class="mr-2" />
+              {{ t('admin.proxies.chainSettings') }}
+            </button>
+            <button @click="openCreateModal" class="btn btn-primary">
               <Icon name="plus" size="md" class="mr-2" />
               {{ t('admin.proxies.createProxy') }}
             </button>
@@ -118,14 +122,23 @@
             />
           </template>
 
-          <template #cell-name="{ value }">
-            <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
+          <template #cell-name="{ row, value }">
+            <div class="flex items-center gap-1.5">
+              <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
+              <span
+                v-if="defaultUpstreamProxyId !== null && row.id === defaultUpstreamProxyId"
+                class="badge badge-primary whitespace-nowrap text-xs"
+                :title="t('admin.proxies.defaultUpstreamBadgeTitle')"
+              >
+                {{ t('admin.proxies.defaultUpstreamBadge') }}
+              </span>
+            </div>
           </template>
 
           <template #cell-protocol="{ value }">
             <span
               v-if="value"
-              :class="['badge', value.startsWith('socks5') ? 'badge-primary' : 'badge-gray']"
+              :class="['badge', protocolBadgeClass(value)]"
             >
               {{ value.toUpperCase() }}
             </span>
@@ -160,6 +173,20 @@
                   </button>
                 </div>
               </div>
+            </div>
+            <div
+              v-if="row.chain_error"
+              class="mt-0.5 max-w-[240px] truncate text-xs text-red-600 dark:text-red-400"
+              :title="row.chain_error"
+            >
+              {{ t('admin.proxies.chainErrorInline', { error: row.chain_error }) }}
+            </div>
+            <div
+              v-else-if="row.chain && row.chain.length > 0"
+              class="mt-0.5 max-w-[240px] truncate text-xs text-gray-500 dark:text-gray-400"
+              :title="formatChain(row)"
+            >
+              {{ formatChain(row) }}
             </div>
           </template>
 
@@ -347,7 +374,7 @@
               :title="t('admin.proxies.noProxiesYet')"
               :description="t('admin.proxies.createFirstProxy')"
               :action-text="t('admin.proxies.createProxy')"
-              @action="showCreateModal = true"
+              @action="openCreateModal"
             />
           </template>
         </DataTable>
@@ -428,6 +455,28 @@
         class="space-y-5"
       >
         <div>
+          <label for="create-share-link" class="input-label">{{ t('admin.proxies.shareLink') }}</label>
+          <div class="flex gap-2">
+            <input
+              id="create-share-link"
+              v-model="createShareLink"
+              type="text"
+              class="input flex-1 font-mono text-sm"
+              :placeholder="t('admin.proxies.shareLinkPlaceholder')"
+              @keydown.enter.prevent="handleParseLink('create')"
+            />
+            <button
+              type="button"
+              class="btn btn-secondary shrink-0"
+              :disabled="parsingLink || !createShareLink.trim()"
+              @click="handleParseLink('create')"
+            >
+              {{ parsingLink ? t('admin.proxies.parsingLink') : t('admin.proxies.parseLink') }}
+            </button>
+          </div>
+          <p class="input-hint mt-1">{{ t('admin.proxies.shareLinkHint') }}</p>
+        </div>
+        <div>
           <label class="input-label">{{ t('admin.proxies.name') }}</label>
           <input
             v-model="createForm.name"
@@ -439,7 +488,12 @@
         </div>
         <div>
           <label class="input-label">{{ t('admin.proxies.protocol') }}</label>
-          <Select v-model="createForm.protocol" :options="protocolSelectOptions" />
+          <Select
+            v-model="createForm.protocol"
+            :aria-label="t('admin.proxies.protocol')"
+            :options="protocolSelectOptions"
+            @change="createForm.options = {}"
+          />
         </div>
         <div class="grid grid-cols-2 gap-4">
           <div>
@@ -465,7 +519,7 @@
             />
           </div>
         </div>
-        <div>
+        <div v-if="!isEncryptedProtocol(createForm.protocol)">
           <label class="input-label">{{ t('admin.proxies.username') }}</label>
           <input
             v-model="createForm.username"
@@ -475,23 +529,59 @@
           />
         </div>
         <div>
-          <label class="input-label">{{ t('admin.proxies.password') }}</label>
+          <label for="create-proxy-password" class="input-label">{{ secretLabel(createForm.protocol) }}</label>
           <div class="relative">
             <input
+              id="create-proxy-password"
               v-model="createForm.password"
               :type="createPasswordVisible ? 'text' : 'password'"
               class="input pr-10"
-              :placeholder="t('admin.proxies.optionalAuth')"
+              :required="isEncryptedProtocol(createForm.protocol)"
+              :placeholder="secretPlaceholder(createForm.protocol, t('admin.proxies.optionalAuth'))"
             />
             <button
               type="button"
               class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              :aria-label="t('admin.proxies.toggleSecretVisibility')"
               @click="createPasswordVisible = !createPasswordVisible"
             >
               <Icon :name="createPasswordVisible ? 'eyeOff' : 'eye'" size="md" />
             </button>
           </div>
         </div>
+        <ProxyProtocolOptionsFields
+          v-model="createForm.options"
+          :protocol="createForm.protocol"
+          id-prefix="create"
+        />
+        <fieldset class="space-y-4 rounded-lg border border-gray-200 p-4 dark:border-dark-600">
+          <legend class="px-1 text-sm font-medium text-gray-700 dark:text-gray-300">
+            {{ t('admin.proxies.upstreamSection') }}
+          </legend>
+          <div>
+            <label for="create-upstream-mode" class="input-label">{{ t('admin.proxies.upstreamMode') }}</label>
+            <Select
+              id="create-upstream-mode"
+              v-model="createForm.upstream_mode"
+              @change="createUpstreamTouched = true"
+              :aria-label="t('admin.proxies.upstreamMode')"
+              :options="upstreamModeOptions"
+            />
+            <p v-if="createForm.upstream_mode === 'default'" class="input-hint mt-1">
+              {{ defaultUpstreamHint }}
+            </p>
+          </div>
+          <div v-if="createForm.upstream_mode === 'proxy'">
+            <label for="create-upstream-proxy" class="input-label">{{ t('admin.proxies.upstreamProxy') }}</label>
+            <Select
+              id="create-upstream-proxy"
+              v-model="createForm.upstream_proxy_id"
+              :aria-label="t('admin.proxies.upstreamProxy')"
+              :options="upstreamProxyOptions()"
+              :placeholder="t('admin.proxies.selectUpstreamProxy')"
+            />
+          </div>
+        </fieldset>
         <div>
           <label class="input-label">{{ t('admin.proxies.expiresAt') }}</label>
           <div class="mb-2 flex flex-wrap gap-2">
@@ -674,12 +764,39 @@
         class="space-y-5"
       >
         <div>
+          <label for="edit-share-link" class="input-label">{{ t('admin.proxies.shareLink') }}</label>
+          <div class="flex gap-2">
+            <input
+              id="edit-share-link"
+              v-model="editShareLink"
+              type="text"
+              class="input flex-1 font-mono text-sm"
+              :placeholder="t('admin.proxies.shareLinkPlaceholder')"
+              @keydown.enter.prevent="handleParseLink('edit')"
+            />
+            <button
+              type="button"
+              class="btn btn-secondary shrink-0"
+              :disabled="parsingLink || !editShareLink.trim()"
+              @click="handleParseLink('edit')"
+            >
+              {{ parsingLink ? t('admin.proxies.parsingLink') : t('admin.proxies.parseLink') }}
+            </button>
+          </div>
+          <p class="input-hint mt-1">{{ t('admin.proxies.shareLinkHint') }}</p>
+        </div>
+        <div>
           <label class="input-label">{{ t('admin.proxies.name') }}</label>
           <input v-model="editForm.name" type="text" required class="input" />
         </div>
         <div>
           <label class="input-label">{{ t('admin.proxies.protocol') }}</label>
-          <Select v-model="editForm.protocol" :options="protocolSelectOptions" />
+          <Select
+            v-model="editForm.protocol"
+            :aria-label="t('admin.proxies.protocol')"
+            :options="protocolSelectOptions"
+            @change="editForm.options = {}"
+          />
         </div>
         <div class="grid grid-cols-2 gap-4">
           <div>
@@ -698,14 +815,15 @@
             />
           </div>
         </div>
-        <div>
+        <div v-if="!isEncryptedProtocol(editForm.protocol)">
           <label class="input-label">{{ t('admin.proxies.username') }}</label>
           <input v-model="editForm.username" type="text" class="input" />
         </div>
         <div>
-          <label class="input-label">{{ t('admin.proxies.password') }}</label>
+          <label for="edit-proxy-password" class="input-label">{{ secretLabel(editForm.protocol) }}</label>
           <div class="relative">
             <input
+              id="edit-proxy-password"
               v-model="editForm.password"
               :type="editPasswordVisible ? 'text' : 'password'"
               :placeholder="t('admin.proxies.leaveEmptyToKeep')"
@@ -715,12 +833,45 @@
             <button
               type="button"
               class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              :aria-label="t('admin.proxies.toggleSecretVisibility')"
               @click="editPasswordVisible = !editPasswordVisible"
             >
               <Icon :name="editPasswordVisible ? 'eyeOff' : 'eye'" size="md" />
             </button>
           </div>
         </div>
+        <ProxyProtocolOptionsFields
+          v-model="editForm.options"
+          :protocol="editForm.protocol"
+          id-prefix="edit"
+        />
+        <fieldset class="space-y-4 rounded-lg border border-gray-200 p-4 dark:border-dark-600">
+          <legend class="px-1 text-sm font-medium text-gray-700 dark:text-gray-300">
+            {{ t('admin.proxies.upstreamSection') }}
+          </legend>
+          <div>
+            <label for="edit-upstream-mode" class="input-label">{{ t('admin.proxies.upstreamMode') }}</label>
+            <Select
+              id="edit-upstream-mode"
+              v-model="editForm.upstream_mode"
+              :aria-label="t('admin.proxies.upstreamMode')"
+              :options="upstreamModeOptions"
+            />
+            <p v-if="editForm.upstream_mode === 'default'" class="input-hint mt-1">
+              {{ defaultUpstreamHint }}
+            </p>
+          </div>
+          <div v-if="editForm.upstream_mode === 'proxy'">
+            <label for="edit-upstream-proxy" class="input-label">{{ t('admin.proxies.upstreamProxy') }}</label>
+            <Select
+              id="edit-upstream-proxy"
+              v-model="editForm.upstream_proxy_id"
+              :aria-label="t('admin.proxies.upstreamProxy')"
+              :options="upstreamProxyOptions(editingProxy?.id)"
+              :placeholder="t('admin.proxies.selectUpstreamProxy')"
+            />
+          </div>
+        </fieldset>
         <div>
           <label class="input-label">{{ t('admin.proxies.status') }}</label>
           <Select v-model="editForm.status" :options="editStatusOptions" />
@@ -839,6 +990,44 @@
       @close="showImportData = false"
       @imported="handleDataImported"
     />
+
+    <!-- Chain Settings Dialog -->
+    <BaseDialog
+      :show="showChainSettings"
+      :title="t('admin.proxies.chainSettings')"
+      width="normal"
+      @close="showChainSettings = false"
+    >
+      <form id="chain-settings-form" class="space-y-4" @submit.prevent="handleSaveChainSettings">
+        <div>
+          <label for="chain-default-upstream" class="input-label">
+            {{ t('admin.proxies.defaultUpstreamProxy') }}
+          </label>
+          <Select
+            id="chain-default-upstream"
+            v-model="chainSettingsForm.default_upstream_proxy_id"
+            :aria-label="t('admin.proxies.defaultUpstreamProxy')"
+            :options="defaultUpstreamOptions"
+          />
+          <p class="input-hint mt-2">{{ t('admin.proxies.defaultUpstreamHint') }}</p>
+        </div>
+      </form>
+      <template #footer>
+        <div class="flex justify-end gap-3">
+          <button type="button" class="btn btn-secondary" @click="showChainSettings = false">
+            {{ t('common.cancel') }}
+          </button>
+          <button
+            type="submit"
+            form="chain-settings-form"
+            class="btn btn-primary"
+            :disabled="savingChainSettings || loadingChainSettings"
+          >
+            {{ savingChainSettings ? t('admin.proxies.saving') : t('common.save') }}
+          </button>
+        </div>
+      </template>
+    </BaseDialog>
 
     <BaseDialog
       :show="showQualityReportDialog"
@@ -964,11 +1153,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
-import type { Proxy, ProxyAccountSummary, ProxyProtocol, ProxyQualityCheckResult } from '@/types'
+import type {
+  Proxy,
+  ProxyAccountSummary,
+  ProxyProtocol,
+  ProxyQualityCheckResult,
+  ProxyUpstreamMode
+} from '@/types'
+import type { BatchCreateProxyItem } from '@/api/admin/proxies'
 import type { Column } from '@/components/common/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
@@ -978,6 +1174,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import ImportDataModal from '@/components/admin/proxy/ImportDataModal.vue'
+import ProxyProtocolOptionsFields from '@/components/admin/proxy/ProxyProtocolOptionsFields.vue'
 import Select from '@/components/common/Select.vue'
 import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -988,6 +1185,15 @@ import { useTableSelection } from '@/composables/useTableSelection'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatDateTime } from '@/utils/format'
 import { proxyExpiryBadgeClass, proxyExpiryLabelKey } from '@/utils/proxyExpiry'
+import { extractApiErrorMessage } from '@/utils/apiError'
+import {
+  buildProxyOptions,
+  isEncryptedProtocol,
+  isShareLink,
+  usesUuidSecret,
+  validateProxySecret,
+  type ProxyOptions
+} from '@/utils/proxyProtocol'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -1014,7 +1220,11 @@ const protocolOptions = computed(() => [
   { value: 'http', label: 'HTTP' },
   { value: 'https', label: 'HTTPS' },
   { value: 'socks5', label: 'SOCKS5' },
-  { value: 'socks5h', label: 'SOCKS5H' }
+  { value: 'socks5h', label: 'SOCKS5H' },
+  { value: 'ss', label: 'Shadowsocks' },
+  { value: 'vmess', label: 'VMess' },
+  { value: 'vless', label: 'VLESS' },
+  { value: 'trojan', label: 'Trojan' }
 ])
 
 const statusOptions = computed(() => [
@@ -1029,8 +1239,37 @@ const protocolSelectOptions = computed(() => [
   { value: 'http', label: t('admin.proxies.protocols.http') },
   { value: 'https', label: t('admin.proxies.protocols.https') },
   { value: 'socks5', label: t('admin.proxies.protocols.socks5') },
-  { value: 'socks5h', label: t('admin.proxies.protocols.socks5h') }
+  { value: 'socks5h', label: t('admin.proxies.protocols.socks5h') },
+  { value: 'ss', label: t('admin.proxies.protocols.ss') },
+  { value: 'vmess', label: t('admin.proxies.protocols.vmess') },
+  { value: 'vless', label: t('admin.proxies.protocols.vless') },
+  { value: 'trojan', label: t('admin.proxies.protocols.trojan') }
 ])
+
+const upstreamModeOptions = computed(() => [
+  { value: 'direct', label: t('admin.proxies.upstreamDirect') },
+  { value: 'default', label: t('admin.proxies.upstreamDefault') },
+  { value: 'proxy', label: t('admin.proxies.upstreamSpecific') }
+])
+
+const protocolBadgeClass = (protocol: string) => {
+  if (isEncryptedProtocol(protocol)) return 'badge-purple'
+  if (protocol.startsWith('socks5')) return 'badge-primary'
+  return 'badge-gray'
+}
+
+// vmess/vless 的密钥字段是 UUID；ss/trojan 为密码(必填)
+const secretLabel = (protocol: string) => {
+  if (usesUuidSecret(protocol)) return 'UUID'
+  if (isEncryptedProtocol(protocol)) return t('admin.proxies.secretPassword')
+  return t('admin.proxies.password')
+}
+const secretPlaceholder = (protocol: string, plainPlaceholder: string) =>
+  isEncryptedProtocol(protocol) ? '' : plainPlaceholder
+
+// 链路展示:经 A → B → 本代理
+const formatChain = (row: Proxy) =>
+  t('admin.proxies.chainVia', { hops: (row.chain || []).map((hop) => hop.name).join(' → ') })
 
 const editStatusOptions = computed(() => [
   { value: 'active', label: t('admin.accounts.status.active') },
@@ -1112,13 +1351,7 @@ const batchParseResult = reactive({
   valid: 0,
   invalid: 0,
   duplicate: 0,
-  proxies: [] as Array<{
-    protocol: ProxyProtocol
-    host: string
-    port: number
-    username: string
-    password: string
-  }>
+  proxies: [] as BatchCreateProxyItem[]
 })
 
 const createForm = reactive({
@@ -1132,6 +1365,9 @@ const createForm = reactive({
   fallback_mode: 'none' as 'none' | 'proxy' | 'direct',
   backup_proxy_id: null as number | null,
   expiry_warn_days: 7 as number,
+  upstream_mode: 'direct' as ProxyUpstreamMode,
+  upstream_proxy_id: null as number | null,
+  options: {} as ProxyOptions,
 })
 
 const editForm = reactive({
@@ -1146,6 +1382,9 @@ const editForm = reactive({
   fallback_mode: 'none' as 'none' | 'proxy' | 'direct',
   backup_proxy_id: null as number | null,
   expiry_warn_days: 7 as number,
+  upstream_mode: 'direct' as ProxyUpstreamMode,
+  upstream_proxy_id: null as number | null,
+  options: {} as ProxyOptions,
 })
 
 const allProxiesForBackup = ref<Proxy[]>([])
@@ -1156,6 +1395,123 @@ const backupProxyOptions = (excludeId?: number) =>
   allProxiesForBackup.value
     .filter(p => p.id !== excludeId)
     .map(p => ({ label: `${p.name} (${p.host}:${p.port})`, value: p.id }))
+const upstreamProxyOptions = (excludeId?: number) =>
+  allProxiesForBackup.value
+    .filter(p => p.id !== excludeId)
+    .map(p => ({ label: `${p.name} (${p.protocol.toUpperCase()} ${p.host}:${p.port})`, value: p.id }))
+
+// ── 链式代理设置(全局默认前置代理) ──
+const defaultUpstreamProxyId = ref<number | null>(null)
+const showChainSettings = ref(false)
+const loadingChainSettings = ref(false)
+const savingChainSettings = ref(false)
+const chainSettingsForm = reactive({ default_upstream_proxy_id: null as number | null })
+
+const defaultUpstreamOptions = computed(() => [
+  { value: null, label: t('admin.proxies.noDefaultUpstream') },
+  ...upstreamProxyOptions()
+])
+
+const defaultUpstreamHint = computed(() => {
+  const id = defaultUpstreamProxyId.value
+  if (!id) return t('admin.proxies.defaultUpstreamUnset')
+  const proxy = allProxiesForBackup.value.find((p) => p.id === id)
+  return t('admin.proxies.defaultUpstreamCurrent', { name: proxy ? proxy.name : `#${id}` })
+})
+
+const loadChainSettings = async () => {
+  try {
+    const settings = await adminAPI.proxies.getChainSettings()
+    defaultUpstreamProxyId.value = settings?.default_upstream_proxy_id ?? null
+  } catch (error) {
+    console.error('Error loading proxy chain settings:', error)
+  }
+}
+
+const openChainSettings = async () => {
+  chainSettingsForm.default_upstream_proxy_id = defaultUpstreamProxyId.value
+  showChainSettings.value = true
+  loadingChainSettings.value = true
+  try {
+    await Promise.all([loadChainSettings(), loadBackupProxyOptions()])
+    chainSettingsForm.default_upstream_proxy_id = defaultUpstreamProxyId.value
+  } catch (error) {
+    console.error('Error loading proxy options:', error)
+  } finally {
+    loadingChainSettings.value = false
+  }
+}
+
+const handleSaveChainSettings = async () => {
+  savingChainSettings.value = true
+  try {
+    const result = await adminAPI.proxies.updateChainSettings({
+      default_upstream_proxy_id: chainSettingsForm.default_upstream_proxy_id ?? null
+    })
+    defaultUpstreamProxyId.value = result?.default_upstream_proxy_id ?? chainSettingsForm.default_upstream_proxy_id ?? null
+    appStore.showSuccess(t('admin.proxies.chainSettingsSaved'))
+    showChainSettings.value = false
+    loadProxies()
+  } catch (error) {
+    appStore.showError(extractApiErrorMessage(error, t('admin.proxies.chainSettingsSaveFailed')))
+    console.error('Error saving proxy chain settings:', error)
+  } finally {
+    savingChainSettings.value = false
+  }
+}
+
+// 新建时前置代理的预选：存在默认前置代理且为普通协议(http/https/socks5/socks5h)时「跟随默认」；
+// 加密协议通常是第一跳，预选直连。用户手动改过前置模式后不再自动覆盖。
+const createUpstreamTouched = ref(false)
+const preferredCreateUpstreamMode = (): ProxyUpstreamMode =>
+  defaultUpstreamProxyId.value && !isEncryptedProtocol(createForm.protocol) ? 'default' : 'direct'
+const applyCreateUpstreamPreselect = () => {
+  if (!createUpstreamTouched.value) createForm.upstream_mode = preferredCreateUpstreamMode()
+}
+watch(() => createForm.protocol, applyCreateUpstreamPreselect)
+watch(defaultUpstreamProxyId, applyCreateUpstreamPreselect)
+
+const openCreateModal = async () => {
+  createUpstreamTouched.value = false
+  applyCreateUpstreamPreselect()
+  showCreateModal.value = true
+  // 刷新默认前置代理(可能被其他管理员修改)，watch 会在未手动修改时同步预选
+  await loadChainSettings()
+}
+
+// ── 分享链接解析 ──
+const createShareLink = ref('')
+const editShareLink = ref('')
+const parsingLink = ref(false)
+
+const handleParseLink = async (target: 'create' | 'edit') => {
+  const link = (target === 'create' ? createShareLink.value : editShareLink.value).trim()
+  if (!link || parsingLink.value) return
+  parsingLink.value = true
+  try {
+    const parsed = await adminAPI.proxies.parseLink(link)
+    const form = target === 'create' ? createForm : editForm
+    if (parsed.name && !form.name.trim()) form.name = parsed.name
+    form.protocol = parsed.protocol
+    form.host = parsed.host
+    form.port = parsed.port
+    form.username = parsed.username || ''
+    form.password = parsed.password || ''
+    form.options = { ...(parsed.options || {}) }
+    if (target === 'edit') editPasswordDirty.value = true
+    appStore.showSuccess(t('admin.proxies.linkParsed'))
+  } catch (error) {
+    appStore.showError(extractApiErrorMessage(error, t('admin.proxies.linkParseFailed')))
+    console.error('Error parsing proxy share link:', error)
+  } finally {
+    parsingLink.value = false
+  }
+}
+
+const upstreamPayload = (form: { upstream_mode: ProxyUpstreamMode; upstream_proxy_id: number | null }) => ({
+  upstream_mode: form.upstream_mode,
+  upstream_proxy_id: form.upstream_mode === 'proxy' ? form.upstream_proxy_id : null
+})
 
 let abortController: AbortController | null = null
 
@@ -1266,6 +1622,10 @@ const closeCreateModal = () => {
   createForm.fallback_mode = 'none'
   createForm.backup_proxy_id = null
   createForm.expiry_warn_days = 7
+  createForm.upstream_proxy_id = null
+  createUpstreamTouched.value = false
+  createForm.options = {}
+  createShareLink.value = ''
   createPasswordVisible.value = false
   batchInput.value = ''
   batchParseResult.total = 0
@@ -1328,6 +1688,18 @@ const parseBatchInput = () => {
   let duplicate = 0
 
   for (const line of lines) {
+    // 加密协议分享链接原样交给后端解析
+    if (isShareLink(line)) {
+      const link = line.trim()
+      if (seen.has(link)) {
+        duplicate++
+        continue
+      }
+      seen.add(link)
+      proxies.push({ link })
+      continue
+    }
+
     const parsed = parseProxyUrl(line)
     if (!parsed) {
       invalid++
@@ -1369,7 +1741,7 @@ const handleBatchCreate = async () => {
     closeCreateModal()
     loadProxies()
   } catch (error: any) {
-    appStore.showError(error.response?.data?.detail || t('admin.proxies.failedToImport'))
+    appStore.showError(extractApiErrorMessage(error, t('admin.proxies.failedToImport')))
     console.error('Error batch creating proxies:', error)
   } finally {
     submitting.value = false
@@ -1389,6 +1761,17 @@ const handleCreateProxy = async () => {
     appStore.showError(t('admin.proxies.portInvalid'))
     return
   }
+  const createOptions = buildProxyOptions(createForm.protocol, createForm.options)
+  const createSecretError = validateProxySecret(createForm.protocol, createForm.password, createOptions)
+  if (createSecretError) {
+    appStore.showError(t(createSecretError))
+    return
+  }
+  if (createForm.upstream_mode === 'proxy' && !createForm.upstream_proxy_id) {
+    appStore.showError(t('admin.proxies.upstreamProxyRequired'))
+    return
+  }
+  const encrypted = isEncryptedProtocol(createForm.protocol)
   submitting.value = true
   try {
     await adminAPI.proxies.create({
@@ -1396,8 +1779,10 @@ const handleCreateProxy = async () => {
       protocol: createForm.protocol,
       host: createForm.host.trim(),
       port: createForm.port,
-      username: createForm.username.trim() || null,
+      username: encrypted ? null : createForm.username.trim() || null,
       password: createForm.password.trim() || null,
+      ...upstreamPayload(createForm),
+      options: createOptions,
       expires_at: createForm.expires_at ? Math.floor(new Date(createForm.expires_at).getTime() / 1000) : null,
       fallback_mode: createForm.fallback_mode,
       backup_proxy_id: createForm.fallback_mode === 'proxy' ? createForm.backup_proxy_id : null,
@@ -1407,7 +1792,7 @@ const handleCreateProxy = async () => {
     closeCreateModal()
     loadProxies()
   } catch (error: any) {
-    appStore.showError(error.response?.data?.detail || t('admin.proxies.failedToCreate'))
+    appStore.showError(extractApiErrorMessage(error, t('admin.proxies.failedToCreate')))
     console.error('Error creating proxy:', error)
   } finally {
     submitting.value = false
@@ -1427,6 +1812,10 @@ const handleEdit = (proxy: Proxy) => {
   editForm.fallback_mode = proxy.fallback_mode || 'none'
   editForm.backup_proxy_id = proxy.backup_proxy_id ?? null
   editForm.expiry_warn_days = proxy.expiry_warn_days ?? 7
+  editForm.upstream_mode = proxy.upstream_mode || 'direct'
+  editForm.upstream_proxy_id = proxy.upstream_proxy_id ?? null
+  editForm.options = { ...(proxy.options || {}) }
+  editShareLink.value = ''
   editPasswordVisible.value = false
   editPasswordDirty.value = false
   showEditModal.value = true
@@ -1453,6 +1842,22 @@ const handleUpdateProxy = async () => {
     appStore.showError(t('admin.proxies.portInvalid'))
     return
   }
+  const editOptions = buildProxyOptions(editForm.protocol, editForm.options)
+  // 未修改密码时沿用已保存的密钥，交由后端校验
+  const editSecretError = validateProxySecret(
+    editForm.protocol,
+    editForm.password,
+    editOptions,
+    !editPasswordDirty.value
+  )
+  if (editSecretError) {
+    appStore.showError(t(editSecretError))
+    return
+  }
+  if (editForm.upstream_mode === 'proxy' && !editForm.upstream_proxy_id) {
+    appStore.showError(t('admin.proxies.upstreamProxyRequired'))
+    return
+  }
 
   submitting.value = true
   try {
@@ -1461,7 +1866,9 @@ const handleUpdateProxy = async () => {
       protocol: editForm.protocol,
       host: editForm.host.trim(),
       port: editForm.port,
-      username: editForm.username.trim(),
+      username: isEncryptedProtocol(editForm.protocol) ? '' : editForm.username.trim(),
+      ...upstreamPayload(editForm),
+      options: editOptions,
       status: editForm.status,
       expires_at: editForm.expires_at ? Math.floor(new Date(editForm.expires_at).getTime() / 1000) : null,
       fallback_mode: editForm.fallback_mode,
@@ -1479,7 +1886,7 @@ const handleUpdateProxy = async () => {
     closeEditModal()
     loadProxies()
   } catch (error: any) {
-    appStore.showError(error.response?.data?.detail || t('admin.proxies.failedToUpdate'))
+    appStore.showError(extractApiErrorMessage(error, t('admin.proxies.failedToUpdate')))
     console.error('Error updating proxy:', error)
   } finally {
     submitting.value = false
@@ -1975,7 +2382,8 @@ const confirmDelete = async () => {
     deletingProxy.value = null
     loadProxies()
   } catch (error: any) {
-    appStore.showError(error.response?.data?.detail || t('admin.proxies.failedToDelete'))
+    // 例如 PROXY_UPSTREAM_IN_USE：被其他代理作为前置代理引用或为默认前置代理
+    appStore.showError(extractApiErrorMessage(error, t('admin.proxies.failedToDelete')))
     console.error('Error deleting proxy:', error)
   }
 }
@@ -2002,7 +2410,7 @@ const confirmBatchDelete = async () => {
     showBatchDeleteDialog.value = false
     loadProxies()
   } catch (error: any) {
-    appStore.showError(error.response?.data?.detail || t('admin.proxies.batchDeleteFailed'))
+    appStore.showError(extractApiErrorMessage(error, t('admin.proxies.batchDeleteFailed')))
     console.error('Error batch deleting proxies:', error)
   }
 }
@@ -2078,6 +2486,7 @@ function closeCopyMenu() {
 onMounted(() => {
   loadProxies()
   loadBackupProxyOptions()
+  loadChainSettings()
   document.addEventListener('click', closeCopyMenu)
 })
 

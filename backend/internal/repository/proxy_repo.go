@@ -54,6 +54,14 @@ func (r *proxyRepository) Create(ctx context.Context, proxyIn *service.Proxy) er
 	if proxyIn.BackupProxyID != nil {
 		builder.SetBackupProxyID(*proxyIn.BackupProxyID)
 	}
+	// 链式代理（fork）
+	builder.SetUpstreamMode(service.NormalizeUpstreamMode(proxyIn.UpstreamMode))
+	if proxyIn.UpstreamProxyID != nil {
+		builder.SetUpstreamProxyID(*proxyIn.UpstreamProxyID)
+	}
+	if len(proxyIn.Options) > 0 {
+		builder.SetOptions(proxyIn.Options)
+	}
 
 	created, err := builder.Save(ctx)
 	if err == nil {
@@ -176,12 +184,27 @@ func updateProxyAndInvalidateProbeSnapshots(ctx context.Context, client *dbent.C
 	} else {
 		builder.ClearBackupProxyID()
 	}
+	// 链式代理（fork）
+	builder.SetUpstreamMode(service.NormalizeUpstreamMode(proxyIn.UpstreamMode))
+	if proxyIn.UpstreamProxyID != nil {
+		builder.SetUpstreamProxyID(*proxyIn.UpstreamProxyID)
+	} else {
+		builder.ClearUpstreamProxyID()
+	}
+	if len(proxyIn.Options) > 0 {
+		builder.SetOptions(proxyIn.Options)
+	} else {
+		builder.ClearOptions()
+	}
 
 	updated, err := builder.Save(ctx)
 	if dbent.IsNotFound(err) {
 		return nil, service.ErrProxyNotFound
 	}
 	if err != nil {
+		return nil, err
+	}
+	if err := enqueueProxyChainAccountChanges(ctx, client, proxyIn); err != nil { // 链式代理（fork）
 		return nil, err
 	}
 	if currentIdentity == proxyProbeIdentityFromService(proxyIn) {
@@ -601,6 +624,10 @@ func proxyEntityToService(m *dbent.Proxy) *service.Proxy {
 		FallbackMode:   m.FallbackMode,
 		BackupProxyID:  m.BackupProxyID,
 		ExpiryWarnDays: m.ExpiryWarnDays,
+		// 链式代理（fork）
+		UpstreamMode:    m.UpstreamMode,
+		UpstreamProxyID: m.UpstreamProxyID,
+		Options:         m.Options,
 	}
 	if m.Username != nil {
 		out.Username = *m.Username

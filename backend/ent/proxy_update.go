@@ -247,6 +247,59 @@ func (_u *ProxyUpdate) AddExpiryWarnDays(v int) *ProxyUpdate {
 	return _u
 }
 
+// SetUpstreamMode sets the "upstream_mode" field.
+func (_u *ProxyUpdate) SetUpstreamMode(v string) *ProxyUpdate {
+	_u.mutation.SetUpstreamMode(v)
+	return _u
+}
+
+// SetNillableUpstreamMode sets the "upstream_mode" field if the given value is not nil.
+func (_u *ProxyUpdate) SetNillableUpstreamMode(v *string) *ProxyUpdate {
+	if v != nil {
+		_u.SetUpstreamMode(*v)
+	}
+	return _u
+}
+
+// SetUpstreamProxyID sets the "upstream_proxy_id" field.
+func (_u *ProxyUpdate) SetUpstreamProxyID(v int64) *ProxyUpdate {
+	_u.mutation.ResetUpstreamProxyID()
+	_u.mutation.SetUpstreamProxyID(v)
+	return _u
+}
+
+// SetNillableUpstreamProxyID sets the "upstream_proxy_id" field if the given value is not nil.
+func (_u *ProxyUpdate) SetNillableUpstreamProxyID(v *int64) *ProxyUpdate {
+	if v != nil {
+		_u.SetUpstreamProxyID(*v)
+	}
+	return _u
+}
+
+// AddUpstreamProxyID adds value to the "upstream_proxy_id" field.
+func (_u *ProxyUpdate) AddUpstreamProxyID(v int64) *ProxyUpdate {
+	_u.mutation.AddUpstreamProxyID(v)
+	return _u
+}
+
+// ClearUpstreamProxyID clears the value of the "upstream_proxy_id" field.
+func (_u *ProxyUpdate) ClearUpstreamProxyID() *ProxyUpdate {
+	_u.mutation.ClearUpstreamProxyID()
+	return _u
+}
+
+// SetOptions sets the "options" field.
+func (_u *ProxyUpdate) SetOptions(v map[string]string) *ProxyUpdate {
+	_u.mutation.SetOptions(v)
+	return _u
+}
+
+// ClearOptions clears the value of the "options" field.
+func (_u *ProxyUpdate) ClearOptions() *ProxyUpdate {
+	_u.mutation.ClearOptions()
+	return _u
+}
+
 // AddAccountIDs adds the "accounts" edge to the Account entity by IDs.
 func (_u *ProxyUpdate) AddAccountIDs(ids ...int64) *ProxyUpdate {
 	_u.mutation.AddAccountIDs(ids...)
@@ -414,6 +467,11 @@ func (_u *ProxyUpdate) check() error {
 			return &ValidationError{Name: "fallback_mode", err: fmt.Errorf(`ent: validator failed for field "Proxy.fallback_mode": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.UpstreamMode(); ok {
+		if err := proxy.UpstreamModeValidator(v); err != nil {
+			return &ValidationError{Name: "upstream_mode", err: fmt.Errorf(`ent: validator failed for field "Proxy.upstream_mode": %w`, err)}
+		}
+	}
 	return nil
 }
 
@@ -482,6 +540,24 @@ func (_u *ProxyUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.AddedExpiryWarnDays(); ok {
 		_spec.AddField(proxy.FieldExpiryWarnDays, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.UpstreamMode(); ok {
+		_spec.SetField(proxy.FieldUpstreamMode, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.UpstreamProxyID(); ok {
+		_spec.SetField(proxy.FieldUpstreamProxyID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedUpstreamProxyID(); ok {
+		_spec.AddField(proxy.FieldUpstreamProxyID, field.TypeInt64, value)
+	}
+	if _u.mutation.UpstreamProxyIDCleared() {
+		_spec.ClearField(proxy.FieldUpstreamProxyID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.Options(); ok {
+		_spec.SetField(proxy.FieldOptions, field.TypeJSON, value)
+	}
+	if _u.mutation.OptionsCleared() {
+		_spec.ClearField(proxy.FieldOptions, field.TypeJSON)
 	}
 	if _u.mutation.AccountsCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -840,6 +916,59 @@ func (_u *ProxyUpdateOne) AddExpiryWarnDays(v int) *ProxyUpdateOne {
 	return _u
 }
 
+// SetUpstreamMode sets the "upstream_mode" field.
+func (_u *ProxyUpdateOne) SetUpstreamMode(v string) *ProxyUpdateOne {
+	_u.mutation.SetUpstreamMode(v)
+	return _u
+}
+
+// SetNillableUpstreamMode sets the "upstream_mode" field if the given value is not nil.
+func (_u *ProxyUpdateOne) SetNillableUpstreamMode(v *string) *ProxyUpdateOne {
+	if v != nil {
+		_u.SetUpstreamMode(*v)
+	}
+	return _u
+}
+
+// SetUpstreamProxyID sets the "upstream_proxy_id" field.
+func (_u *ProxyUpdateOne) SetUpstreamProxyID(v int64) *ProxyUpdateOne {
+	_u.mutation.ResetUpstreamProxyID()
+	_u.mutation.SetUpstreamProxyID(v)
+	return _u
+}
+
+// SetNillableUpstreamProxyID sets the "upstream_proxy_id" field if the given value is not nil.
+func (_u *ProxyUpdateOne) SetNillableUpstreamProxyID(v *int64) *ProxyUpdateOne {
+	if v != nil {
+		_u.SetUpstreamProxyID(*v)
+	}
+	return _u
+}
+
+// AddUpstreamProxyID adds value to the "upstream_proxy_id" field.
+func (_u *ProxyUpdateOne) AddUpstreamProxyID(v int64) *ProxyUpdateOne {
+	_u.mutation.AddUpstreamProxyID(v)
+	return _u
+}
+
+// ClearUpstreamProxyID clears the value of the "upstream_proxy_id" field.
+func (_u *ProxyUpdateOne) ClearUpstreamProxyID() *ProxyUpdateOne {
+	_u.mutation.ClearUpstreamProxyID()
+	return _u
+}
+
+// SetOptions sets the "options" field.
+func (_u *ProxyUpdateOne) SetOptions(v map[string]string) *ProxyUpdateOne {
+	_u.mutation.SetOptions(v)
+	return _u
+}
+
+// ClearOptions clears the value of the "options" field.
+func (_u *ProxyUpdateOne) ClearOptions() *ProxyUpdateOne {
+	_u.mutation.ClearOptions()
+	return _u
+}
+
 // AddAccountIDs adds the "accounts" edge to the Account entity by IDs.
 func (_u *ProxyUpdateOne) AddAccountIDs(ids ...int64) *ProxyUpdateOne {
 	_u.mutation.AddAccountIDs(ids...)
@@ -1020,6 +1149,11 @@ func (_u *ProxyUpdateOne) check() error {
 			return &ValidationError{Name: "fallback_mode", err: fmt.Errorf(`ent: validator failed for field "Proxy.fallback_mode": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.UpstreamMode(); ok {
+		if err := proxy.UpstreamModeValidator(v); err != nil {
+			return &ValidationError{Name: "upstream_mode", err: fmt.Errorf(`ent: validator failed for field "Proxy.upstream_mode": %w`, err)}
+		}
+	}
 	return nil
 }
 
@@ -1105,6 +1239,24 @@ func (_u *ProxyUpdateOne) sqlSave(ctx context.Context) (_node *Proxy, err error)
 	}
 	if value, ok := _u.mutation.AddedExpiryWarnDays(); ok {
 		_spec.AddField(proxy.FieldExpiryWarnDays, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.UpstreamMode(); ok {
+		_spec.SetField(proxy.FieldUpstreamMode, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.UpstreamProxyID(); ok {
+		_spec.SetField(proxy.FieldUpstreamProxyID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedUpstreamProxyID(); ok {
+		_spec.AddField(proxy.FieldUpstreamProxyID, field.TypeInt64, value)
+	}
+	if _u.mutation.UpstreamProxyIDCleared() {
+		_spec.ClearField(proxy.FieldUpstreamProxyID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.Options(); ok {
+		_spec.SetField(proxy.FieldOptions, field.TypeJSON, value)
+	}
+	if _u.mutation.OptionsCleared() {
+		_spec.ClearField(proxy.FieldOptions, field.TypeJSON)
 	}
 	if _u.mutation.AccountsCleared() {
 		edge := &sqlgraph.EdgeSpec{

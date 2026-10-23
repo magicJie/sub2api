@@ -1739,6 +1739,12 @@ func init() {
 	proxyDescExpiryWarnDays := proxyFields[10].Descriptor()
 	// proxy.DefaultExpiryWarnDays holds the default value on creation for the expiry_warn_days field.
 	proxy.DefaultExpiryWarnDays = proxyDescExpiryWarnDays.Default.(int)
+	// proxyDescUpstreamMode is the schema descriptor for upstream_mode field.
+	proxyDescUpstreamMode := proxyFields[11].Descriptor()
+	// proxy.DefaultUpstreamMode holds the default value on creation for the upstream_mode field.
+	proxy.DefaultUpstreamMode = proxyDescUpstreamMode.Default.(string)
+	// proxy.UpstreamModeValidator is a validator for the "upstream_mode" field. It is called by the builders before save.
+	proxy.UpstreamModeValidator = proxyDescUpstreamMode.Validators[0].(func(string) error)
 	redeemcodeFields := schema.RedeemCode{}.Fields()
 	_ = redeemcodeFields
 	// redeemcodeDescCode is the schema descriptor for code field.

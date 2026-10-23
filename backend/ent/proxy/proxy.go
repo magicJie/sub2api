@@ -43,6 +43,12 @@ const (
 	FieldBackupProxyID = "backup_proxy_id"
 	// FieldExpiryWarnDays holds the string denoting the expiry_warn_days field in the database.
 	FieldExpiryWarnDays = "expiry_warn_days"
+	// FieldUpstreamMode holds the string denoting the upstream_mode field in the database.
+	FieldUpstreamMode = "upstream_mode"
+	// FieldUpstreamProxyID holds the string denoting the upstream_proxy_id field in the database.
+	FieldUpstreamProxyID = "upstream_proxy_id"
+	// FieldOptions holds the string denoting the options field in the database.
+	FieldOptions = "options"
 	// EdgeAccounts holds the string denoting the accounts edge name in mutations.
 	EdgeAccounts = "accounts"
 	// EdgePrimaryProxies holds the string denoting the primary_proxies edge name in mutations.
@@ -85,6 +91,9 @@ var Columns = []string{
 	FieldFallbackMode,
 	FieldBackupProxyID,
 	FieldExpiryWarnDays,
+	FieldUpstreamMode,
+	FieldUpstreamProxyID,
+	FieldOptions,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -131,6 +140,10 @@ var (
 	FallbackModeValidator func(string) error
 	// DefaultExpiryWarnDays holds the default value on creation for the "expiry_warn_days" field.
 	DefaultExpiryWarnDays int
+	// DefaultUpstreamMode holds the default value on creation for the "upstream_mode" field.
+	DefaultUpstreamMode string
+	// UpstreamModeValidator is a validator for the "upstream_mode" field. It is called by the builders before save.
+	UpstreamModeValidator func(string) error
 )
 
 // OrderOption defines the ordering options for the Proxy queries.
@@ -209,6 +222,16 @@ func ByBackupProxyID(opts ...sql.OrderTermOption) OrderOption {
 // ByExpiryWarnDays orders the results by the expiry_warn_days field.
 func ByExpiryWarnDays(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldExpiryWarnDays, opts...).ToFunc()
+}
+
+// ByUpstreamMode orders the results by the upstream_mode field.
+func ByUpstreamMode(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldUpstreamMode, opts...).ToFunc()
+}
+
+// ByUpstreamProxyID orders the results by the upstream_proxy_id field.
+func ByUpstreamProxyID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldUpstreamProxyID, opts...).ToFunc()
 }
 
 // ByAccountsCount orders the results by accounts count.

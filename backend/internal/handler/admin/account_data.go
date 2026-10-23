@@ -48,6 +48,8 @@ type DataProxy struct {
 	FallbackMode    string `json:"fallback_mode,omitempty"`     // none/direct/proxy
 	BackupProxyName string `json:"backup_proxy_name,omitempty"` // 备用代理 name（跨实例按 name 反查）
 	ExpiryWarnDays  int    `json:"expiry_warn_days,omitempty"`
+
+	DataProxyChain // 链式代理（fork）
 }
 
 // DataAccount 是管理员显式备份导出使用的账号结构，故意不走 dto.Account 的脱敏路径，
@@ -139,6 +141,9 @@ func (h *AccountHandler) ExportData(c *gin.Context) {
 	var proxies []service.Proxy
 	if includeProxies {
 		proxies, err = h.resolveExportProxies(ctx, accounts)
+		if err == nil {
+			proxies, err = appendUpstreamProxies(ctx, h.adminService, proxies) // 链式代理（fork）
+		}
 		if err != nil {
 			response.ErrorFrom(c, err)
 			return
@@ -182,6 +187,8 @@ func (h *AccountHandler) ExportData(c *gin.Context) {
 			FallbackMode:    p.FallbackMode,
 			BackupProxyName: backupProxyName,
 			ExpiryWarnDays:  p.ExpiryWarnDays,
+
+			DataProxyChain: dataProxyChainFromService(&p, proxies), // 链式代理（fork）
 		})
 	}
 
@@ -268,6 +275,8 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 		}
 	}
 
+	dataPayload.Proxies = orderDataProxiesForImport(dataPayload.Proxies) // 链式代理（fork）
+	chainRefs := newProxyChainRefs(existingProxies)                      // 链式代理（fork）
 	for i := range dataPayload.Proxies {
 		item := dataPayload.Proxies[i]
 		key := item.ProxyKey
@@ -288,6 +297,9 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 		if existingID, ok := proxyKeyToID[key]; ok {
 			proxyKeyToID[key] = existingID
 			result.ProxyReused++
+			if msg := chainRefs.reuseID(item, key, existingID, existingProxies); msg != "" { // 链式代理（fork）
+				result.Errors = append(result.Errors, DataImportError{Kind: "proxy", Name: item.Name, ProxyKey: key, Message: msg})
+			}
 			if normalizedStatus != "" {
 				if proxy, getErr := h.adminService.GetProxy(ctx, existingID); getErr == nil && proxy != nil && proxy.Status != normalizedStatus {
 					// 同步 status 时传入完整字段，避免零值覆盖已存在代理的有效期/fallback 配置。
@@ -362,6 +374,8 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 			FallbackMode:   fallbackMode,
 			BackupProxyID:  backupProxyID,
 			ExpiryWarnDays: item.ExpiryWarnDays,
+
+			ProxyChainInput: item.DataProxyChain.toInput(chainRefs), // 链式代理（fork）
 		})
 		if createErr != nil {
 			result.ProxyFailed++
@@ -374,6 +388,7 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 			continue
 		}
 		proxyKeyToID[key] = created.ID
+		chainRefs.add(item.Name, key, created.ID) // 链式代理（fork）
 		// 把新建代理的 name 也加入反查表，供后续批内代理引用
 		if created.Name != "" {
 			proxyNameToID[created.Name] = created.ID
@@ -667,6 +682,7 @@ func validateDataProxy(item DataProxy) error {
 	}
 	switch item.Protocol {
 	case "http", "https", "socks5", "socks5h":
+	case "ss", "vmess", "vless", "trojan": // 链式代理（fork）
 	default:
 		return fmt.Errorf("proxy protocol is invalid: %s", item.Protocol)
 	}

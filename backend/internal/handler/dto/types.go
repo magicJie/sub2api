@@ -481,6 +481,8 @@ type ProxyWithAccountCount struct {
 type AdminProxy struct {
 	Proxy
 	Password string `json:"password,omitempty"`
+
+	ProxyChainFields // 链式代理（fork）
 }
 
 // AdminProxyWithAccountCount 是管理员接口使用的带账号统计的 proxy DTO。

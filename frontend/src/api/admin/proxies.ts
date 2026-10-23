@@ -10,6 +10,8 @@ import type {
   ProxyQualityCheckResult,
   CreateProxyRequest,
   UpdateProxyRequest,
+  ParsedProxyLink,
+  ProxyChainSettings,
   PaginatedResponse,
   AdminDataPayload,
   AdminDataImportResult
@@ -202,14 +204,19 @@ export async function getProxyAccounts(id: number): Promise<ProxyAccountSummary[
  * @param proxies - Array of proxy data to create
  * @returns Creation result with count of created and skipped
  */
+export type BatchCreateProxyItem =
+  | {
+      protocol: string
+      host: string
+      port: number
+      username?: string
+      password?: string
+    }
+  // 加密协议分享链接(ss:// vmess:// vless:// trojan://)由后端解析
+  | { link: string }
+
 export async function batchCreate(
-  proxies: Array<{
-    protocol: string
-    host: string
-    port: number
-    username?: string
-    password?: string
-  }>
+  proxies: BatchCreateProxyItem[]
 ): Promise<{
   created: number
   skipped: number
@@ -218,6 +225,32 @@ export async function batchCreate(
     created: number
     skipped: number
   }>('/admin/proxies/batch', { proxies })
+  return data
+}
+
+/**
+ * Parse an encrypted proxy share link (ss:// vmess:// vless:// trojan://)
+ * @param link - Share link
+ * @returns Parsed proxy fields
+ */
+export async function parseLink(link: string): Promise<ParsedProxyLink> {
+  const { data } = await apiClient.post<ParsedProxyLink>('/admin/proxies/parse-link', { link })
+  return data
+}
+
+/**
+ * Get chain settings (global default upstream proxy)
+ */
+export async function getChainSettings(): Promise<ProxyChainSettings> {
+  const { data } = await apiClient.get<ProxyChainSettings>('/admin/proxies/chain-settings')
+  return data
+}
+
+/**
+ * Update chain settings; null clears the default upstream proxy
+ */
+export async function updateChainSettings(settings: ProxyChainSettings): Promise<ProxyChainSettings> {
+  const { data } = await apiClient.put<ProxyChainSettings>('/admin/proxies/chain-settings', settings)
   return data
 }
 
@@ -279,6 +312,9 @@ export const proxiesAPI = {
   getProxyAccounts,
   batchCreate,
   batchDelete,
+  parseLink,
+  getChainSettings,
+  updateChainSettings,
   exportData,
   importData
 }
