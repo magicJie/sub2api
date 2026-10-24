@@ -20,6 +20,7 @@ const (
 	kiroUsageResourceType = "AGENTIC_REQUEST"
 
 	kiroDefaultRegion = "us-east-1"
+	kiroEURegion      = "eu-central-1"
 )
 
 var resolveKiroRuntimeEndpoint = kiroRuntimeEndpoint

@@ -159,6 +159,20 @@ func (s *GatewayService) forwardKiroAsResponses(
 	startTime time.Time,
 	clientToolMappings ...apicompat.ResponsesClientToolMapping,
 ) (*ForwardResult, error) {
+	result, err := s.forwardKiroAsResponsesAttempt(ctx, c, account, body, parsed, startTime, clientToolMappings...)
+	recordKiroRoute(ctx, "responses", account, parsed, startTime, err)
+	return result, err
+}
+
+func (s *GatewayService) forwardKiroAsResponsesAttempt(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	body []byte,
+	parsed *ParsedRequest,
+	startTime time.Time,
+	clientToolMappings ...apicompat.ResponsesClientToolMapping,
+) (*ForwardResult, error) {
 	var responsesReq apicompat.ResponsesRequest
 	if err := json.Unmarshal(body, &responsesReq); err != nil {
 		return nil, fmt.Errorf("parse responses request: %w", err)
@@ -206,6 +220,19 @@ func (s *GatewayService) forwardKiroAsResponses(
 // ChatCompletions → Responses → Anthropic 链式转换后转发上游，响应经由现成的
 // "Anthropic → Responses → ChatCompletions" 终端函数转换回 ChatCompletions 格式。
 func (s *GatewayService) forwardKiroAsChatCompletions(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	body []byte,
+	parsed *ParsedRequest,
+	startTime time.Time,
+) (*ForwardResult, error) {
+	result, err := s.forwardKiroAsChatCompletionsAttempt(ctx, c, account, body, parsed, startTime)
+	recordKiroRoute(ctx, "chat_completions", account, parsed, startTime, err)
+	return result, err
+}
+
+func (s *GatewayService) forwardKiroAsChatCompletionsAttempt(
 	ctx context.Context,
 	c *gin.Context,
 	account *Account,

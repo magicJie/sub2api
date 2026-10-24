@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -280,7 +281,7 @@ func TestKiroAPIRegionPrefersAPIRegionOverProfileARN(t *testing.T) {
 	require.Equal(t, "eu-west-1", kiroAPIRegion(account))
 }
 
-func TestKiroAPIRegionIgnoresProfileARNRegionFallback(t *testing.T) {
+func TestKiroAPIRegionIgnoresUnknownProfileARNRegion(t *testing.T) {
 	account := &Account{
 		Credentials: map[string]any{
 			"profile_arn": "arn:aws:codewhisperer:us-west-2:123456789012:profile/test",
@@ -288,6 +289,50 @@ func TestKiroAPIRegionIgnoresProfileARNRegionFallback(t *testing.T) {
 	}
 
 	require.Equal(t, kiroDefaultRegion, kiroAPIRegion(account))
+}
+
+func TestKiroAPIRegionUsesProfileARNRegion(t *testing.T) {
+	account := &Account{
+		Credentials: map[string]any{
+			"profile_arn": "arn:aws:codewhisperer:eu-central-1:123456789012:profile/test",
+			"region":      "us-east-1",
+		},
+	}
+
+	require.Equal(t, kiroEURegion, kiroAPIRegion(account))
+}
+
+func TestKiroAPIRegionMapsEUSignInRegion(t *testing.T) {
+	account := &Account{
+		Credentials: map[string]any{
+			"region": "eu-west-1",
+		},
+	}
+
+	require.Equal(t, kiroEURegion, kiroAPIRegion(account))
+}
+
+func TestIsKiroBuilderIDAccount(t *testing.T) {
+	require.True(t, isKiroBuilderIDAccount(&Account{Credentials: map[string]any{"provider": "BuilderId"}}))
+	require.True(t, isKiroBuilderIDAccount(&Account{Credentials: map[string]any{"start_url": kiropkg.BuilderIDStartURL + "/#"}}))
+	require.False(t, isKiroBuilderIDAccount(&Account{Credentials: map[string]any{"provider": "Github"}}))
+	require.False(t, isKiroBuilderIDAccount(&Account{Credentials: map[string]any{"start_url": "https://example.awsapps.com/start"}}))
+}
+
+func TestResolveKiroProfileArnFallsBackToFixedArnForBuilderID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"message":"not supported"}`, http.StatusBadRequest)
+	}))
+	defer server.Close()
+	prevResolver := resolveKiroRuntimeEndpoint
+	resolveKiroRuntimeEndpoint = func(_ string) string { return server.URL }
+	defer func() { resolveKiroRuntimeEndpoint = prevResolver }()
+
+	account := &Account{ID: 9101, Credentials: map[string]any{"provider": "BuilderId"}}
+
+	arn, err := resolveKiroProfileArn(context.Background(), nil, account, kiroDefaultRegion, "token", false)
+	require.NoError(t, err)
+	require.Equal(t, kiroBuilderIDProfileArn, arn)
 }
 
 func TestKiroAPIRegionIgnoresOIDCRegionFallback(t *testing.T) {

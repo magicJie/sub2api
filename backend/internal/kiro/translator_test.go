@@ -2057,3 +2057,71 @@ func buildEventStreamFrame(t *testing.T, eventType string, payload any) []byte {
 	require.NoError(t, binary.Write(frame, binary.BigEndian, uint32(0)))
 	return frame.Bytes()
 }
+
+func TestParseNonStreamingEventStreamFallsBackToEstimatedInputTokens(t *testing.T) {
+	stream := bytes.NewBuffer(nil)
+	_, _ = stream.Write(buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{
+		"assistantResponseEvent": map[string]any{"content": "pong"},
+	}))
+
+	result, err := ParseNonStreamingEventStreamWithContext(stream, "claude-sonnet-4-5", KiroRequestContext{EstimatedInputTokens: 19})
+	require.NoError(t, err)
+	require.Equal(t, 19, result.Usage.InputTokens)
+	require.Equal(t, int64(19), gjson.GetBytes(result.ResponseBody, "usage.input_tokens").Int())
+}
+
+func TestShortenToolNameReplacesInvalidCharacters(t *testing.T) {
+	require.Equal(t, "mcp__server__read_file", shortenToolNameIfNeeded("mcp__server__read_file"))
+
+	short := shortenToolNameIfNeeded("mcp__plugin.foo:bar__读取")
+	require.Regexp(t, `^[a-zA-Z0-9_-]{1,63}$`, short)
+	require.Regexp(t, `^mcp__plugin_foo_bar___`, short)
+	require.Equal(t, short, shortenToolNameIfNeeded("mcp__plugin.foo:bar__读取"))
+	require.NotEqual(t, short, shortenToolNameIfNeeded("mcp__plugin.foo:bar__写入"))
+}
+
+func TestBuildKiroPayloadMovesToolResultImagesToUserMessage(t *testing.T) {
+	body := []byte(`{
+		"model":"claude-sonnet-4-5",
+		"messages":[
+			{"role":"user","content":"take a screenshot"},
+			{"role":"assistant","content":[{"type":"tool_use","id":"toolu_01","name":"screenshot","input":{}}]},
+			{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01","content":[
+				{"type":"text","text":"captured"},
+				{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}}
+			]}]}
+		],
+		"tools":[{"name":"screenshot","description":"capture","input_schema":{"type":"object","properties":{}}}]
+	}`)
+
+	result, err := BuildKiroPayloadWithContext(body, "claude-sonnet-4.5", "", "AI_EDITOR", nil)
+	require.NoError(t, err)
+	current := gjson.GetBytes(result.Payload, "conversationState.currentMessage.userInputMessage")
+	require.Equal(t, "png", current.Get("images.0.format").String())
+	require.Equal(t, "iVBORw0KGgo=", current.Get("images.0.source.bytes").String())
+	require.Equal(t, "captured", current.Get("userInputMessageContext.toolResults.0.content.0.text").String())
+	require.NotContains(t, current.Get("userInputMessageContext.toolResults").Raw, "iVBORw0KGgo=")
+}
+
+func TestContentFilteredStopReasonMapsToRefusal(t *testing.T) {
+	build := func() *bytes.Buffer {
+		stream := bytes.NewBuffer(nil)
+		_, _ = stream.Write(buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{
+			"assistantResponseEvent": map[string]any{"content": "I can't help with that."},
+		}))
+		_, _ = stream.Write(buildEventStreamFrame(t, "messageStopEvent", map[string]any{
+			"messageStopEvent": map[string]any{"stopReason": "CONTENT_FILTERED"},
+		}))
+		return stream
+	}
+
+	result, err := ParseNonStreamingEventStreamWithContext(build(), "claude-sonnet-4-5", KiroRequestContext{})
+	require.NoError(t, err)
+	require.Equal(t, "refusal", gjson.GetBytes(result.ResponseBody, "stop_reason").String())
+
+	var out bytes.Buffer
+	streamResult, err := StreamEventStreamAsAnthropicWithContext(context.Background(), build(), &out, "claude-sonnet-4-5", 9, KiroRequestContext{})
+	require.NoError(t, err)
+	require.Equal(t, "refusal", streamResult.StopReason)
+	require.Contains(t, out.String(), `"stop_reason":"refusal"`)
+}

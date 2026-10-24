@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,6 +26,8 @@ const (
 	// kiroProfileResolveNegCacheTTL Builder ID 等不支持 ListAvailableProfiles 的账号
 	// 会持续解析失败，负缓存避免每次用量查询/刷新都重复打上游。
 	kiroProfileResolveNegCacheTTL = 10 * time.Minute
+	// kiroBuilderIDProfileArn 是 Builder ID 登录共用的 profile（与 Kiro 客户端一致）。
+	kiroBuilderIDProfileArn = "arn:aws:codewhisperer:us-east-1:638616132270:profile/AAAACCCCXXXX"
 )
 
 type kiroAvailableProfile struct {
@@ -63,11 +66,21 @@ func resolveKiroProfileArn(ctx context.Context, repo AccountRepository, account 
 	}
 
 	profiles, err := listKiroAvailableProfiles(ctx, account, region, token)
-	if err != nil {
+	var arn string
+	var httpErr *kiroUsageHTTPError
+	switch {
+	case err == nil:
+		arn = selectKiroProfileARN(profiles, region)
+	case isKiroBuilderIDAccount(account),
+		errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusForbidden && strings.Contains(httpErr.Body, "Builder ID"):
+		// Builder ID 登录可能列不出 profile，回落到 Kiro 客户端使用的固定 profile。
+	default:
 		kiroProfileResolveNegCache.Store(account.ID, time.Now())
 		return "", err
 	}
-	arn := selectKiroProfileARN(profiles, region)
+	if arn == "" && (err != nil || isKiroBuilderIDAccount(account)) {
+		arn = kiroBuilderIDProfileArn
+	}
 	if arn == "" {
 		kiroProfileResolveNegCache.Store(account.ID, time.Now())
 		return "", fmt.Errorf("no kiro profile available in region %s", region)
