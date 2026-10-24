@@ -4372,7 +4372,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   allowOverages.value = false
 	const extra = newAccount.extra as Record<string, unknown> | undefined
 	mixedScheduling.value = extra?.mixed_scheduling === true
-	kiroCacheEmulationEnabled.value = extra?.kiro_cache_emulation_enabled === true
+	kiroCacheEmulationEnabled.value = extra?.kiro_cache_emulation_enabled !== false // 默认开启，显式 false 才关
 	kiroCacheEmulationRatioPercent.value = kiroCacheRatioToPercent(extra?.kiro_cache_emulation_ratio as number | undefined)
 	allowOverages.value = extra?.allow_overages === true
 	upstreamRequestIdHeader.value = readUpstreamRequestIdHeader(extra)
@@ -5870,7 +5870,8 @@ const handleSubmit = async () => {
         newExtra.kiro_cache_emulation_enabled = true
         newExtra.kiro_cache_emulation_ratio = kiroCachePercentToRatio(kiroCacheEmulationRatioPercent.value)
       } else {
-        delete newExtra.kiro_cache_emulation_enabled
+        // 后端默认开启，关闭必须显式写 false
+        newExtra.kiro_cache_emulation_enabled = false
         delete newExtra.kiro_cache_emulation_ratio
       }
       updatePayload.extra = newExtra

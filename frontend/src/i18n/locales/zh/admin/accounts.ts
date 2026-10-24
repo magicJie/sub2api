@@ -935,7 +935,7 @@ export default {
           title: 'Kiro Cache 本地计费模拟',
           enable: '启用 Cache Token 模拟归类',
           enabledHint: '按账号凭证跟踪可缓存前缀：首次请求归类为 cache creation，TTL 内重复前缀归类为 cache read。',
-          disabledHint: '关闭后，Kiro 请求的输入 Token 全部按普通 input token 记录。',
+          disabledHint: '关闭后，Kiro 请求的输入 Token 全部按普通 input token 记录（下游看不到缓存命中，按全价计费）。默认开启。',
           ratio: '模拟归类比例',
           ratioHint: '缩放被归类为 cache creation/read 的 Token；100% 表示按检测到的完整可缓存前缀归类。',
           localOnlyWarning: '这是 Sub2API 本地 usage 与计费分类模拟，不代表 Kiro 上游真实命中缓存，也不会减少上游 Token、上下文或额度消耗。',
