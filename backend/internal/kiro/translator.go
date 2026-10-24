@@ -161,7 +161,16 @@ type KiroUserInputMessage struct {
 	Origin                  string                       `json:"origin"`
 	Images                  []KiroImage                  `json:"images,omitempty"`
 	UserInputMessageContext *KiroUserInputMessageContext `json:"userInputMessageContext,omitempty"`
+	CachePoint              *KiroCachePoint              `json:"cachePoint,omitempty"`
 }
+
+// KiroCachePoint 是 Bedrock 风格的 prompt cache 断点，缓存到它为止的前缀。
+type KiroCachePoint struct {
+	Type string `json:"type"`
+}
+
+// kiroMaxCachePoints 是单个请求允许的 cachePoint 数量上限（与 Anthropic cache_control 一致）。
+const kiroMaxCachePoints = 4
 
 type KiroUserInputMessageContext struct {
 	ToolResults []KiroToolResult  `json:"toolResults,omitempty"`
@@ -178,8 +187,10 @@ type KiroTextContent struct {
 	Text string `json:"text"`
 }
 
+// KiroToolWrapper 是 tools 列表的一项：工具定义，或紧随被标记工具之后的 cachePoint。
 type KiroToolWrapper struct {
-	ToolSpecification KiroToolSpecification `json:"toolSpecification"`
+	ToolSpecification *KiroToolSpecification `json:"toolSpecification,omitempty"`
+	CachePoint        *KiroCachePoint        `json:"cachePoint,omitempty"`
 }
 
 type KiroToolSpecification struct {
@@ -193,8 +204,9 @@ type KiroInputSchema struct {
 }
 
 type KiroAssistantResponseMessage struct {
-	Content  string        `json:"content"`
-	ToolUses []KiroToolUse `json:"toolUses,omitempty"`
+	Content    string          `json:"content"`
+	ToolUses   []KiroToolUse   `json:"toolUses,omitempty"`
+	CachePoint *KiroCachePoint `json:"cachePoint,omitempty"`
 }
 
 type KiroToolUse struct {
@@ -385,7 +397,11 @@ func buildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, hea
 	systemPrompt := buildInjectedSystemPrompt(baseSystem, thinking, toolChoiceHint)
 
 	history, currentUserMsg, currentToolResults := processMessages(filteredMessages, modelID, normalizeOrigin(origin), &requestCtx)
-	history = prependSystemHistory(history, systemPrompt, modelID, normalizeOrigin(origin))
+	var systemCachePoint *KiroCachePoint
+	if systemHasKiroCacheControl(claudeBody, messages) {
+		systemCachePoint = newKiroCachePoint()
+	}
+	history = prependSystemHistory(history, systemPrompt, modelID, normalizeOrigin(origin), systemCachePoint)
 	var tools gjson.Result
 	if !isToolChoiceNone(claudeBody) {
 		tools = gjson.GetBytes(claudeBody, "tools")
@@ -404,6 +420,8 @@ func buildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, hea
 			}
 		}
 	}
+
+	limitKiroCachePoints(history, currentUserMsg, kiroMaxCachePoints)
 
 	var currentMessage KiroCurrentMessage
 	if currentUserMsg != nil {
@@ -1070,6 +1088,10 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 			break
 		}
 		if err != nil {
+			// 已经开始向客户端输出时，SSE 无法改状态码，只能发 error 事件让客户端知道回答不完整。
+			if streamErr, ok := AsStreamError(err); ok && messageStartSent {
+				_ = writeEvent("error", anthropicStreamErrorEvent(streamErr))
+			}
 			return nil, err
 		}
 		if msg == nil || len(msg.Payload) == 0 {
@@ -1200,6 +1222,10 @@ func extractInlineSystemPrompts(messages gjson.Result) (string, []gjson.Result) 
 			filtered = append(filtered, message)
 			continue
 		}
+		// 文本折叠进顶层 system，但 cache 断点留在原位置：标到前一条消息上（缓存到这里为止）。
+		if len(filtered) > 0 && hasKiroCacheControl(message) {
+			filtered[len(filtered)-1] = withKiroMessageCacheControl(filtered[len(filtered)-1])
+		}
 
 		content := strings.TrimSpace(extractTextFromContentBlocks(message.Get("content")))
 		if content == "" {
@@ -1311,10 +1337,11 @@ func buildInjectedSystemPrompt(systemPrompt string, thinking *thinkingDirective,
 		}
 		systemPrompt += toolChoiceHint
 	}
-	if !strings.Contains(systemPrompt, systemChunkedWritePolicy) {
+	// 行为引导类追加默认关闭，保持下游系统提示原样；需要时用环境变量打开。
+	if kiroEnvEnabled("SUB2API_KIRO_CHUNKED_WRITE_POLICY") && !strings.Contains(systemPrompt, systemChunkedWritePolicy) {
 		systemPrompt += "\n" + systemChunkedWritePolicy
 	}
-	if !strings.Contains(systemPrompt, systemAutonomousCompletionPolicy) {
+	if kiroEnvEnabled("SUB2API_KIRO_AUTONOMOUS_COMPLETION_POLICY") && !strings.Contains(systemPrompt, systemAutonomousCompletionPolicy) {
 		systemPrompt += "\n" + systemAutonomousCompletionPolicy
 	}
 	if thinking != nil {
@@ -1336,6 +1363,16 @@ func buildInjectedSystemPrompt(systemPrompt string, thinking *thinkingDirective,
 		}
 	}
 	return systemPrompt
+}
+
+// kiroEnvEnabled 报告布尔型环境变量是否打开（1/true/on/yes）。
+func kiroEnvEnabled(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "1", "true", "on", "yes":
+		return true
+	default:
+		return false
+	}
 }
 
 func buildKiroTemporalContext() string {
@@ -1390,7 +1427,7 @@ func isToolChoiceNone(claudeBody []byte) bool {
 	return strings.EqualFold(strings.TrimSpace(toolChoice.Get("type").String()), "none")
 }
 
-func prependSystemHistory(history []KiroHistoryMessage, systemPrompt, modelID, origin string) []KiroHistoryMessage {
+func prependSystemHistory(history []KiroHistoryMessage, systemPrompt, modelID, origin string, cachePoint *KiroCachePoint) []KiroHistoryMessage {
 	systemPrompt = strings.TrimSpace(systemPrompt)
 	if systemPrompt == "" {
 		return history
@@ -1399,9 +1436,10 @@ func prependSystemHistory(history []KiroHistoryMessage, systemPrompt, modelID, o
 	prefix := []KiroHistoryMessage{
 		{
 			UserInputMessage: &KiroUserInputMessage{
-				Content: systemPrompt,
-				ModelID: modelID,
-				Origin:  origin,
+				Content:    systemPrompt,
+				ModelID:    modelID,
+				Origin:     origin,
+				CachePoint: cachePoint,
 			},
 		},
 		{
@@ -1452,12 +1490,17 @@ func convertClaudeToolsToKiro(tools gjson.Result, requestCtx *KiroRequestContext
 		description = truncateKiroToolDescription(description)
 		inputSchema := normalizeKiroJSONSchema(tool.Get("input_schema").Value())
 		out = append(out, KiroToolWrapper{
-			ToolSpecification: KiroToolSpecification{
+			ToolSpecification: &KiroToolSpecification{
 				Name:        name,
 				Description: description,
 				InputSchema: KiroInputSchema{JSON: inputSchema},
 			},
 		})
+		if tool.Get("cache_control").Exists() {
+			if point := newKiroCachePoint(); point != nil {
+				out = append(out, KiroToolWrapper{CachePoint: point})
+			}
+		}
 	}
 	return out
 }
@@ -1670,6 +1713,9 @@ func processMessages(messages []gjson.Result, modelID, origin string, requestCtx
 					userMsg.Content = "Continue"
 				}
 			}
+			if hasKiroCacheControl(msg) {
+				userMsg.CachePoint = newKiroCachePoint()
+			}
 			if last {
 				currentUserMsg = &userMsg
 				currentToolResults = toolResults
@@ -1681,6 +1727,9 @@ func processMessages(messages []gjson.Result, modelID, origin string, requestCtx
 			}
 		case "assistant":
 			assistantMsg := buildAssistantMessageStruct(msg, requestCtx)
+			if hasKiroCacheControl(msg) {
+				assistantMsg.CachePoint = newKiroCachePoint()
+			}
 			if last {
 				history = append(history, KiroHistoryMessage{AssistantResponseMessage: &assistantMsg})
 				currentUserMsg = &KiroUserInputMessage{
@@ -1777,7 +1826,9 @@ func appendMissingPlaceholderTools(tools []KiroToolWrapper, historyToolNames []s
 	}
 	seen := make(map[string]bool)
 	for _, tool := range tools {
-		seen[strings.ToLower(strings.TrimSpace(tool.ToolSpecification.Name))] = true
+		if tool.ToolSpecification != nil {
+			seen[strings.ToLower(strings.TrimSpace(tool.ToolSpecification.Name))] = true
+		}
 	}
 	for _, name := range historyToolNames {
 		key := strings.ToLower(strings.TrimSpace(name))
@@ -1786,7 +1837,7 @@ func appendMissingPlaceholderTools(tools []KiroToolWrapper, historyToolNames []s
 		}
 		seen[key] = true
 		tools = append(tools, KiroToolWrapper{
-			ToolSpecification: KiroToolSpecification{
+			ToolSpecification: &KiroToolSpecification{
 				Name:        name,
 				Description: "Tool used in conversation history",
 				InputSchema: KiroInputSchema{JSON: normalizeKiroJSONSchema(nil)},
@@ -2026,6 +2077,9 @@ func mergeAdjacentMessages(messages []gjson.Result) []gjson.Result {
 			"role":    role,
 			"content": json.RawMessage(mergeMessageContent(lastMsg, msg)),
 		}
+		if hasKiroCacheControl(lastMsg) || hasKiroCacheControl(msg) {
+			mergedMsg["cache_control"] = map[string]string{"type": "ephemeral"}
+		}
 		encoded, _ := json.Marshal(mergedMsg)
 		merged[len(merged)-1] = gjson.ParseBytes(encoded)
 	}
@@ -2246,10 +2300,11 @@ func buildClaudeResponse(content string, toolUses []KiroToolUse, model string, u
 	if len(blocks) == 0 {
 		blocks = append(blocks, map[string]any{"type": "text", "text": ""})
 	}
-	if stopReason == "" {
+	// 与流式路径一致：max_tokens 原样保留，其余以实际输出的工具块为准。
+	if stopReason != "max_tokens" {
 		if usableTools > 0 {
 			stopReason = "tool_use"
-		} else {
+		} else if stopReason == "" || stopReason == "tool_use" {
 			stopReason = "end_turn"
 		}
 	}
@@ -2516,19 +2571,35 @@ func readEventStreamMessage(reader *bufio.Reader) (*eventStreamMessage, error) {
 	if _, err := io.ReadFull(reader, remaining); err != nil {
 		return nil, err
 	}
-	eventType := extractEventType(remaining[:headersLength])
+	headerValues := extractStringHeaders(remaining[:headersLength], ":event-type", ":message-type", ":exception-type", ":error-code")
+	eventType := headerValues[":event-type"]
 	payloadStart := headersLength
 	payloadEnd := uint32(len(remaining)) - 4
-	if payloadStart >= payloadEnd {
-		return &eventStreamMessage{EventType: eventType}, nil
+	var payload []byte
+	if payloadStart < payloadEnd {
+		payload = remaining[payloadStart:payloadEnd]
 	}
-	return &eventStreamMessage{
-		EventType: eventType,
-		Payload:   remaining[payloadStart:payloadEnd],
-	}, nil
+	// 流中途的异常帧（限流、校验失败、服务不可用等）：返回类型化错误，而不是当成普通事件吞掉。
+	if messageType := headerValues[":message-type"]; messageType == "exception" || messageType == "error" {
+		return nil, newKiroStreamError(firstNonEmpty(headerValues[":exception-type"], headerValues[":error-code"], eventType), payload)
+	}
+	if isKiroExceptionEventType(eventType) {
+		return nil, newKiroStreamError(eventType, payload)
+	}
+	return &eventStreamMessage{EventType: eventType, Payload: payload}, nil
 }
 
 func extractEventType(headers []byte) string {
+	return extractStringHeaders(headers, ":event-type")[":event-type"]
+}
+
+// extractStringHeaders 读取 eventstream 头里指定名称的字符串值。
+func extractStringHeaders(headers []byte, names ...string) map[string]string {
+	want := make(map[string]bool, len(names))
+	for _, name := range names {
+		want[name] = true
+	}
+	values := make(map[string]string, len(names))
 	offset := 0
 	for offset < len(headers) {
 		nameLen := int(headers[offset])
@@ -2554,8 +2625,8 @@ func extractEventType(headers []byte) string {
 			}
 			value := string(headers[offset : offset+valueLen])
 			offset += valueLen
-			if name == ":event-type" {
-				return value
+			if want[name] {
+				values[name] = value
 			}
 			continue
 		}
@@ -2565,7 +2636,7 @@ func extractEventType(headers []byte) string {
 		}
 		offset = next
 	}
-	return ""
+	return values
 }
 
 func skipHeaderValue(headers []byte, offset int, valueType byte) (int, bool) {
@@ -3401,11 +3472,19 @@ func getString(m map[string]any, key string) string {
 	return ""
 }
 
+// readStopReason 读取上游 stop reason 并归一化为 Anthropic 取值；上游会发大写的
+// TOOL_USE / END_TURN 等，未识别的值返回空串，交给调用方按内容块推断。
 func readStopReason(m map[string]any) string {
-	if stop := getString(m, "stop_reason"); stop != "" {
-		return stop
+	stop := getString(m, "stop_reason")
+	if stop == "" {
+		stop = getString(m, "stopReason")
 	}
-	return getString(m, "stopReason")
+	switch normalized := strings.ToLower(strings.TrimSpace(stop)); normalized {
+	case "end_turn", "tool_use", "max_tokens", "stop_sequence":
+		return normalized
+	default:
+		return ""
+	}
 }
 
 func toInt(value any) (int, bool) {

@@ -248,6 +248,7 @@ func ProvideKiroRuntimeBinding(
 	gatewayService.SetKiroCooldownStore(kiroCooldownStore)
 	gatewayService.SetKiroContinuationStore(kiroContinuationStore)
 	accountUsageService.SetKiroCooldownStore(kiroCooldownStore)
+	kiroPaceRefresher.Store(accountUsageService)
 	accountTestService.SetKiroTokenProvider(kiroTokenProvider)
 	return KiroRuntimeBinding{}
 }
