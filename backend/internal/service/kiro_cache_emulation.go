@@ -3,10 +3,15 @@ package service
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"math"
 	"sort"
 	"strings"
@@ -15,14 +20,17 @@ import (
 
 	kiropkg "github.com/Wei-Shaw/sub2api/internal/kiro"
 	"github.com/Wei-Shaw/sub2api/internal/kiro/anthropictokenizer"
+	_ "golang.org/x/image/webp"
 )
 
 const (
-	kiroCacheDefaultTTL          = 5 * time.Minute
-	kiroCacheOneHourTTL          = time.Hour
-	kiroCacheMaxSupportedTTL     = time.Hour
-	kiroTokensPerTool            = 150
-	kiroTokensPerMessage         = 4
+	kiroCacheDefaultTTL      = 5 * time.Minute
+	kiroCacheOneHourTTL      = time.Hour
+	kiroCacheMaxSupportedTTL = time.Hour
+	kiroTokensPerMessage     = 4
+	// 图片按 Anthropic 的 (宽×高)/750 估算；超过 1568px 长边会被缩放，单张约 1600 封顶。
+	kiroTokensPerImageMax        = 1600
+	kiroImagePixelsPerToken      = 750
 	kiroCacheMinTokensDefault    = 1024
 	kiroCacheMinTokensOpus       = 4096
 	kiroCacheMinTokensHaiku3     = 2048
@@ -52,12 +60,14 @@ var globalKiroCacheTracker = &kiroCacheTracker{entries: make(map[uint64]map[[32]
 
 // kiroCacheEmulationRatio 返回账号的 Kiro prompt cache 计费模拟比例；0 表示未启用。
 // 配置放在账号 extra（kiro_cache_emulation_enabled / kiro_cache_emulation_ratio），
-// 不需要修改上游 groups 表结构。ratio 省略时默认 1，取值归一化到 (0,1]。
+// 不需要修改上游 groups 表结构。默认开启：只有显式写 false 才关闭，
+// 否则 Kiro 上游不报缓存用量，下游会把整段上下文都按普通 input 计费。
+// ratio 省略时默认 1，取值归一化到 (0,1]。
 func kiroCacheEmulationRatio(account *Account) float64 {
-	if account == nil || account.Platform != PlatformKiro || account.Extra == nil {
+	if account == nil || account.Platform != PlatformKiro {
 		return 0
 	}
-	if enabled, _ := account.Extra["kiro_cache_emulation_enabled"].(bool); !enabled {
+	if enabled, ok := account.Extra["kiro_cache_emulation_enabled"].(bool); ok && !enabled {
 		return 0
 	}
 	ratio := 1.0
@@ -234,7 +244,7 @@ func flattenKiroCacheBlocks(payload map[string]any) []kiroPendingBlock {
 			value := stripKiroCacheControl(tool)
 			blocks = append(blocks, kiroPendingBlock{
 				value:  map[string]any{"kind": "tool", "tool_index": toolIndex, "tool": value},
-				tokens: kiroTokensPerTool, breakpointTTL: extractKiroCacheTTL(tool),
+				tokens: countKiroToolDefinitionTokens(value), breakpointTTL: extractKiroCacheTTL(tool),
 			})
 		}
 	}
@@ -257,16 +267,20 @@ func flattenKiroCacheBlocks(payload map[string]any) []kiroPendingBlock {
 			block := map[string]any{"type": "text", "text": typed}
 			blocks = append(blocks, kiroPendingBlock{
 				value:  map[string]any{"kind": "message", "message_index": messageIndex, "role": role, "block_index": 0, "block": block},
-				tokens: countKiroMessageContentTokens(block), messageIndex: &mi, isMessageEnd: true,
+				tokens: kiroTokensPerMessage + countKiroMessageContentTokens(block), messageIndex: &mi, isMessageEnd: true,
 			})
 		case []any:
 			lastBlockIndex := len(typed) - 1
 			for blockIndex, rawBlock := range typed {
 				mi := messageIndex
 				value := stripKiroCacheControl(rawBlock)
+				tokens := countKiroMessageContentTokens(rawBlock)
+				if blockIndex == 0 {
+					tokens += kiroTokensPerMessage
+				}
 				blocks = append(blocks, kiroPendingBlock{
 					value:  map[string]any{"kind": "message", "message_index": messageIndex, "role": role, "block_index": blockIndex, "block": value},
-					tokens: countKiroMessageContentTokens(rawBlock), breakpointTTL: extractKiroCacheTTL(rawBlock), messageIndex: &mi, isMessageEnd: blockIndex == lastBlockIndex,
+					tokens: tokens, breakpointTTL: extractKiroCacheTTL(rawBlock), messageIndex: &mi, isMessageEnd: blockIndex == lastBlockIndex,
 				})
 			}
 		}
@@ -501,26 +515,23 @@ func stripKiroCacheControl(v any) any {
 	}
 }
 
+// countKiroInputTokensFromPayload 估算请求的输入 token。
+// 必须和 flattenKiroCacheBlocks 用同一套逐块计数：缓存模拟用总数减去前缀累计得到普通 input，
+// 两边口径不一致时（例如总数按整段 JSON 计、前缀只按文本计），差额会全部变成全价 input。
 func countKiroInputTokensFromPayload(payload map[string]any) int {
 	if payload == nil {
 		return 1
 	}
 	tokens := 0
-	for _, block := range normalizeKiroSystemBlocks(payload["system"]) {
-		tokens += countKiroSystemBlockTokens(block)
-	}
-	messages, _ := payload["messages"].([]any)
-	if len(messages) > 0 {
-		canonical, err := canonicalJSON(messages)
-		if err == nil {
-			tokens += anthropictokenizer.CountTokens(string(canonical))
-		}
-		tokens += len(messages) * kiroTokensPerMessage
-	}
-	if tools, ok := payload["tools"].([]any); ok {
-		tokens += len(tools) * kiroTokensPerTool
+	for _, block := range flattenKiroCacheBlocks(payload) {
+		tokens += max(block.tokens, 0)
 	}
 	return max(tokens, 1)
+}
+
+// countKiroToolDefinitionTokens 按工具定义（name/description/input_schema）的实际内容计数。
+func countKiroToolDefinitionTokens(tool any) int {
+	return max(countKiroSerializedValueTokens(tool), 1)
 }
 
 func countKiroSystemBlockTokens(value any) int {
@@ -550,9 +561,17 @@ func countKiroMessageContentTokens(value any) int {
 		}
 		return total
 	case map[string]any:
+		switch typed["type"] {
+		case "image":
+			return estimateKiroImageTokens(typed)
+		case "redacted_thinking":
+			// 加密内容不会转发给 Kiro。
+			return 0
+		}
 		if text, ok := typed["text"].(string); ok {
 			return anthropictokenizer.CountTokens(text)
 		}
+		// thinking 只计正文；signature 是校验用的 base64，不会转发给 Kiro。
 		if thinking, ok := typed["thinking"].(string); ok {
 			return anthropictokenizer.CountTokens(thinking)
 		}
@@ -566,6 +585,23 @@ func countKiroMessageContentTokens(value any) int {
 	default:
 		return 0
 	}
+}
+
+// estimateKiroImageTokens 按 Anthropic 的公式 (宽×高)/750 估算图片 token。
+// 只解码图片头拿尺寸；解不出（URL 图片、未知格式）时按单张上限计。
+// 不能把 base64 当文本计：一张截图会被算成几万 token。
+func estimateKiroImageTokens(block map[string]any) int {
+	source, _ := block["source"].(map[string]any)
+	data, _ := source["data"].(string)
+	if data == "" {
+		return kiroTokensPerImageMax
+	}
+	cfg, _, err := image.DecodeConfig(base64.NewDecoder(base64.StdEncoding, strings.NewReader(data)))
+	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 {
+		return kiroTokensPerImageMax
+	}
+	tokens := (cfg.Width*cfg.Height + kiroImagePixelsPerToken - 1) / kiroImagePixelsPerToken
+	return min(max(tokens, 1), kiroTokensPerImageMax)
 }
 
 func countKiroSerializedValueTokens(value any) int {

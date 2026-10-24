@@ -13,7 +13,8 @@
   - `frontend/src/kiro/`（管理端 API、OAuth/导入 composable、模型目录与映射预设、配色、图标）
 - 上游文件只允许两类改动：新增字段 / 嵌入结构体，或一行转发调用；都带 `Kiro（fork）` 注释，便于 `grep`。
 - 不改 ent schema、不加数据库迁移。Kiro 的 prompt cache 计费模拟配置放在账号 `extra`：
-  `kiro_cache_emulation_enabled`（bool）、`kiro_cache_emulation_ratio`（0~1，默认 1），在账号编辑页设置。
+  `kiro_cache_emulation_enabled`（bool，默认开启，显式 `false` 才关闭）、`kiro_cache_emulation_ratio`（0~1，默认 1），在账号编辑页设置。
+  Kiro 上游不返回缓存用量，关闭后下游会把整段上下文按普通 input 计费。
 - 下游系统提示原样转发，只在前面加协议必需的 thinking 前缀和身份覆盖（`<CRITICAL_OVERRIDE>`，防止上游自称 Kiro）。
   行为引导类追加默认关闭，用环境变量打开（`1/true/on/yes`）：
   - `SUB2API_KIRO_CHUNKED_WRITE_POLICY`：要求按工具描述里的分块限制静默分多次写入。

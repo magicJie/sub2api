@@ -822,7 +822,7 @@ export default {
           title: 'Kiro Cache Local Billing Simulation',
           enable: 'Enable cache token simulation',
           enabledHint: 'Tracks cacheable prefixes per account credential: the first request is classified as cache creation and matching prefixes within the TTL as cache read.',
-          disabledHint: 'When disabled, all Kiro input tokens are recorded as regular input tokens.',
+          disabledHint: 'When disabled, all Kiro input tokens are recorded as regular input tokens (downstream sees no cache hits and pays full price). Enabled by default.',
           ratio: 'Simulated classification ratio',
           ratioHint: 'Scales tokens classified as cache creation/read; 100% classifies the full cacheable prefix detected locally.',
           localOnlyWarning: 'This only simulates Sub2API usage and billing categories. It does not mean Kiro upstream hit a real cache and does not reduce upstream tokens, context, or quota usage.',
