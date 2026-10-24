@@ -978,7 +978,8 @@ describe('EditAccountModal', () => {
     await second.get('form#edit-account-form').trigger('submit.prevent')
     await flushPromises()
     const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
-    expect(extra).not.toHaveProperty('kiro_cache_emulation_enabled')
+    // 后端默认开启，关闭必须显式写 false；比例值仍然删除。
+    expect(extra).toMatchObject({ kiro_cache_emulation_enabled: false })
     expect(extra).not.toHaveProperty('kiro_cache_emulation_ratio')
     second.unmount()
   })
