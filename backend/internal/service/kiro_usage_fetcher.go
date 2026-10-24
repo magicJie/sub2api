@@ -207,6 +207,7 @@ func (s *AccountUsageService) storeKiroUsageSnapshot(accountID int64, usage *Usa
 		usageInfo: cloneUsageInfo(usage),
 		timestamp: now,
 	})
+	recordKiroPaceSnapshot(accountID, usage, now)
 }
 
 func (s *AccountUsageService) getCachedKiroUsage(accountID int64) (*UsageInfo, bool) {

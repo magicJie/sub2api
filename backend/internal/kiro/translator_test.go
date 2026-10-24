@@ -433,6 +433,8 @@ func TestBuildKiroPayloadChunkedWritePolicyIsIdempotentAndTruncated(t *testing.T
 }
 
 func TestBuildKiroPayloadInjectsChunkedWritePolicyIntoSystemPrompt(t *testing.T) {
+	t.Setenv("SUB2API_KIRO_CHUNKED_WRITE_POLICY", "true")
+	t.Setenv("SUB2API_KIRO_AUTONOMOUS_COMPLETION_POLICY", "1")
 	body := []byte(`{
 		"model":"claude-sonnet-4-5",
 		"system":"Follow user instructions.",
@@ -453,6 +455,21 @@ func TestBuildKiroPayloadInjectsChunkedWritePolicyIntoSystemPrompt(t *testing.T)
 	require.Equal(t, 1, strings.Count(systemContent, systemChunkedWritePolicy))
 	require.Contains(t, systemContent, systemAutonomousCompletionPolicy)
 	require.Equal(t, 1, strings.Count(systemContent, systemAutonomousCompletionPolicy))
+}
+
+func TestBuildKiroPayloadOmitsBehaviorPoliciesByDefault(t *testing.T) {
+	t.Setenv("SUB2API_KIRO_CHUNKED_WRITE_POLICY", "")
+	t.Setenv("SUB2API_KIRO_AUTONOMOUS_COMPLETION_POLICY", "")
+	body := []byte(`{"model":"claude-sonnet-4-5","system":"Ask before editing files.","messages":[{"role":"user","content":"hello"}]}`)
+
+	kiroBuildResult, err := BuildKiroPayloadWithContext(body, "claude-sonnet-4.5", "", "AI_EDITOR", nil)
+	require.NoError(t, err)
+
+	systemContent := gjson.GetBytes(kiroBuildResult.Payload, "conversationState.history.0.userInputMessage.content").String()
+	require.Contains(t, systemContent, "Ask before editing files.")
+	require.Contains(t, systemContent, "<CRITICAL_OVERRIDE>")
+	require.NotContains(t, systemContent, systemChunkedWritePolicy)
+	require.NotContains(t, systemContent, systemAutonomousCompletionPolicy)
 }
 
 func TestBuildKiroPayloadInjectsThinkingIntoHistory(t *testing.T) {
@@ -640,6 +657,23 @@ func TestExtractThinkingBlocksParsesRealTags(t *testing.T) {
 	require.NotEmpty(t, blocks[0]["signature"])
 	require.Equal(t, "text", blocks[1]["type"])
 	require.Equal(t, "final text", blocks[1]["text"])
+}
+
+func TestParseNonStreamingEventStreamNormalizesUpstreamStopReason(t *testing.T) {
+	for upstream, want := range map[string]string{"TOOL_USE": "end_turn", "END_TURN": "end_turn", "MAX_TOKENS": "max_tokens", "WEIRD": "end_turn"} {
+		stream := bytes.NewBuffer(nil)
+		_, _ = stream.Write(buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{
+			"assistantResponseEvent": map[string]any{"content": "hello"},
+		}))
+		// Kiro 上游把 stopReason 放在事件顶层。
+		_, _ = stream.Write(buildEventStreamFrame(t, "messageStopEvent", map[string]any{"stopReason": upstream}))
+		result, err := ParseNonStreamingEventStreamWithContext(stream, "claude-sonnet-4-5", KiroRequestContext{})
+		require.NoError(t, err)
+		var response map[string]any
+		require.NoError(t, json.Unmarshal(result.ResponseBody, &response))
+		// 没有工具块时，上游的 TOOL_USE 也要落回 end_turn，与流式路径一致。
+		require.Equal(t, want, response["stop_reason"], upstream)
+	}
 }
 
 func TestParseNonStreamingEventStreamPureThinkingFallback(t *testing.T) {

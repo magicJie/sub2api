@@ -26,6 +26,8 @@ const (
 	kiroErrorBadRequestQuota        = "bad_request_quota"
 	kiroErrorBadRequestUnknown      = "bad_request_unknown"
 	kiroErrorRefreshTokenInvalid    = "refresh_token_invalid"
+	kiroErrorPromptTooLong          = "prompt_too_long"
+	kiroErrorModelCapacity          = "model_capacity"
 
 	kiroQuotaStateNormal           = "normal"
 	kiroQuotaStateOverageActive    = "overage_active"
@@ -44,6 +46,10 @@ func classifyKiroHTTPError(statusCode int, body string) kiroErrorClassification 
 	lower := strings.ToLower(trimmed)
 
 	switch {
+	case looksLikeKiroPromptTooLongError(trimmed, lower):
+		return kiroErrorClassification{Category: kiroErrorPromptTooLong, StatusCode: http.StatusBadRequest, Message: trimmed}
+	case looksLikeKiroModelCapacityError(trimmed, lower):
+		return kiroErrorClassification{Category: kiroErrorModelCapacity, StatusCode: http.StatusServiceUnavailable, Message: trimmed}
 	case statusCode == http.StatusUnauthorized:
 		return kiroErrorClassification{Category: kiroErrorAuthError, StatusCode: statusCode, Message: trimmed}
 	case statusCode == http.StatusPaymentRequired && looksLikeKiroMonthlyRequestCountError(trimmed):
@@ -118,6 +124,19 @@ func classifyKiroBadRequest(trimmed, lower string) kiroErrorClassification {
 	default:
 		return kiroErrorClassification{Category: kiroErrorBadRequestUnknown, StatusCode: http.StatusBadRequest, Message: trimmed}
 	}
+}
+
+// looksLikeKiroPromptTooLongError 识别上下文超长：CONTENT_LENGTH_EXCEEDS_THRESHOLD 或 "input is too long"。
+func looksLikeKiroPromptTooLongError(trimmed, lower string) bool {
+	return strings.Contains(trimmed, "CONTENT_LENGTH_EXCEEDS_THRESHOLD") ||
+		strings.Contains(lower, "input is too long") ||
+		strings.Contains(lower, "prompt is too long")
+}
+
+// looksLikeKiroModelCapacityError 识别模型容量不足（INSUFFICIENT_MODEL_CAPACITY），属于可切换账号重试的临时错误。
+func looksLikeKiroModelCapacityError(trimmed, lower string) bool {
+	return strings.Contains(trimmed, "INSUFFICIENT_MODEL_CAPACITY") ||
+		strings.Contains(lower, "insufficient model capacity")
 }
 
 func looksLikeKiroBadRequestSchemaError(lower string) bool {

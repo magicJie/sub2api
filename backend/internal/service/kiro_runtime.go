@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -245,6 +246,10 @@ func (s *GatewayService) forwardKiroMessages(ctx context.Context, c *gin.Context
 	cacheUsage := s.buildKiroCacheEmulationUsage(account, kiroGroup, body, mappedModel, inputTokens)
 	requestCtx.CacheEmulationUsage = cacheUsage.toKiroUsage()
 	parseResult, err := kiropkg.ParseNonStreamingEventStreamWithContext(resp.Body, mappedModel, requestCtx)
+	if streamErr, ok := kiropkg.AsStreamError(err); ok {
+		// 上游在流中返回异常帧：按等价 HTTP 错误走统一分类（限流切换账号、输入过长等）。
+		return nil, s.handleKiroHTTPError(ctx, kiroStreamErrorResponse(streamErr, resp.Header), c, account, mappedModel, body)
+	}
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{
 			"type": "error",
@@ -339,11 +344,45 @@ func (s *GatewayService) openKiroAnthropicStreamResponse(ctx context.Context, ac
 		_ = pw.Close()
 	}()
 
+	return kiroStreamResponseOrException(pr, resp.StatusCode, wrappedHeaders), inputTokens, nil
+}
+
+// kiroStreamErrorResponse 把流中异常转成等价的上游 HTTP 错误响应，便于复用 HTTP 错误分类。
+func kiroStreamErrorResponse(streamErr *kiropkg.StreamError, headers http.Header) *http.Response {
+	body, _ := json.Marshal(map[string]any{
+		"message": streamErr.Message,
+		"reason":  streamErr.ExceptionType,
+	})
+	errHeaders := headers.Clone()
+	if errHeaders == nil {
+		errHeaders = make(http.Header)
+	}
+	errHeaders.Set("Content-Type", "application/json")
 	return &http.Response{
-		StatusCode: resp.StatusCode,
-		Header:     wrappedHeaders,
-		Body:       pr,
-	}, inputTokens, nil
+		StatusCode: streamErr.StatusCode,
+		Header:     errHeaders,
+		Body:       io.NopCloser(bytes.NewReader(body)),
+	}
+}
+
+// kiroStreamResponseOrException 等转换器写出第一段数据：若在此之前就遇到上游异常帧，
+// 把它变成等价状态码的错误响应，交给调用方现有的 >=400 分支（分类、记录、切换账号）。
+func kiroStreamResponseOrException(pr *io.PipeReader, statusCode int, headers http.Header) *http.Response {
+	reader := bufio.NewReader(pr)
+	if _, err := reader.Peek(1); err != nil {
+		if streamErr, ok := kiropkg.AsStreamError(err); ok {
+			_ = pr.Close()
+			return kiroStreamErrorResponse(streamErr, headers)
+		}
+	}
+	return &http.Response{
+		StatusCode: statusCode,
+		Header:     headers,
+		Body: struct {
+			io.Reader
+			io.Closer
+		}{reader, pr},
+	}
 }
 
 func (s *GatewayService) executeKiroUpstream(ctx context.Context, account *Account, anthropicBody []byte, mappedModel, requestModel, token string, headers http.Header) (*http.Response, kiropkg.KiroRequestContext, error) {
@@ -784,6 +823,17 @@ func (s *GatewayService) markKiroInvalidModelRateLimited(ctx context.Context, ac
 type kiroHTTPErrorOutcome struct {
 	StatusCode int
 	Message    string
+	ErrorType  string // Anthropic 错误类型；为空时用 upstream_error
+}
+
+// kiroPromptTooLongMessage 与 Anthropic 的上下文超长报错一致，Claude Code 据此触发自动压缩。
+const kiroPromptTooLongMessage = "prompt is too long: the request exceeds the model's context window"
+
+func (o *kiroHTTPErrorOutcome) anthropicErrorType() string {
+	if o.ErrorType != "" {
+		return o.ErrorType
+	}
+	return "upstream_error"
 }
 
 // classifyKiroHTTPErrorAndRecordOps performs Kiro upstream HTTP error
@@ -819,6 +869,43 @@ func (s *GatewayService) classifyKiroHTTPErrorAndRecordOps(ctx context.Context, 
 			StatusCode:      resp.StatusCode,
 			ResponseBody:    respBody,
 			ResponseHeaders: resp.Header.Clone(),
+		}
+	}
+
+	if classification.Category == kiroErrorPromptTooLong {
+		// 换账号也一样超长：直接按 Anthropic 的上下文超长错误返回，让客户端压缩上下文。
+		setOpsUpstreamError(c, resp.StatusCode, upstreamMsg, "")
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			Platform:           account.Platform,
+			AccountID:          account.ID,
+			AccountName:        account.Name,
+			UpstreamStatusCode: resp.StatusCode,
+			UpstreamRequestID:  resp.Header.Get("x-request-id"),
+			Kind:               "http_error",
+			Message:            upstreamMsg,
+		})
+		return &kiroHTTPErrorOutcome{
+			StatusCode: http.StatusBadRequest,
+			Message:    kiroPromptTooLongMessage,
+			ErrorType:  "invalid_request_error",
+		}, nil
+	}
+	if classification.Category == kiroErrorModelCapacity {
+		// 模型容量不足与账号无关：切换账号重试，但不据此封禁账号。
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			Platform:           account.Platform,
+			AccountID:          account.ID,
+			AccountName:        account.Name,
+			UpstreamStatusCode: resp.StatusCode,
+			UpstreamRequestID:  resp.Header.Get("x-request-id"),
+			Kind:               "failover",
+			Message:            upstreamMsg,
+		})
+		return nil, &UpstreamFailoverError{
+			StatusCode:             529,
+			ResponseBody:           respBody,
+			ResponseHeaders:        resp.Header.Clone(),
+			RequestScopedTransient: true,
 		}
 	}
 
@@ -866,7 +953,7 @@ func (s *GatewayService) handleKiroHTTPError(ctx context.Context, resp *http.Res
 	c.JSON(outcome.StatusCode, gin.H{
 		"type": "error",
 		"error": gin.H{
-			"type":    "upstream_error",
+			"type":    outcome.anthropicErrorType(),
 			"message": outcome.Message,
 		},
 	})

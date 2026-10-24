@@ -548,7 +548,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				quotaOK := s.isAccountSchedulableForQuota(account)
 				windowCostOK := s.isAccountSchedulableForWindowCost(ctx, account, true)
 				rpmOK := s.isAccountSchedulableForRPM(ctx, account, true)
-				schedulable := s.isAccountSchedulableForSelection(account)
+				schedulable := s.isAccountSchedulableForSelection(account) && !kiroStickyAccountSpent(account, accounts) // Kiro（fork）
 
 				slog.Debug("sticky.layer1_5_no_routing_checks",
 					"account_id", accountID,
@@ -746,6 +746,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			if cfg.PreferSoonestReset {
 				candidates = filterBySoonestReset(candidates)
 			}
+			candidates = filterByKiroPace(candidates) // Kiro（fork）：按额度进度收窄
 			// 3. 取负载率最低的集合
 			candidates = filterByMinLoadRate(candidates)
 			// 4. LRU 选择最久未用的账号

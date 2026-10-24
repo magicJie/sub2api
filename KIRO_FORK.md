@@ -10,9 +10,22 @@
   - `backend/internal/service/kiro_*.go`
   - `backend/internal/handler/admin/kiro_oauth_handler.go`、`handler/dto/kiro.go`、`server/routes/kiro.go`
   - `backend/internal/domain/platforms_kiro.go`（用 `init` 追加到上游平台清单）
+  - `frontend/src/kiro/`（管理端 API、OAuth/导入 composable、模型目录与映射预设、配色、图标）
 - 上游文件只允许两类改动：新增字段 / 嵌入结构体，或一行转发调用；都带 `Kiro（fork）` 注释，便于 `grep`。
 - 不改 ent schema、不加数据库迁移。Kiro 的 prompt cache 计费模拟配置放在账号 `extra`：
-  `kiro_cache_emulation_enabled`（bool）、`kiro_cache_emulation_ratio`（0~1，默认 1）。
+  `kiro_cache_emulation_enabled`（bool）、`kiro_cache_emulation_ratio`（0~1，默认 1），在账号编辑页设置。
+- 下游系统提示原样转发，只在前面加协议必需的 thinking 前缀和身份覆盖（`<CRITICAL_OVERRIDE>`，防止上游自称 Kiro）。
+  行为引导类追加默认关闭，用环境变量打开（`1/true/on/yes`）：
+  - `SUB2API_KIRO_CHUNKED_WRITE_POLICY`：要求按工具描述里的分块限制静默分多次写入。
+  - `SUB2API_KIRO_AUTONOMOUS_COMPLETION_POLICY`：要求有工具时自主做完、不停下来等确认（会覆盖下游“先确认”类要求）。
+  - `SUB2API_KIRO_TIME_CONTEXT`（`date`/`precise`）：追加当前日期或时间。
+- 协议层（借鉴 magpie-community/plugins packages/kiro，MIT）：
+  - `internal/kiro/cache_points.go`：把客户端 `cache_control` 原样转成 Kiro 的 `cachePoint`（消息、工具，最多 4 个保留最后），`SUB2API_KIRO_CACHE_POINTS=off` 关闭。
+  - `internal/kiro/stream_error.go`：识别流中 `:message-type=exception` 帧；未输出前按等价 HTTP 状态走错误分类与 failover，已输出则发 SSE `error`，不再伪装成正常结束。
+  - `service/kiro_error_classifier.go`：`CONTENT_LENGTH_EXCEEDS_THRESHOLD` → Anthropic `invalid_request_error` “prompt is too long”（Claude Code 据此自动压缩）；`INSUFFICIENT_MODEL_CAPACITY` → 529 换号且不封禁账号。
+- 多账号调度（借鉴 yetone/magpie，MIT）：`service/kiro_pace_scheduling.go`，挂在 `gateway_scheduling.go` Layer 2（优先级之后、负载率之前）与 Layer 1.5 粘性检查。
+  按已用比例分档（<90 / 90–98 / ≥98），正常档按 `pace = (100−used%)/max(距重置小时,1)` 优先，10% 内视为同档；粘住的账号 ≥98% 且有替补时放开粘性。
+  用量来自进程内快照，超过 5 分钟后台刷新。`SUB2API_KIRO_PACE_SCHEDULING=off` 关闭。
 
 ## 上游文件中的挂钩点
 
@@ -37,6 +50,20 @@
 | `cmd/server/wire_gen.go` | wire 生成产物，冲突时重新生成，不要手工合并 |
 
 测试侧只给上游测试的硬编码平台列表追加了 `kiro`，以及 `platformCatalog.builtin.json`（生成产物）。
+
+### 前端挂钩点
+
+上游前端文件里的 Kiro 分支同样按平台字面量 `'kiro'` 判断，`git grep -n "kiro" -- frontend/src ':!frontend/src/kiro'` 可列出全部：
+
+| 文件 | 挂钩 |
+|---|---|
+| `components/account/CreateAccountModal.vue` | 平台按钮、OAuth（社交 / IdC）与导入 token、API Key 直连推理区域、默认模型映射 |
+| `components/account/EditAccountModal.vue` | OAuth 账号的模型限制（白名单/映射）、推理区域、cache 计费模拟 |
+| `components/account/OAuthAuthorizationFlow.vue` | 回调 URL 解析 code/state |
+| `components/account/AccountUsageCell.vue`、`AccountStatusIndicator.vue`、`views/admin/AccountsView.vue` | 套餐 / Credit / Bonus / 超额展示与额度状态徽章 |
+| `components/common/PlatformIcon.vue`、`utils/platformColors.ts`、`utils/keyGroupProviders.ts`、`components/keys/UseKeyModal.vue` | 图标、配色、Key 分组归类 |
+| `composables/useModelWhitelist.ts` | 模型目录与映射预设 |
+| `api/admin/index.ts`、`types/index.ts`、`i18n/locales/{zh,en}/admin/accounts.ts` | API 注册、字段类型、文案 |
 
 ## 同步上游
 
@@ -64,7 +91,9 @@ cd backend && go build ./... && go test -tags=unit ./...
 
 ## 未移植 / 待办
 
-- 前端：Kiro 账号创建/编辑、OAuth 流程、用量展示（第二阶段）。
+- 前端：旧 fork 的分组级 cache emulation 设置（已改为账号级）、用量页 Kiro 会话指纹列未移植（依赖未移植的后端表结构）。
+- 刻意不做：改写下游系统提示的“提示词过滤”（Kiro-Go / kiro-account-manager 的替换 Claude Code 提示、去环境噪音），
+  以及按会话复用上一次回答的“响应缓存”。本 fork 定位是纯净的模型 API，下游提示与回答不应被网关改动。
 - 旧 fork 中与 Kiro 无关的改动（流失速 watchdog、harmony token 中和、OpenAI refresh token 复用处理等）未带入。
 - 旧 fork 的分组级 cache emulation 列、usage_logs 会话指纹列及其审计 UI 未移植（需要改上游表结构）。
 - Kiro 专用 keepalive 配置 `gateway.kiro_stream_keepalive_interval` 未移植，使用全局 `stream_keepalive_interval`。
