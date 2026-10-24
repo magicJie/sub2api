@@ -2125,3 +2125,24 @@ func TestContentFilteredStopReasonMapsToRefusal(t *testing.T) {
 	require.Equal(t, "refusal", streamResult.StopReason)
 	require.Contains(t, out.String(), `"stop_reason":"refusal"`)
 }
+
+func TestParseNonStreamingEventStreamMergesReasoningChunks(t *testing.T) {
+	stream := bytes.NewBuffer(nil)
+	for _, part := range []string{"The ", "answer ", "is 391."} {
+		_, _ = stream.Write(buildEventStreamFrame(t, "reasoningContentEvent", map[string]any{
+			"reasoningContentEvent": map[string]any{"text": part},
+		}))
+	}
+	_, _ = stream.Write(buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{
+		"assistantResponseEvent": map[string]any{"content": "391"},
+	}))
+
+	result, err := ParseNonStreamingEventStreamWithContext(stream, "claude-sonnet-4-5", KiroRequestContext{})
+	require.NoError(t, err)
+	content := gjson.GetBytes(result.ResponseBody, "content").Array()
+	require.Len(t, content, 2)
+	require.Equal(t, "thinking", content[0].Get("type").String())
+	require.Equal(t, "The answer is 391.", content[0].Get("thinking").String())
+	require.Equal(t, "text", content[1].Get("type").String())
+	require.Equal(t, "391", content[1].Get("text").String())
+}
