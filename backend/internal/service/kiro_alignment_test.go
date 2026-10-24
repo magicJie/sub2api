@@ -731,3 +731,81 @@ func (r *kiroCredentialRepo) UpdateCredentials(_ context.Context, id int64, cred
 	}
 	return errors.New("account not found")
 }
+
+func TestAccountUsageService_GetUsage_KiroCanceledCallerDoesNotCacheError(t *testing.T) {
+	account := Account{
+		ID:       711,
+		Platform: PlatformKiro,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "kiro-access-token",
+			"profile_arn":  "arn:aws:codewhisperer:us-east-1:123456789012:profile/TEST",
+		},
+	}
+	repo := &kiroCredentialRepo{stubOpenAIAccountRepo{accounts: []Account{account}}}
+	svc := NewAccountUsageService(repo, nil, nil, nil, nil, nil, nil, nil, NewUsageCache(), nil, nil)
+
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"usageBreakdownList":[{"currentUsageWithPrecision":42,"usageLimitWithPrecision":2000,"resourceType":"CREDIT"}]}`))
+	}))
+	defer server.Close()
+	prevResolver := resolveKiroRuntimeEndpoint
+	resolveKiroRuntimeEndpoint = func(_ string) string { return server.URL }
+	defer func() { resolveKiroRuntimeEndpoint = prevResolver }()
+
+	// 调用方中途放弃：共享查询继续完成，不把 context canceled 记成上游错误。
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan *UsageInfo, 1)
+	go func() {
+		usage, _ := svc.GetUsage(ctx, account.ID, true)
+		done <- usage
+	}()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	close(release)
+	if first := <-done; first != nil {
+		require.NotContains(t, first.Error, "context canceled")
+	}
+
+	usage, err := svc.GetUsage(context.Background(), account.ID, true)
+	require.NoError(t, err)
+	require.Empty(t, usage.Error)
+	require.NotNil(t, usage.KiroCredit)
+	require.Equal(t, 42.0, usage.KiroCredit.CurrentUsage)
+}
+
+func TestAccountUsageService_GetUsage_KiroForceRefreshBypassesCachedError(t *testing.T) {
+	account := Account{
+		ID:       712,
+		Platform: PlatformKiro,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "kiro-access-token",
+			"profile_arn":  "arn:aws:codewhisperer:us-east-1:123456789012:profile/TEST",
+		},
+	}
+	repo := &kiroCredentialRepo{stubOpenAIAccountRepo{accounts: []Account{account}}}
+	svc := NewAccountUsageService(repo, nil, nil, nil, nil, nil, nil, nil, NewUsageCache(), nil, nil)
+	svc.storeKiroUsageSnapshot(account.ID, &UsageInfo{Error: "usage API error: boom", ErrorCode: errorCodeNetworkError})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"usageBreakdownList":[{"currentUsageWithPrecision":7,"usageLimitWithPrecision":2000,"resourceType":"CREDIT"}]}`))
+	}))
+	defer server.Close()
+	prevResolver := resolveKiroRuntimeEndpoint
+	resolveKiroRuntimeEndpoint = func(_ string) string { return server.URL }
+	defer func() { resolveKiroRuntimeEndpoint = prevResolver }()
+
+	cached, err := svc.GetUsage(context.Background(), account.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, cached.Error)
+
+	fresh, err := svc.GetUsage(context.Background(), account.ID, true)
+	require.NoError(t, err)
+	require.Empty(t, fresh.Error)
+	require.Equal(t, 7.0, fresh.KiroCredit.CurrentUsage)
+}

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -21,6 +22,8 @@ const (
 
 	kiroDefaultRegion = "us-east-1"
 	kiroEURegion      = "eu-central-1"
+
+	kiroUsageFetchTimeout = 45 * time.Second
 )
 
 var resolveKiroRuntimeEndpoint = kiroRuntimeEndpoint
@@ -99,7 +102,7 @@ func (s *AccountUsageService) getKiroUsage(ctx context.Context, account *Account
 	}
 
 	cached, hasCached := s.getCachedKiroUsage(account.ID)
-	if hasCached && (cached.ErrorCode != "" || cached.Error != "") {
+	if hasCached && !forceRefresh && (cached.ErrorCode != "" || cached.Error != "") {
 		cached.Source = source
 		s.attachKiroRuntimeState(ctx, account, cached)
 		return cached, nil
@@ -117,7 +120,10 @@ func (s *AccountUsageService) getKiroUsage(ctx context.Context, account *Account
 				return usage, nil
 			}
 		}
-		usage, err := s.fetchAndCacheKiroUsage(ctx, account, source)
+		// 共享查询不跟随某个调用方取消：前端切页或自动刷新中断请求时，其它等待者和缓存不应拿到 context canceled。
+		fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), kiroUsageFetchTimeout)
+		defer cancel()
+		usage, err := s.fetchAndCacheKiroUsage(fetchCtx, account, source)
 		if err != nil {
 			return nil, err
 		}
@@ -134,6 +140,10 @@ func (s *AccountUsageService) getKiroUsage(ctx context.Context, account *Account
 		}
 	}
 
+	if ctx.Err() != nil && (errors.Is(fetchErr, context.Canceled) || errors.Is(fetchErr, context.DeadlineExceeded)) {
+		// 调用方自己放弃了请求：不把这次中断记成上游失败。
+		return nil, ctx.Err()
+	}
 	degraded := buildKiroDegradedUsage(fetchErr)
 	degraded.Source = source
 	if hasCached {
