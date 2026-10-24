@@ -51,6 +51,7 @@
 | `service/account.go` | 模型映射、请求模型归一化、`KiroAccountRuntime` 嵌入 |
 | `service/account_usage_service.go` | Kiro 用量查询分支、缓存字段、`KiroUsageInfo` 嵌入 |
 | `service/account_test_service.go` | Kiro 连通性测试分支 |
+| `service/admin_account.go` | 更新凭据时保留 Kiro 身份/设备字段（`kiroPreserveCredentialFields`） |
 | `service/gateway_service.go` | Kiro 依赖字段 |
 | `service/ops_upstream_context.go` | `KiroOpsDiagnostics` 嵌入 |
 | `service/wire.go` | `KiroProviderSet`；TokenRefreshService 注册 Kiro 刷新器 |

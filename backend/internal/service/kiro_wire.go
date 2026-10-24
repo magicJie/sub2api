@@ -333,3 +333,26 @@ var domainDefaultKiroModelMapping = map[string]string{
 	"gpt-5.6-terra": "gpt-5.6-terra",
 	"gpt-5.6-luna":  "gpt-5.6-luna",
 }
+
+// kiroPreservedCredentialKeys 是 Kiro 账号的身份与设备字段：更新凭据时调用方没带上就沿用旧值。
+// 管理端编辑、接口只改 model_mapping 等部分提交都不应丢掉它们（丢 profile_arn 会让用量查询 403，
+// 丢 machine_id 会改变设备指纹）。要清除某个字段需显式传空字符串。
+var kiroPreservedCredentialKeys = []string{
+	"email", "profile_arn", "machine_id", "auth_method", "provider", "region", "start_url",
+	"client_id", "client_secret", "client_id_hash", "expires_at", "_token_version",
+}
+
+// kiroPreserveCredentialFields 是 adminServiceImpl.UpdateAccount 合并凭据后的 Kiro 分支。
+func kiroPreserveCredentialFields(account *Account, existing map[string]any) {
+	if account == nil || account.Platform != PlatformKiro || account.Credentials == nil {
+		return
+	}
+	for _, key := range kiroPreservedCredentialKeys {
+		if _, provided := account.Credentials[key]; provided {
+			continue
+		}
+		if value, ok := existing[key]; ok {
+			account.Credentials[key] = value
+		}
+	}
+}
