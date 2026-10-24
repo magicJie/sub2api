@@ -116,6 +116,7 @@ export default {
         minimax: 'MiniMax',
         opencode_go: 'OpenCode',
         typesafe: 'TypeSafe / Jev',
+        kiro: 'Kiro',
       },
       cnProviders: {
         accountMode: {
@@ -218,6 +219,8 @@ export default {
         codeAssist: 'Code Assist',
         antigravityOauth: 'Antigravity OAuth',
         grokOauth: 'Grok OAuth',
+        kiroOauth: 'Social / IDC login',
+        kiroApikey: 'Connect via Base URL + API Key',
         antigravityApikey: 'Connect via Base URL + API Key',
         upstream: 'Upstream',
         upstreamDesc: 'Connect via Base URL + API Key'
@@ -244,6 +247,8 @@ export default {
         overloaded: 'Overloaded',
         tempUnschedulable: 'Temp Unschedulable',
         quotaExceeded: 'Quota Exceeded',
+        kiroCreditsExhausted: 'Kiro Credits Exhausted',
+        kiroOverageActive: 'Kiro Overage Active',
         unschedulable: 'Unschedulable',
         rateLimitedUntil: 'Rate limited and removed from scheduling. Auto resumes at {time}',
         rateLimitedAutoResume: 'Auto resumes in {time}',
@@ -808,6 +813,22 @@ export default {
         fileReadFailed: 'Failed to read the selected file',
         noResponseBody: 'No response body from server'
       },
+      kiro: {
+        baseUrlHint: 'Leave blank for direct Kiro (Amazon Q); enter a URL for an Anthropic-compatible relay.',
+        apiKeyHint: 'Use a Kiro API key for direct access, or the key issued by your relay.',
+        apiRegion: 'Kiro inference region',
+        apiRegionHint: 'Region for Kiro requests; separate from the Identity Center login region.',
+        cacheEmulation: {
+          title: 'Kiro Cache Local Billing Simulation',
+          enable: 'Enable cache token simulation',
+          enabledHint: 'Tracks cacheable prefixes per account credential: the first request is classified as cache creation and matching prefixes within the TTL as cache read.',
+          disabledHint: 'When disabled, all Kiro input tokens are recorded as regular input tokens.',
+          ratio: 'Simulated classification ratio',
+          ratioHint: 'Scales tokens classified as cache creation/read; 100% classifies the full cacheable prefix detected locally.',
+          localOnlyWarning: 'This only simulates Sub2API usage and billing categories. It does not mean Kiro upstream hit a real cache and does not reduce upstream tokens, context, or quota usage.',
+          ratioRangeError: 'The simulated classification ratio must be greater than 0 and no more than 100%'
+        },
+      },
       anthropic: {
         apiKeyPassthrough: 'Auto passthrough (auth only)',
         apiKeyPassthroughDesc:
@@ -1342,6 +1363,44 @@ export default {
           },
           oauthOnlyHint: 'Initial Grok support is OAuth subscription-backed Responses API text and reasoning traffic only.'
         },
+        kiro: {
+          title: 'Kiro Account Authorization',
+          followSteps: 'Follow these steps to authorize your Kiro account:',
+          step1GenerateUrl: 'Generate authorization URL',
+          generateAuthUrl: 'Generate authorization URL',
+          step2OpenUrl: 'Open the URL in your browser and complete authorization',
+          openUrlDesc: 'Open the authorization URL in a new tab and complete Kiro sign-in and authorization.',
+          importantNotice: 'After authorization, the browser redirects to a local callback URL. Paste the complete URL below and the system will extract code and state automatically.',
+          step3EnterCode: 'Enter callback URL or code',
+          authCodeDesc: 'After authorization, paste the complete callback URL (recommended) or just the code value below.',
+          authCode: 'Callback URL or Code',
+          authCodePlaceholder: 'Paste the full callback URL, ?code=... query string, or code value',
+          authCodeHint: 'Full callback URLs, query strings, and bare codes are accepted; code/state are extracted automatically.',
+          authModeTitle: 'Login method',
+          oauthTitle: 'Social login',
+          oauthSubtitle: 'Sign in with Google or Github',
+          idcTitle: 'Enterprise IDC (AWS SSO)',
+          idcSubtitle: 'AWS IAM Identity Center login',
+          importTitle: 'Import token',
+          importSubtitle: 'Paste an existing token JSON',
+          oauthProviderTitle: 'Social provider',
+          socialSubtitle: 'Choose the identity provider used to sign in',
+          googleTitle: 'Google',
+          googleDesc: 'Sign in with a Google account',
+          githubTitle: 'Github',
+          githubDesc: 'Sign in with a Github account',
+          startUrlLabel: 'AWS SSO start URL',
+          startUrlPlaceholder: 'https://your-org.awsapps.com/start',
+          regionLabel: 'AWS region',
+          regionPlaceholder: 'us-east-1',
+          tokenJsonLabel: 'Token JSON',
+          tokenJsonHint: 'Paste the Kiro token JSON exported from an existing client (accessToken/refreshToken etc.).',
+          deviceRegistrationLabel: 'Device registration JSON (optional)',
+          deviceRegistrationHint: 'Only required for IDC-issued tokens (clientId/clientSecret).',
+          authFailed: 'Kiro authorization failed',
+          importSingleAccountOnly: 'Only one account can be imported at a time; pick a single account from the exported array',
+          missingExchangeParams: 'Missing authorization code, state, or OAuth session'
+        },
         // Gemini specific
 	        gemini: {
 	          title: 'Gemini Account Authorization',
@@ -1685,7 +1744,12 @@ export default {
         passiveSampled: 'Passive',
         activeQuery: 'Query',
         estimatedTotalCost: 'Est. total ${cost}',
-        estimatedTotalCostTooltip: 'Estimated total cost at 100% utilization, based on current window cost and utilization'
+        estimatedTotalCostTooltip: 'Estimated total cost at 100% utilization, based on current window cost and utilization',
+        kiroCredit: 'Credit',
+        kiroBonus: 'Bonus',
+        kiroUsed: '{used} / {limit}',
+        kiroDaysRemaining: '{days}d left',
+        kiroOverage: 'Overage {used}, charge {charge}'
       },
       openaiReferral: {
         available: 'Invites left',

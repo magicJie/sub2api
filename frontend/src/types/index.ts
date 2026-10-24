@@ -937,7 +937,7 @@ export interface UpdateGroupRequest {
 // ==================== Account & Proxy Types ====================
 
 /** 前端内置专属界面（图标、配色、表单等）的平台。 */
-export type KnownAccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek' | 'minimax' | 'opencode_go' | 'typesafe' | 'command_code' | 'cline'
+export type KnownAccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek' | 'minimax' | 'opencode_go' | 'typesafe' | 'command_code' | 'cline' | 'kiro'
 /**
  * 账号平台：内置平台，或后端平台清单中新登记的平台（任意字符串）。
  * `string & {}` 保留内置平台的字面量补全。
@@ -1344,6 +1344,14 @@ export interface Account {
   temp_unschedulable_until: string | null
   temp_unschedulable_reason: string | null
 
+  // Kiro usage and cooldown state derived from the server runtime cache.
+  kiro_quota_state?: string
+  kiro_quota_reason?: string
+  kiro_quota_reset_at?: string | null
+  kiro_runtime_state?: string
+  kiro_runtime_reason?: string
+  kiro_runtime_reset_at?: string | null
+
   // Session window fields (5-hour window)
   session_window_start: string | null
   session_window_end: string | null
@@ -1494,6 +1502,21 @@ export interface GrokBillingSummary {
   failed_windows?: string[]
 }
 
+export interface KiroCreditProgress {
+  current_usage: number
+  usage_limit: number
+  percentage_used: number
+  days_remaining?: number
+  expiry_date?: string | null
+}
+
+export interface KiroOverageInfo {
+  current_overages: number
+  overage_charges: number
+  currency_code?: string
+  currency_symbol?: string
+}
+
 export interface AccountUsageInfo {
   source?: 'passive' | 'active'
   updated_at: string | null
@@ -1530,6 +1553,19 @@ export interface AccountUsageInfo {
     amount?: number
     minimum_balance?: number
   }> | null
+  kiro_subscription_name?: string
+  kiro_subscription_type?: string
+  kiro_reset_at?: string | null
+  kiro_overages_enabled?: boolean
+  kiro_credit?: KiroCreditProgress | null
+  kiro_bonus?: KiroCreditProgress | null
+  kiro_overage?: KiroOverageInfo | null
+  kiro_quota_state?: string
+  kiro_quota_reason?: string
+  kiro_quota_reset_at?: string | null
+  kiro_runtime_state?: string
+  kiro_runtime_reason?: string
+  kiro_runtime_reset_at?: string | null
   // Antigravity 403 forbidden 状态
   is_forbidden?: boolean
   forbidden_reason?: string
@@ -1885,6 +1921,7 @@ export interface UsageLog {
 export interface UsageLogAccountSummary {
   id: number
   name: string
+  platform: string
 }
 
 export interface AdminUsageLog extends UsageLog {
@@ -1894,6 +1931,8 @@ export interface AdminUsageLog extends UsageLog {
   upstream_model_mismatch?: boolean | null
   model_mapping_chain?: string | null
   upstream_request_id?: string | null
+  kiro_session_fingerprint?: string | null
+  previous_kiro_account_id?: number | null
 
   // 账号计费倍率（仅管理员可见）
   account_rate_multiplier?: number | null

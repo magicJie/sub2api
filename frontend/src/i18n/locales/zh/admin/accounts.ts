@@ -324,6 +324,7 @@ export default {
         minimax: 'MiniMax',
         opencode_go: 'OpenCode',
         typesafe: 'TypeSafe / Jev',
+        kiro: 'Kiro',
       },
       cnProviders: {
         accountMode: {
@@ -426,6 +427,8 @@ export default {
         codeAssist: 'Code Assist',
         antigravityOauth: 'Antigravity OAuth',
         grokOauth: 'Grok OAuth',
+        kiroOauth: '社交 / 企业 IDC 登录',
+        kiroApikey: '通过 Base URL + API Key 连接',
         antigravityApikey: '通过 Base URL + API Key 连接',
         upstream: '对接上游',
         upstreamDesc: '通过 Base URL + API Key 连接上游'
@@ -452,6 +455,8 @@ export default {
         overloaded: '过载中',
         tempUnschedulable: '临时不可调度',
         quotaExceeded: '配额超限',
+        kiroCreditsExhausted: 'Kiro 额度耗尽',
+        kiroOverageActive: 'Kiro 超额计费中',
         unschedulable: '不可调度',
         rateLimitedUntil: '限流中，当前不参与调度，预计 {time} 自动恢复',
         rateLimitedAutoResume: '{time} 自动恢复',
@@ -548,7 +553,12 @@ export default {
         passiveSampled: '被动采样',
         activeQuery: '查询',
         estimatedTotalCost: '预计总费用 ${cost}',
-        estimatedTotalCostTooltip: '根据当前窗口费用和使用率估算达到 100% 使用率时的总费用'
+        estimatedTotalCostTooltip: '根据当前窗口费用和使用率估算达到 100% 使用率时的总费用',
+        kiroCredit: '额度',
+        kiroBonus: 'Bonus',
+        kiroUsed: '{used} / {limit}',
+        kiroDaysRemaining: '剩余 {days} 天',
+        kiroOverage: '超额 {used}，费用 {charge}'
       },
       openaiReferral: {
         available: '可邀请',
@@ -915,6 +925,22 @@ export default {
         uploadPreviewAlt: '上传预览',
         fileReadFailed: '读取所选文件失败',
         noResponseBody: '服务器未返回响应体'
+      },
+      kiro: {
+        baseUrlHint: '留空直连 Kiro 官方 Amazon Q；填写地址则使用 Anthropic 兼容中转。',
+        apiKeyHint: '直连请使用 Kiro API Key；中转请使用对应服务签发的密钥。',
+        apiRegion: 'Kiro 推理区域',
+        apiRegionHint: '用于 Kiro 推理请求，与 Identity Center 登录区域相互独立。',
+        cacheEmulation: {
+          title: 'Kiro Cache 本地计费模拟',
+          enable: '启用 Cache Token 模拟归类',
+          enabledHint: '按账号凭证跟踪可缓存前缀：首次请求归类为 cache creation，TTL 内重复前缀归类为 cache read。',
+          disabledHint: '关闭后，Kiro 请求的输入 Token 全部按普通 input token 记录。',
+          ratio: '模拟归类比例',
+          ratioHint: '缩放被归类为 cache creation/read 的 Token；100% 表示按检测到的完整可缓存前缀归类。',
+          localOnlyWarning: '这是 Sub2API 本地 usage 与计费分类模拟，不代表 Kiro 上游真实命中缓存，也不会减少上游 Token、上下文或额度消耗。',
+          ratioRangeError: '模拟归类比例必须大于 0 且不超过 100%'
+        },
       },
       anthropic: {
         apiKeyPassthrough: '自动透传（仅替换认证）',
@@ -1436,6 +1462,44 @@ export default {
               '找不到所选代理。请选择可用代理后重试。'
           },
           oauthOnlyHint: '首版 Grok 支持仅包含 OAuth 订阅的 Responses API 文本/推理转发。'
+        },
+        kiro: {
+          title: 'Kiro 账号授权',
+          followSteps: '请按照以下步骤完成 Kiro 账号授权：',
+          step1GenerateUrl: '生成授权链接',
+          generateAuthUrl: '生成授权链接',
+          step2OpenUrl: '在浏览器中打开链接并完成授权',
+          openUrlDesc: '在新标签页中打开授权链接，完成 Kiro 登录与授权。',
+          importantNotice: '授权完成后浏览器会跳转到本地 callback URL。请直接复制完整链接粘贴到下方，系统会自动提取 code 和 state。',
+          step3EnterCode: '输入回调链接或 Code',
+          authCodeDesc: '授权完成后，复制完整的 callback URL（推荐）或仅复制 code，粘贴到下方即可。',
+          authCode: '回调链接或 Code',
+          authCodePlaceholder: '粘贴完整 callback URL、?code=... 查询字符串或 code 值',
+          authCodeHint: '支持完整 callback URL、查询字符串和裸 code；系统会自动提取 code/state。',
+          authModeTitle: '登录方式',
+          oauthTitle: '社交登录',
+          oauthSubtitle: '使用 Google 或 Github 登录',
+          idcTitle: '企业 IDC（AWS SSO）',
+          idcSubtitle: 'AWS IAM Identity Center 登录',
+          importTitle: '导入 Token',
+          importSubtitle: '粘贴已有的 token JSON',
+          oauthProviderTitle: '社交登录方式',
+          socialSubtitle: '选择用于登录的身份提供方',
+          googleTitle: 'Google',
+          googleDesc: '使用 Google 账号登录',
+          githubTitle: 'Github',
+          githubDesc: '使用 Github 账号登录',
+          startUrlLabel: 'AWS SSO Start URL',
+          startUrlPlaceholder: 'https://your-org.awsapps.com/start',
+          regionLabel: 'AWS 区域',
+          regionPlaceholder: 'us-east-1',
+          tokenJsonLabel: 'Token JSON',
+          tokenJsonHint: '粘贴从已有客户端导出的 Kiro token JSON（accessToken/refreshToken 等）。',
+          deviceRegistrationLabel: '设备注册 JSON（可选）',
+          deviceRegistrationHint: '仅 IDC 签发的 token 需要填写（clientId/clientSecret）。',
+          authFailed: 'Kiro 授权失败',
+          importSingleAccountOnly: '只能导入单个账号，请从导出数组中取出一个账号',
+          missingExchangeParams: '缺少授权码、state 或 OAuth 会话'
         },
         // Gemini specific
         gemini: {
