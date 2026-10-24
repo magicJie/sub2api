@@ -247,7 +247,7 @@ func (s *GatewayService) executeKiroWebSearch(ctx context.Context, account *Acco
 				cacheUsage = s.buildKiroCacheEmulationUsage(account, group, anthropicBody, mappedModel, inputTokens)
 				cacheUsageResolved = true
 			}
-			return kiropkg.ParseNonStreamingEventStreamWithContext(resp.Body, mappedModel, kiropkg.KiroRequestContext{CacheEmulationUsage: cacheUsage.toKiroUsage()})
+			return kiropkg.ParseNonStreamingEventStreamWithContext(resp.Body, mappedModel, kiropkg.KiroRequestContext{CacheEmulationUsage: cacheUsage.toKiroUsage(), EstimatedInputTokens: inputTokens})
 		}()
 		if parseErr != nil {
 			return nil, parseErr

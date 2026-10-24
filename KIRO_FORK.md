@@ -23,9 +23,17 @@
   - `internal/kiro/cache_points.go`：把客户端 `cache_control` 原样转成 Kiro 的 `cachePoint`（消息、工具，最多 4 个保留最后），`SUB2API_KIRO_CACHE_POINTS=off` 关闭。
   - `internal/kiro/stream_error.go`：识别流中 `:message-type=exception` 帧；未输出前按等价 HTTP 状态走错误分类与 failover，已输出则发 SSE `error`，不再伪装成正常结束。
   - `service/kiro_error_classifier.go`：`CONTENT_LENGTH_EXCEEDS_THRESHOLD` → Anthropic `invalid_request_error` “prompt is too long”（Claude Code 据此自动压缩）；`INSUFFICIENT_MODEL_CAPACITY` → 529 换号且不封禁账号。
+  - 工具名：不符合 `[a-zA-Z0-9_-]{1,63}` 的（如带 `.`、`:` 的 MCP 工具名，或过长）替换非法字符并追加整名 hash，响应时回映射为原名。
+  - `tool_result` 里的图片挪到所在 user 消息的 `images`（Kiro 的 toolResults 只收文本）。
+  - 上游 `CONTENT_FILTERED` 停止原因 → Anthropic `stop_reason: refusal`。
+  - 非流式响应在上游未回报输入用量时，`usage.input_tokens` 用网关估算值填充（与流式一致）。
+  - 推理区域：`api_region` 优先，其次 profileArn 中的区域（仅 `us-east-1` / `eu-central-1`），再按登录区域 `eu-*` → `eu-central-1`，否则 `us-east-1`。
+    Builder ID 账号列不出 profile 时使用 Kiro 客户端的固定 profileArn。
 - 多账号调度（借鉴 yetone/magpie，MIT）：`service/kiro_pace_scheduling.go`，挂在 `gateway_scheduling.go` Layer 2（优先级之后、负载率之前）与 Layer 1.5 粘性检查。
   按已用比例分档（<90 / 90–98 / ≥98），正常档按 `pace = (100−used%)/max(距重置小时,1)` 优先，10% 内视为同档；粘住的账号 ≥98% 且有替补时放开粘性。
   用量来自进程内快照，超过 5 分钟后台刷新。`SUB2API_KIRO_PACE_SCHEDULING=off` 关闭。
+- 路由记录：`service/kiro_route_log.go` 在内存保留最近 200 次 Kiro 转发尝试（请求 ID、入口、模型、账号、额度快照、结果 ok/failover/error），
+  不含请求与响应内容，重启清空。管理接口 `GET /api/v1/admin/kiro/routes?limit=50`。
 
 ## 上游文件中的挂钩点
 

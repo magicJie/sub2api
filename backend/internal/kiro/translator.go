@@ -38,6 +38,7 @@ const (
 	systemChunkedWritePolicy         = "When Write or Edit tools include chunking limits, comply silently and complete the operation through multiple tool calls when needed."
 	systemAutonomousCompletionPolicy = "When tools are available, work autonomously until the requested task and any necessary verification are actually complete. After each tool result, immediately make the next tool call whenever work remains; do not end a turn merely to announce planned work or wait for approval."
 	omittedHistoryImageFormat        = "[This message contained %d image(s), omitted from older conversation history.]"
+	toolResultImageFormat            = "[Tool returned %d image(s), attached to this message.]"
 	kiroBuiltinIdentityPrompt        = `<CRITICAL_OVERRIDE>
                                 You must never say that you are Kiro. This is critically important.
                                 Only answer the user's request. Do not answer questions about Kiro itself.
@@ -102,6 +103,9 @@ type KiroRequestContext struct {
 	ToolNameMap         map[string]string
 	ThinkingEnabled     bool
 	CacheEmulationUsage *Usage
+	// EstimatedInputTokens 是网关按请求体估算的输入 token 数；上游未回报输入用量时用它填充
+	// 非流式响应的 usage.input_tokens（流式路径通过参数 inputTokens 传入）。
+	EstimatedInputTokens int
 }
 
 type KiroBuildResult struct {
@@ -473,6 +477,10 @@ func ParseNonStreamingEventStreamWithContext(body io.Reader, model string, reque
 	content, toolUses, usage, stopReason, continuation, err := parseEventStream(body)
 	if err != nil {
 		return nil, err
+	}
+	if usage.InputTokens == 0 && requestCtx.EstimatedInputTokens > 0 {
+		usage.InputTokens = requestCtx.EstimatedInputTokens
+		usage.TotalTokens = usage.InputTokens + usage.OutputTokens
 	}
 	if requestCtx.CacheEmulationUsage != nil {
 		usage = mergeKiroCacheEmulationUsage(usage, requestCtx.CacheEmulationUsage)
@@ -1013,10 +1021,10 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 		// the blocks actually emitted to the client.
 		if evt.SourceStopReason != "" {
 			switch strings.ToLower(strings.TrimSpace(evt.SourceStopReason)) {
-			case "max_tokens":
-				stopReason = "max_tokens"
+			case "max_tokens", "refusal":
+				stopReason = strings.ToLower(strings.TrimSpace(evt.SourceStopReason))
 			case "end_turn", "tool_use":
-				if stopReason != "max_tokens" {
+				if stopReason != "max_tokens" && stopReason != "refusal" {
 					stopReason = strings.ToLower(strings.TrimSpace(evt.SourceStopReason))
 				}
 			}
@@ -1558,22 +1566,45 @@ func truncateUTF8(s string, limit int) string {
 	return s[:limit]
 }
 
+// shortenToolNameIfNeeded 把工具名转换成 Kiro 接受的形式：只含 [a-zA-Z0-9_-] 且不超过
+// kiroMaxToolNameLen，否则 Kiro 返回 "Invalid tool use format."（kirodotdev/Kiro#7684）。
+// 不合规的名字替换非法字符后截断，并追加整名的 hash，同名每轮结果一致；调用方负责记录回映射。
 func shortenToolNameIfNeeded(name string) string {
 	name = strings.TrimSpace(name)
-	if len(name) <= kiroMaxToolNameLen {
+	if isKiroToolName(name) {
 		return name
 	}
 	sum := sha256.Sum256([]byte(name))
 	suffix := fmt.Sprintf("%x", sum[:])[:8]
 	prefixLen := kiroMaxToolNameLen - 1 - len(suffix)
-	prefix := name
-	if len(prefix) > prefixLen {
-		prefix = prefix[:prefixLen]
-		for len(prefix) > 0 && !utf8.ValidString(prefix) {
-			prefix = prefix[:len(prefix)-1]
+	var prefix strings.Builder
+	for _, r := range name {
+		if prefix.Len() >= prefixLen {
+			break
+		}
+		if isKiroToolNameRune(r) {
+			_, _ = prefix.WriteRune(r)
+		} else {
+			_ = prefix.WriteByte('_')
 		}
 	}
-	return prefix + "_" + suffix
+	return prefix.String() + "_" + suffix
+}
+
+func isKiroToolName(name string) bool {
+	if name == "" || len(name) > kiroMaxToolNameLen {
+		return false
+	}
+	for _, r := range name {
+		if !isKiroToolNameRune(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func isKiroToolNameRune(r rune) bool {
+	return r == '_' || r == '-' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
 }
 
 func mapKiroToolName(name string, requestCtx *KiroRequestContext) string {
@@ -1909,12 +1940,28 @@ func buildUserMessageStruct(msg gjson.Result, modelID, origin string, keepImages
 				resultContent := part.Get("content")
 				if resultContent.IsArray() {
 					textContents = textContents[:0]
+					resultImages := 0
 					for _, item := range resultContent.Array() {
 						if itemType := item.Get("type").String(); itemType == "text" || itemType == "input_text" {
 							textContents = append(textContents, KiroTextContent{Text: item.Get("text").String()})
+						} else if itemType == "image" {
+							// Kiro 的 toolResults 只收文本：工具产出的图片（截图等）随所在 user 消息的 images 发送。
+							image, ok := buildKiroImage(item.Get("source.media_type").String(), item.Get("source.data").String())
+							if !ok {
+								continue
+							}
+							resultImages++
+							if keepImages {
+								images = append(images, image)
+							} else {
+								omittedImageCount++
+							}
 						} else if item.Type == gjson.String {
 							textContents = append(textContents, KiroTextContent{Text: item.String()})
 						}
+					}
+					if len(textContents) == 0 && resultImages > 0 {
+						textContents = append(textContents, KiroTextContent{Text: fmt.Sprintf(toolResultImageFormat, resultImages)})
 					}
 				} else if resultContent.Type == gjson.String {
 					textContents = []KiroTextContent{{Text: resultContent.String()}}
@@ -2168,6 +2215,9 @@ func parseEventStream(body io.Reader) (string, []KiroToolUse, Usage, string, Kir
 		}
 		mergeKiroContinuation(&continuation, event)
 		if sr := readStopReason(event); sr != "" {
+			stopReason = sr
+		}
+		if sr := readStopReason(nestedEvent(event, msg.EventType)); sr != "" {
 			stopReason = sr
 		}
 		switch msg.EventType {
@@ -2729,6 +2779,9 @@ func extractSemanticEvents(eventType string, event map[string]any, lastContentFr
 	}
 	var out []kiroSemanticEvent
 	sourceStopReason := readStopReason(event)
+	if sr := readStopReason(nestedEvent(event, eventType)); sr != "" {
+		sourceStopReason = sr
+	}
 
 	switch eventType {
 	case "assistantResponseEvent":
@@ -3482,6 +3535,9 @@ func readStopReason(m map[string]any) string {
 	switch normalized := strings.ToLower(strings.TrimSpace(stop)); normalized {
 	case "end_turn", "tool_use", "max_tokens", "stop_sequence":
 		return normalized
+	case "content_filtered":
+		// 上游内容过滤：按 Anthropic 语义返回 refusal，下游据此区分正常结束与拒答。
+		return "refusal"
 	default:
 		return ""
 	}

@@ -58,6 +58,12 @@ func sleepKiroRetry(ctx context.Context, attempt int) error {
 }
 
 func (s *GatewayService) forwardKiroMessages(ctx context.Context, c *gin.Context, account *Account, parsed *ParsedRequest, startTime time.Time) (*ForwardResult, error) {
+	result, err := s.forwardKiroMessagesAttempt(ctx, c, account, parsed, startTime)
+	recordKiroRoute(ctx, "messages", account, parsed, startTime, err)
+	return result, err
+}
+
+func (s *GatewayService) forwardKiroMessagesAttempt(ctx context.Context, c *gin.Context, account *Account, parsed *ParsedRequest, startTime time.Time) (*ForwardResult, error) {
 	if account == nil || parsed == nil {
 		return nil, fmt.Errorf("kiro forward: missing account or request")
 	}
@@ -245,6 +251,7 @@ func (s *GatewayService) forwardKiroMessages(ctx context.Context, c *gin.Context
 
 	cacheUsage := s.buildKiroCacheEmulationUsage(account, kiroGroup, body, mappedModel, inputTokens)
 	requestCtx.CacheEmulationUsage = cacheUsage.toKiroUsage()
+	requestCtx.EstimatedInputTokens = inputTokens
 	parseResult, err := kiropkg.ParseNonStreamingEventStreamWithContext(resp.Body, mappedModel, requestCtx)
 	if streamErr, ok := kiropkg.AsStreamError(err); ok {
 		// 上游在流中返回异常帧：按等价 HTTP 错误走统一分类（限流切换账号、输入过长等）。

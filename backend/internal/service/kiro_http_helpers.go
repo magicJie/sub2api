@@ -113,15 +113,48 @@ func isKiroDirectModeAccount(account *Account) bool {
 	return account.Type == AccountTypeAPIKey && strings.TrimSpace(account.GetCredential("base_url")) == ""
 }
 
+// kiroAPIRegion 返回账号的推理区域：显式配置的 api_region 优先；否则取 profileArn 所在区域
+// （arn:aws:codewhisperer:<region>:...，限 Kiro 已知区域）；再否则按登录区域就近选 Kiro 的两个区域之一。
 func kiroAPIRegion(account *Account) string {
 	if account == nil {
 		return kiroDefaultRegion
 	}
-	region := strings.TrimSpace(account.GetCredential("api_region"))
-	if region == "" {
-		region = kiroDefaultRegion
+	if region := strings.TrimSpace(account.GetCredential("api_region")); region != "" {
+		return region
 	}
-	return region
+	if region := kiroRegionFromProfileArn(account.GetCredential("profile_arn")); region != "" {
+		return region
+	}
+	if strings.HasPrefix(strings.TrimSpace(account.GetCredential("region")), "eu-") {
+		return kiroEURegion
+	}
+	return kiroDefaultRegion
+}
+
+func kiroRegionFromProfileArn(arn string) string {
+	parts := strings.Split(strings.TrimSpace(arn), ":")
+	if len(parts) > 4 && parts[0] == "arn" {
+		// 只采用 Kiro 实际提供推理服务的区域，其它值不可信，交给后续回落。
+		switch parts[3] {
+		case kiroDefaultRegion, kiroEURegion:
+			return parts[3]
+		}
+	}
+	return ""
+}
+
+// isKiroBuilderIDAccount 判断账号是否通过 AWS Builder ID 登录。Builder ID 不支持
+// ListAvailableProfiles，统一使用 kiroBuilderIDProfileArn。
+func isKiroBuilderIDAccount(account *Account) bool {
+	if account == nil {
+		return false
+	}
+	provider := strings.ToLower(strings.TrimSpace(account.GetCredential("provider")))
+	if provider == "builderid" || provider == "builder_id" || provider == "builder id" {
+		return true
+	}
+	startURL := strings.TrimRight(strings.TrimSpace(account.GetCredential("start_url")), "/#")
+	return startURL == kiropkg.BuilderIDStartURL
 }
 
 func applyKiroConditionalHeaders(req *http.Request, account *Account) {
