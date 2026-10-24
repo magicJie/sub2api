@@ -32,6 +32,9 @@
 - 多账号调度（借鉴 yetone/magpie，MIT）：`service/kiro_pace_scheduling.go`，挂在 `gateway_scheduling.go` Layer 2（优先级之后、负载率之前）与 Layer 1.5 粘性检查。
   按已用比例分档（<90 / 90–98 / ≥98），正常档按 `pace = (100−used%)/max(距重置小时,1)` 优先，10% 内视为同档；粘住的账号 ≥98% 且有替补时放开粘性。
   用量来自进程内快照，超过 5 分钟后台刷新。`SUB2API_KIRO_PACE_SCHEDULING=off` 关闭。
+- 同步上游模型：`service/kiro_upstream_models.go`，账号编辑页“从上游同步模型”。OAuth 调管理面 `List-Available-Models`（带 profileArn），
+  直连 API Key 调控制面 `KiroControlPlaneBearerService.ListAvailableModels`；已知 Claude 模型换成目录里的短横线 ID 及 `-thinking` 变体，
+  其余 `claude-*` / `gpt-*` 点号 ID 原样保留，`MapModel` 不能直通的（`auto`、`deepseek-3.2` 等）丢弃。上游挂钩在 `upstream_models.go` 的 `fetchUpstreamModelList`。
 - 路由记录：`service/kiro_route_log.go` 在内存保留最近 200 次 Kiro 转发尝试（请求 ID、入口、模型、账号、额度快照、结果 ok/failover/error），
   不含请求与响应内容，重启清空。管理接口 `GET /api/v1/admin/kiro/routes?limit=50`。
 
@@ -71,6 +74,7 @@
 | `components/account/AccountUsageCell.vue`、`AccountStatusIndicator.vue`、`views/admin/AccountsView.vue` | 套餐 / Credit / Bonus / 超额展示与额度状态徽章 |
 | `components/common/PlatformIcon.vue`、`utils/platformColors.ts`、`utils/keyGroupProviders.ts`、`components/keys/UseKeyModal.vue` | 图标、配色、Key 分组归类 |
 | `composables/useModelWhitelist.ts` | 模型目录与映射预设 |
+| `constants/platformCatalog.ts` | `supportsUpstreamModelSync` 放开 Kiro |
 | `api/admin/index.ts`、`types/index.ts`、`i18n/locales/{zh,en}/admin/accounts.ts` | API 注册、字段类型、文案 |
 
 ## 同步上游

@@ -744,6 +744,9 @@ func (s *AccountTestService) fetchUpstreamModelList(ctx context.Context, account
 	if account.Platform == PlatformAntigravity && account.Type != AccountTypeAPIKey {
 		return s.fetchAntigravityOAuthUpstreamModels(ctx, account)
 	}
+	if isKiroDirectModeAccount(account) {
+		return s.fetchKiroUpstreamModels(ctx, account) // Kiro（fork）
+	}
 
 	if s.httpUpstream == nil {
 		return nil, nil, newUpstreamModelSyncConfigError("Upstream HTTP client is not configured", nil)
