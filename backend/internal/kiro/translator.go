@@ -2196,6 +2196,16 @@ func parseEventStream(body io.Reader) (string, []KiroToolUse, Usage, string, Kir
 	var continuation KiroContinuation
 	processedIDs := make(map[string]bool)
 	var currentTool *toolUseState
+	// Kiro 把推理内容拆成许多 reasoningContentEvent 小段推送；连续的片段合并成一个
+	// <thinking> 块，遇到正文时再收尾，避免每段各自带标签、漏进 text。
+	inReasoning := false
+	closeReasoning := func() {
+		if inReasoning {
+			_, _ = content.WriteString(thinkingEndTag)
+			_, _ = content.WriteString("\n\n")
+			inReasoning = false
+		}
+	}
 
 	for {
 		msg, err := readEventStreamMessage(reader)
@@ -2224,8 +2234,10 @@ func parseEventStream(body io.Reader) (string, []KiroToolUse, Usage, string, Kir
 		case "assistantResponseEvent":
 			assistant := nestedEvent(event, "assistantResponseEvent")
 			if text := getString(assistant, "content"); text != "" {
+				closeReasoning()
 				_, _ = content.WriteString(text)
 			} else if text := getString(event, "content"); text != "" {
+				closeReasoning()
 				_, _ = content.WriteString(text)
 			}
 			if sr := readStopReason(assistant); sr != "" {
@@ -2249,15 +2261,18 @@ func parseEventStream(body io.Reader) (string, []KiroToolUse, Usage, string, Kir
 				text = getString(event, "text")
 			}
 			if text != "" {
-				_, _ = content.WriteString(thinkingStartTag)
+				if !inReasoning {
+					_, _ = content.WriteString(thinkingStartTag)
+					inReasoning = true
+				}
 				_, _ = content.WriteString(text)
-				_, _ = content.WriteString(thinkingEndTag)
 			}
 		default:
 			updateUsageFromEvent(&usage, msg.EventType, event)
 		}
 	}
 
+	closeReasoning()
 	if currentTool != nil && currentTool.ToolUseID != "" && !processedIDs[currentTool.ToolUseID] {
 		completed, _ := processToolUseEvent(map[string]any{
 			"toolUseEvent": map[string]any{
