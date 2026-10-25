@@ -2023,14 +2023,9 @@ func buildAssistantMessageStruct(msg gjson.Result, requestCtx *KiroRequestContex
 			switch part.Get("type").String() {
 			case "text":
 				appendAssistantTextPart(part.Get("text").String(), &contentBuilder, &thinkingBuilder)
-			case "thinking":
-				text := part.Get("thinking").String()
-				if text == "" {
-					text = part.Get("text").String()
-				}
-				if text != "" {
-					_, _ = thinkingBuilder.WriteString(text)
-				}
+			case "thinking", "redacted_thinking":
+				// 历史推理不回传：Kiro 没有 thinking 块，内联成正文会让模型把以前的推理
+				// 当成自己说过的话，长会话里英文推理远多于正文，回复语言会被带偏。
 			case "tool_use":
 				toolName := mapKiroToolName(part.Get("name").String(), requestCtx)
 				input := map[string]any{}
@@ -2052,14 +2047,8 @@ func buildAssistantMessageStruct(msg gjson.Result, requestCtx *KiroRequestContex
 		appendAssistantTextPart(content.String(), &contentBuilder, &thinkingBuilder)
 	}
 
+	// text 里带 <thinking> 标签的部分同样只剥离、不回传。
 	finalContent := contentBuilder.String()
-	if thinkingText := thinkingBuilder.String(); thinkingText != "" {
-		if strings.TrimSpace(finalContent) != "" {
-			finalContent = thinkingStartTag + thinkingText + thinkingEndTag + "\n\n" + finalContent
-		} else {
-			finalContent = thinkingStartTag + thinkingText + thinkingEndTag
-		}
-	}
 	if strings.TrimSpace(finalContent) == "" {
 		finalContent = " "
 	}
