@@ -2159,3 +2159,25 @@ func TestParseNonStreamingEventStreamMergesReasoningChunks(t *testing.T) {
 	require.Equal(t, "text", content[1].Get("type").String())
 	require.Equal(t, "391", content[1].Get("text").String())
 }
+
+func TestKiroUsageCapturesContextUsageAndMetering(t *testing.T) {
+	build := func() *bytes.Buffer {
+		stream := bytes.NewBuffer(nil)
+		_, _ = stream.Write(buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{"content": "hi"}))
+		_, _ = stream.Write(buildEventStreamFrame(t, "meteringEvent", map[string]any{"unit": "credit", "unitPlural": "credits", "usage": 0.44}))
+		_, _ = stream.Write(buildEventStreamFrame(t, "contextUsageEvent", map[string]any{"contextUsagePercentage": 18.5}))
+		return stream
+	}
+
+	result, err := ParseNonStreamingEventStreamWithContext(build(), "claude-opus-5.5", KiroRequestContext{})
+	require.NoError(t, err)
+	require.InDelta(t, 18.5, result.Usage.ContextUsagePercentage, 1e-9)
+	require.InDelta(t, 0.44, result.Usage.MeteringUsage, 1e-9)
+
+	var out bytes.Buffer
+	streamResult, err := StreamEventStreamAsAnthropicWithContext(context.Background(), build(), &out, "claude-opus-5.5", 10, KiroRequestContext{})
+	require.NoError(t, err)
+	require.InDelta(t, 18.5, streamResult.Usage.ContextUsagePercentage, 1e-9)
+	require.InDelta(t, 0.44, streamResult.Usage.MeteringUsage, 1e-9)
+	require.NotContains(t, out.String(), "contextUsagePercentage")
+}

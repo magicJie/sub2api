@@ -72,6 +72,10 @@ type Usage struct {
 	CacheCreationInputTokens   int
 	CacheCreation5mInputTokens int
 	CacheCreation1hInputTokens int
+	// ContextUsagePercentage 是 Kiro contextUsageEvent 报告的上下文占用百分比（0-100），
+	// MeteringUsage 是 meteringEvent 报告的本次扣点（单位通常为 credit）。两者只用于观测，不参与计费。
+	ContextUsagePercentage float64
+	MeteringUsage          float64
 }
 
 type StreamResult struct {
@@ -3488,6 +3492,14 @@ func updateUsageFromEvent(usage *Usage, eventType string, event map[string]any) 
 	if value, ok := toInt(meta["totalTokens"]); ok && value > 0 {
 		usage.TotalTokens = value
 	}
+	if value, ok := toFloat(meta["contextUsagePercentage"]); ok && value > 0 {
+		usage.ContextUsagePercentage = value
+	}
+	if eventType == "meteringEvent" {
+		if value, ok := toFloat(meta["usage"]); ok && value > 0 {
+			usage.MeteringUsage += value
+		}
+	}
 }
 
 func readToolUses(primary, fallback map[string]any) []KiroToolUse {
@@ -3544,6 +3556,22 @@ func readStopReason(m map[string]any) string {
 		return "refusal"
 	default:
 		return ""
+	}
+}
+
+func toFloat(value any) (float64, bool) {
+	switch v := value.(type) {
+	case float64:
+		return v, true
+	case int:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	case json.Number:
+		f, err := v.Float64()
+		return f, err == nil
+	default:
+		return 0, false
 	}
 }
 
