@@ -279,6 +279,7 @@ func (s *GatewayService) forwardKiroMessagesAttempt(ctx context.Context, c *gin.
 		return nil, err
 	}
 	s.saveKiroContinuation(ctx, account, parsed, parseResult.Continuation)
+	logKiroUsageObservation(account, mappedModel, parseResult.Usage)
 
 	c.Header("Content-Type", "application/json")
 	if requestID := resp.Header.Get("x-request-id"); requestID != "" {
@@ -358,6 +359,7 @@ func (s *GatewayService) openKiroAnthropicStreamResponse(ctx context.Context, ac
 		}
 		if streamResult != nil {
 			s.saveKiroContinuation(ctx, account, parsed, streamResult.Continuation)
+			logKiroUsageObservation(account, mappedModel, streamResult.Usage)
 		}
 		_ = pw.Close()
 	}()
@@ -811,6 +813,44 @@ func estimateKiroInputTokens(body []byte) int {
 		return 1
 	}
 	return tokens
+}
+
+// logKiroUsageObservation 记录 Kiro 上游自报的上下文占用和扣点，与本地估算的上下文总量对照，
+// 用于校准本地 token 计数；只写日志，不影响计费。
+func logKiroUsageObservation(account *Account, mappedModel string, usage kiropkg.Usage) {
+	if account == nil || (usage.ContextUsagePercentage <= 0 && usage.MeteringUsage <= 0) {
+		return
+	}
+	localContext := usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
+	fields := []zap.Field{
+		zap.Int64("account_id", account.ID),
+		zap.String("model", mappedModel),
+		zap.Float64("context_usage_percentage", usage.ContextUsagePercentage),
+		zap.Float64("metering_credits", usage.MeteringUsage),
+		zap.Int("local_context_tokens", localContext),
+		zap.Int("local_output_tokens", usage.OutputTokens),
+	}
+	if window := kiroModelContextWindow(account, mappedModel); window > 0 && usage.ContextUsagePercentage > 0 {
+		upstreamContext := int64(usage.ContextUsagePercentage / 100 * float64(window))
+		fields = append(fields, zap.Int64("context_window", window), zap.Int64("upstream_context_tokens", upstreamContext))
+		if localContext > 0 {
+			fields = append(fields, zap.Float64("upstream_to_local_ratio", float64(upstreamContext)/float64(localContext)))
+		}
+	}
+	logger.L().Info("kiro usage observation", fields...)
+}
+
+// kiroModelContextWindow 从账号同步的上游模型元数据里取上下文窗口；未同步时返回 0。
+func kiroModelContextWindow(account *Account, mappedModel string) int64 {
+	for _, id := range []string{mappedModel, kiropkg.MapModel(mappedModel)} {
+		if id == "" {
+			continue
+		}
+		if metadata, ok := account.GetUpstreamModelMetadata(id); ok && metadata.ContextWindow > 0 {
+			return metadata.ContextWindow
+		}
+	}
+	return 0
 }
 
 func kiroUsageToClaude(usage kiropkg.Usage, fallbackInput int) ClaudeUsage {
