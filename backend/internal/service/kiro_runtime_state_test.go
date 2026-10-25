@@ -24,6 +24,7 @@ type stubKiroCooldownStore struct {
 	successErr   error
 	mark429TTL   time.Duration
 	mark429Err   error
+	mark429Calls int
 	suspendedTTL time.Duration
 	suspendedErr error
 	state        *kirocooldown.State
@@ -85,7 +86,21 @@ func (s *stubKiroCooldownStore) MarkSuccess(context.Context, string) error {
 }
 
 func (s *stubKiroCooldownStore) Mark429(context.Context, string) (time.Duration, error) {
+	s.mark429Calls++
 	return s.mark429TTL, s.mark429Err
+}
+
+// stubKiroRetrySleep 记录 kiroRetrySleep 的调用时长且不真正休眠。
+func stubKiroRetrySleep(t *testing.T) *[]time.Duration {
+	t.Helper()
+	var sleeps []time.Duration
+	prev := kiroRetrySleep
+	kiroRetrySleep = func(_ context.Context, d time.Duration) error {
+		sleeps = append(sleeps, d)
+		return nil
+	}
+	t.Cleanup(func() { kiroRetrySleep = prev })
+	return &sleeps
 }
 
 func (s *stubKiroCooldownStore) MarkSuspended(context.Context, string) (time.Duration, error) {
@@ -106,11 +121,12 @@ func (s *stubKiroCooldownStore) ClearEarliestTransientCooldown(_ context.Context
 }
 
 func TestCalculateKiro429Cooldown(t *testing.T) {
-	require.Equal(t, time.Minute, kirocooldown.Calculate429Cooldown(0))
-	require.Equal(t, 2*time.Minute, kirocooldown.Calculate429Cooldown(1))
-	require.Equal(t, 4*time.Minute, kirocooldown.Calculate429Cooldown(2))
-	require.Equal(t, 5*time.Minute, kirocooldown.Calculate429Cooldown(3))
-	require.Equal(t, 5*time.Minute, kirocooldown.Calculate429Cooldown(10))
+	require.Equal(t, 5*time.Second, kirocooldown.Calculate429Cooldown(0))
+	require.Equal(t, 10*time.Second, kirocooldown.Calculate429Cooldown(1))
+	require.Equal(t, 20*time.Second, kirocooldown.Calculate429Cooldown(2))
+	require.Equal(t, 40*time.Second, kirocooldown.Calculate429Cooldown(3))
+	require.Equal(t, time.Minute, kirocooldown.Calculate429Cooldown(4))
+	require.Equal(t, time.Minute, kirocooldown.Calculate429Cooldown(10))
 }
 
 func TestGatewayServiceCheckAndWaitKiroCooldownReturnsNilWithoutWait(t *testing.T) {
@@ -167,6 +183,7 @@ func TestAsKiroCooldownFailoverErrorIgnoresNonCooldownErrors(t *testing.T) {
 }
 
 func TestGatewayServiceTryRecoverKiroCooldownPoolClearsOnlyTransientCooldown(t *testing.T) {
+	sleeps := stubKiroRetrySleep(t)
 	store := &stubKiroCooldownStore{
 		state: &kirocooldown.State{
 			Active:        true,
@@ -192,6 +209,31 @@ func TestGatewayServiceTryRecoverKiroCooldownPoolClearsOnlyTransientCooldown(t *
 	require.True(t, store.clearCalled)
 	require.Len(t, store.clearKeys, 1)
 	require.Equal(t, buildKiroAccountKey(&accounts[0]), store.clearKeys[0])
+	// 剩余 1 分钟超过等待上限，只等 kiroCooldownPoolMaxWait 再清除。
+	require.Equal(t, []time.Duration{kiroCooldownPoolMaxWait}, *sleeps)
+}
+
+func TestGatewayServiceTryRecoverKiroCooldownPoolWaitsForEarliestExpiry(t *testing.T) {
+	sleeps := stubKiroRetrySleep(t)
+	store := &stubKiroCooldownStore{
+		state: &kirocooldown.State{
+			Active:        true,
+			Reason:        kirocooldown.CooldownReason429,
+			CooldownUntil: time.Now().Add(3 * time.Second),
+			Remaining:     3 * time.Second,
+		},
+		// 等待期间冷却已自然到期，没有可清除项。
+		clearResult: false,
+	}
+	svc := &GatewayService{kiroCooldownStore: store}
+	accounts := []Account{
+		{ID: 42, Platform: PlatformKiro, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true},
+	}
+
+	recovered := svc.tryRecoverKiroCooldownPool(context.Background(), accounts, "", nil, false)
+	require.True(t, recovered)
+	require.True(t, store.clearCalled)
+	require.Equal(t, []time.Duration{3 * time.Second}, *sleeps)
 }
 
 func TestGatewayServiceTryRecoverKiroCooldownPoolSkipsSuspended(t *testing.T) {
@@ -221,6 +263,7 @@ func TestGatewayServiceTryRecoverKiroCooldownPoolSkipsSuspended(t *testing.T) {
 }
 
 func TestSelectAccountWithLoadAwarenessRecoversKiroCooldownPool(t *testing.T) {
+	sleeps := stubKiroRetrySleep(t)
 	cfg := testConfig()
 	cfg.Gateway.Scheduling.LoadBatchEnabled = true
 
@@ -256,6 +299,93 @@ func TestSelectAccountWithLoadAwarenessRecoversKiroCooldownPool(t *testing.T) {
 	require.Equal(t, account.ID, result.Account.ID)
 	require.True(t, store.clearCalled)
 	require.Equal(t, []string{buildKiroAccountKey(&account)}, store.clearKeys)
+	require.Equal(t, []time.Duration{kiroCooldownPoolMaxWait}, *sleeps)
+}
+
+func newKiro429TestService(t *testing.T, responses ...*http.Response) (*GatewayService, *Account, *queuedHTTPUpstream, *stubKiroCooldownStore) {
+	t.Helper()
+	account := &Account{
+		ID:          42,
+		Platform:    PlatformKiro,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+	}
+	upstream := &queuedHTTPUpstream{responses: responses}
+	store := &stubKiroCooldownStore{mark429TTL: kirocooldown.ShortCooldown}
+	svc := &GatewayService{
+		accountRepo:         &mockAccountRepoForGemini{accountsByID: map[int64]*Account{account.ID: account}},
+		httpUpstream:        upstream,
+		kiroCooldownStore:   store,
+		tlsFPProfileService: &TLSFingerprintProfileService{},
+	}
+	return svc, account, upstream, store
+}
+
+func kiro429TestPayload(t *testing.T) []byte {
+	t.Helper()
+	payload, err := createTestPayload("claude-sonnet-4-6")
+	require.NoError(t, err)
+	payloadBytes, err := json.Marshal(payload)
+	require.NoError(t, err)
+	return payloadBytes
+}
+
+const kiroThrottleBody = `{"message":"Too many requests, please wait before trying again."}`
+
+func TestExecuteKiroUpstreamRateLimit429RetriesSameAccount(t *testing.T) {
+	sleeps := stubKiroRetrySleep(t)
+	svc, account, upstream, store := newKiro429TestService(t,
+		newJSONResponse(http.StatusTooManyRequests, kiroThrottleBody),
+		newJSONResponse(http.StatusOK, `{}`),
+	)
+
+	resp, _, err := svc.executeKiroUpstream(context.Background(), account, kiro429TestPayload(t), "claude-sonnet-4-6", "claude-sonnet-4-6", "test-token", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, upstream.requests, 2)
+	require.Zero(t, store.mark429Calls)
+	require.Len(t, *sleeps, 1)
+	require.GreaterOrEqual(t, (*sleeps)[0], time.Second)
+}
+
+func TestExecuteKiroUpstreamRateLimit429MarksCooldownAfterRetries(t *testing.T) {
+	sleeps := stubKiroRetrySleep(t)
+	svc, account, upstream, store := newKiro429TestService(t,
+		newJSONResponse(http.StatusTooManyRequests, kiroThrottleBody),
+		newJSONResponse(http.StatusTooManyRequests, kiroThrottleBody),
+		newJSONResponse(http.StatusTooManyRequests, kiroThrottleBody),
+	)
+
+	resp, _, err := svc.executeKiroUpstream(context.Background(), account, kiro429TestPayload(t), "claude-sonnet-4-6", "claude-sonnet-4-6", "test-token", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
+	require.Equal(t, kirocooldown.ShortCooldown.String(), resp.Header.Get("x-kiro-cooldown"))
+	require.Len(t, upstream.requests, 3)
+	require.Equal(t, 1, store.mark429Calls)
+	require.Len(t, *sleeps, 2)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.JSONEq(t, kiroThrottleBody, string(body))
+}
+
+func TestExecuteKiroUpstreamQuota429DoesNotRetry(t *testing.T) {
+	sleeps := stubKiroRetrySleep(t)
+	quotaBody := `{"message":"You have exceeded your quota."}`
+	svc, account, upstream, store := newKiro429TestService(t,
+		newJSONResponse(http.StatusTooManyRequests, quotaBody),
+	)
+
+	resp, _, err := svc.executeKiroUpstream(context.Background(), account, kiro429TestPayload(t), "claude-sonnet-4-6", "claude-sonnet-4-6", "test-token", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
+	require.Len(t, upstream.requests, 1)
+	require.Equal(t, 1, store.mark429Calls)
+	require.Empty(t, *sleeps)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.JSONEq(t, quotaBody, string(body))
 }
 
 func TestClassifyKiroHTTPErrorMonthlyRequestCount(t *testing.T) {

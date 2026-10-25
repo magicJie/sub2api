@@ -22,8 +22,10 @@ const (
 	CooldownReason429       = "rate_limit_exceeded"
 	CooldownReasonSuspended = "account_suspended"
 
-	ShortCooldown = time.Minute
-	MaxCooldown   = 5 * time.Minute
+	// Kiro 的限流 429 通常几秒内恢复：冷却从 5s 起按连续失败次数翻倍，封顶 60s，
+	// 避免几次偶发 429 就把整个账号池关掉数分钟。
+	ShortCooldown = 5 * time.Second
+	MaxCooldown   = time.Minute
 	LongCooldown  = 24 * time.Hour
 
 	redisTimeout = 3 * time.Second
