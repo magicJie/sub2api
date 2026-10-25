@@ -1538,20 +1538,33 @@ func TestBuildAssistantMessageStructUsesSpacePlaceholderForToolOnly(t *testing.T
 	require.Equal(t, "/tmp/test.txt", result.ToolUses[0].Input["path"])
 }
 
-func TestBuildAssistantMessageStructPreservesThinkingStartingWithApostrophe(t *testing.T) {
+func TestBuildAssistantMessageStructDropsHistoryThinking(t *testing.T) {
 	msg := gjson.Parse(`{
 		"role":"assistant",
 		"content":[
-			{"type":"thinking","thinking":"I should look at the project structure to get a sense of what we're working with."},
-			{"type":"text","text":"<thinking>'re working with.</thinking>\n\n"},
+			{"type":"thinking","thinking":"I should look at the project structure.","signature":"sig"},
+			{"type":"redacted_thinking","data":"opaque"},
+			{"type":"text","text":"<thinking>'re working with.</thinking>\n\n先看目录结构。"},
 			{"type":"tool_use","id":"toolu_01ABC","name":"Bash","input":{"command":"ls"}}
 		]
 	}`)
 
 	result := buildAssistantMessageStruct(msg, nil)
-	require.Contains(t, result.Content, "<thinking>I should look at the project structure to get a sense of what we're working with.")
-	require.Contains(t, result.Content, "'re working with.</thinking>")
-	require.NotContains(t, result.Content, "\n\n<thinking>'re working with.</thinking>")
+	require.Equal(t, "先看目录结构。", result.Content)
+	require.Len(t, result.ToolUses, 1)
+}
+
+func TestBuildAssistantMessageStructThinkingOnlyUsesSpacePlaceholder(t *testing.T) {
+	msg := gjson.Parse(`{
+		"role":"assistant",
+		"content":[
+			{"type":"thinking","thinking":"reason only","signature":"sig"},
+			{"type":"tool_use","id":"toolu_01ABC","name":"Bash","input":{"command":"ls"}}
+		]
+	}`)
+
+	result := buildAssistantMessageStruct(msg, nil)
+	require.Equal(t, " ", result.Content)
 	require.Len(t, result.ToolUses, 1)
 }
 
