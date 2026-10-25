@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	kiropkg "github.com/Wei-Shaw/sub2api/internal/kiro"
 	"github.com/Wei-Shaw/sub2api/internal/kiro/anthropictokenizer"
 )
 
@@ -340,5 +341,17 @@ func TestEstimateKiroImageTokens(t *testing.T) {
 	}
 	if got := estimateKiroImageTokens(map[string]any{"type": "image", "source": map[string]any{"type": "url", "url": "https://example.com/a.png"}}); got != kiroTokensPerImageMax {
 		t.Fatalf("undecodable image should use the cap, got %d", got)
+	}
+}
+
+func TestKiroUsageToClaudeKeepsZeroInputWhenCacheEmulated(t *testing.T) {
+	// 非流式路径：缓存模拟全部命中时 input=0，记录用量不能回填估算值导致重复计费。
+	got := kiroUsageToClaude(kiropkg.Usage{OutputTokens: 57, CacheReadInputTokens: 2976, CacheCreationInputTokens: 6}, 2982)
+	if got.InputTokens != 0 || got.CacheReadInputTokens != 2976 || got.CacheCreationInputTokens != 6 {
+		t.Fatalf("unexpected usage: %+v", got)
+	}
+	got = kiroUsageToClaude(kiropkg.Usage{OutputTokens: 10}, 42)
+	if got.InputTokens != 42 {
+		t.Fatalf("expected fallback input 42 without cache usage, got %+v", got)
 	}
 }

@@ -788,7 +788,8 @@ func estimateKiroInputTokens(body []byte) int {
 
 func kiroUsageToClaude(usage kiropkg.Usage, fallbackInput int) ClaudeUsage {
 	inputTokens := usage.InputTokens
-	if inputTokens == 0 {
+	// 缓存模拟全部命中时 input 本就是 0，不能再回填估算值，否则 cache 部分会被重复计费。
+	if inputTokens == 0 && usage.CacheReadInputTokens == 0 && usage.CacheCreationInputTokens == 0 {
 		inputTokens = fallbackInput
 	}
 	return ClaudeUsage{
