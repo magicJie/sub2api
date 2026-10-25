@@ -34,6 +34,8 @@ const kiroInvalidModelTempUnschedDuration = time.Minute
 const (
 	kiroRetryBaseDelay = 200 * time.Millisecond
 	kiroRetryMaxDelay  = 2 * time.Second
+
+	kiroRateLimitRetryBaseDelay = time.Second
 )
 
 var kiroRetrySleep = sleepWithContext
@@ -51,6 +53,15 @@ func kiroRetryBackoffDelay(attempt int) time.Duration {
 		return delay
 	}
 	return delay + time.Duration(mathrand.Int63n(int64(jitterMax)+1))
+}
+
+// kiroRateLimitRetryDelay 是同账号遇到限流 429 时的退避：1s、2s，带 25% 抖动。
+func kiroRateLimitRetryDelay(attempt int) time.Duration {
+	if attempt < 0 {
+		attempt = 0
+	}
+	delay := kiroRateLimitRetryBaseDelay * time.Duration(1<<attempt)
+	return delay + time.Duration(mathrand.Int63n(int64(delay/4)+1))
 }
 
 func sleepKiroRetry(ctx context.Context, attempt int) error {
@@ -440,6 +451,22 @@ func (s *GatewayService) executeKiroUpstreamWithParsed(ctx context.Context, acco
 			}
 
 			if resp.StatusCode == http.StatusTooManyRequests {
+				// 限流性质的 429 通常几秒内恢复：先在同账号按 1s/2s 退避重试，
+				// 仍失败再标记冷却交给换号；额度/超额类 429 不重试。
+				if attempt < maxRetries {
+					respBody, readErr := io.ReadAll(resp.Body)
+					_ = resp.Body.Close()
+					if readErr != nil {
+						return nil, requestCtx, readErr
+					}
+					if classifyKiroHTTPError(resp.StatusCode, string(respBody)).Category == kiroErrorRateLimited {
+						if sleepErr := kiroRetrySleep(ctx, kiroRateLimitRetryDelay(attempt)); sleepErr != nil {
+							return nil, requestCtx, sleepErr
+						}
+						continue
+					}
+					resetHTTPResponseBody(resp, respBody)
+				}
 				cooldown, err := s.markKiro429(ctx, accountKey)
 				if err != nil {
 					_ = resp.Body.Close()
