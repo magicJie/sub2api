@@ -288,6 +288,33 @@ func (_u *ProxyUpdate) ClearUpstreamProxyID() *ProxyUpdate {
 	return _u
 }
 
+// SetUpstreamHopGroupID sets the "upstream_hop_group_id" field.
+func (_u *ProxyUpdate) SetUpstreamHopGroupID(v int64) *ProxyUpdate {
+	_u.mutation.ResetUpstreamHopGroupID()
+	_u.mutation.SetUpstreamHopGroupID(v)
+	return _u
+}
+
+// SetNillableUpstreamHopGroupID sets the "upstream_hop_group_id" field if the given value is not nil.
+func (_u *ProxyUpdate) SetNillableUpstreamHopGroupID(v *int64) *ProxyUpdate {
+	if v != nil {
+		_u.SetUpstreamHopGroupID(*v)
+	}
+	return _u
+}
+
+// AddUpstreamHopGroupID adds value to the "upstream_hop_group_id" field.
+func (_u *ProxyUpdate) AddUpstreamHopGroupID(v int64) *ProxyUpdate {
+	_u.mutation.AddUpstreamHopGroupID(v)
+	return _u
+}
+
+// ClearUpstreamHopGroupID clears the value of the "upstream_hop_group_id" field.
+func (_u *ProxyUpdate) ClearUpstreamHopGroupID() *ProxyUpdate {
+	_u.mutation.ClearUpstreamHopGroupID()
+	return _u
+}
+
 // SetOptions sets the "options" field.
 func (_u *ProxyUpdate) SetOptions(v map[string]string) *ProxyUpdate {
 	_u.mutation.SetOptions(v)
@@ -579,6 +606,15 @@ func (_u *ProxyUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.UpstreamProxyIDCleared() {
 		_spec.ClearField(proxy.FieldUpstreamProxyID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.UpstreamHopGroupID(); ok {
+		_spec.SetField(proxy.FieldUpstreamHopGroupID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedUpstreamHopGroupID(); ok {
+		_spec.AddField(proxy.FieldUpstreamHopGroupID, field.TypeInt64, value)
+	}
+	if _u.mutation.UpstreamHopGroupIDCleared() {
+		_spec.ClearField(proxy.FieldUpstreamHopGroupID, field.TypeInt64)
 	}
 	if value, ok := _u.mutation.Options(); ok {
 		_spec.SetField(proxy.FieldOptions, field.TypeJSON, value)
@@ -993,6 +1029,33 @@ func (_u *ProxyUpdateOne) ClearUpstreamProxyID() *ProxyUpdateOne {
 	return _u
 }
 
+// SetUpstreamHopGroupID sets the "upstream_hop_group_id" field.
+func (_u *ProxyUpdateOne) SetUpstreamHopGroupID(v int64) *ProxyUpdateOne {
+	_u.mutation.ResetUpstreamHopGroupID()
+	_u.mutation.SetUpstreamHopGroupID(v)
+	return _u
+}
+
+// SetNillableUpstreamHopGroupID sets the "upstream_hop_group_id" field if the given value is not nil.
+func (_u *ProxyUpdateOne) SetNillableUpstreamHopGroupID(v *int64) *ProxyUpdateOne {
+	if v != nil {
+		_u.SetUpstreamHopGroupID(*v)
+	}
+	return _u
+}
+
+// AddUpstreamHopGroupID adds value to the "upstream_hop_group_id" field.
+func (_u *ProxyUpdateOne) AddUpstreamHopGroupID(v int64) *ProxyUpdateOne {
+	_u.mutation.AddUpstreamHopGroupID(v)
+	return _u
+}
+
+// ClearUpstreamHopGroupID clears the value of the "upstream_hop_group_id" field.
+func (_u *ProxyUpdateOne) ClearUpstreamHopGroupID() *ProxyUpdateOne {
+	_u.mutation.ClearUpstreamHopGroupID()
+	return _u
+}
+
 // SetOptions sets the "options" field.
 func (_u *ProxyUpdateOne) SetOptions(v map[string]string) *ProxyUpdateOne {
 	_u.mutation.SetOptions(v)
@@ -1314,6 +1377,15 @@ func (_u *ProxyUpdateOne) sqlSave(ctx context.Context) (_node *Proxy, err error)
 	}
 	if _u.mutation.UpstreamProxyIDCleared() {
 		_spec.ClearField(proxy.FieldUpstreamProxyID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.UpstreamHopGroupID(); ok {
+		_spec.SetField(proxy.FieldUpstreamHopGroupID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedUpstreamHopGroupID(); ok {
+		_spec.AddField(proxy.FieldUpstreamHopGroupID, field.TypeInt64, value)
+	}
+	if _u.mutation.UpstreamHopGroupIDCleared() {
+		_spec.ClearField(proxy.FieldUpstreamHopGroupID, field.TypeInt64)
 	}
 	if value, ok := _u.mutation.Options(); ok {
 		_spec.SetField(proxy.FieldOptions, field.TypeJSON, value)

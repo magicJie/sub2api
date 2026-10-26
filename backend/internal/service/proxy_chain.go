@@ -24,14 +24,16 @@ import (
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/hopgroup"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/proxychain"
 )
 
 // 前置代理模式。
 const (
-	UpstreamModeDirect  = "direct"  // 不经前置代理
-	UpstreamModeDefault = "default" // 跟随全局默认前置代理
-	UpstreamModeProxy   = "proxy"   // 使用 UpstreamProxyID 指定的代理
+	UpstreamModeDirect   = "direct"    // 不经前置代理
+	UpstreamModeDefault  = "default"   // 跟随全局默认前置代理
+	UpstreamModeProxy    = "proxy"     // 使用 UpstreamProxyID 指定的代理
+	UpstreamModeHopGroup = "hop_group" // 首跳组，仅能出现在链的第一跳
 )
 
 // SettingKeyProxyChainDefaultUpstreamID 是全局默认前置代理 id（空表示未设置）。
@@ -58,6 +60,8 @@ type ProxyChainHop struct {
 type proxyChainSnapshot struct {
 	byID              map[int64]Proxy
 	defaultUpstreamID *int64
+	hopGroups         map[int64]ProxyHopGroup
+	defaultHopGroupID *int64
 	loaded            bool
 	urls              sync.Map // proxy id -> 已解析的链 URL（快照不可变，替换快照即失效）
 }
@@ -83,6 +87,8 @@ func NormalizeUpstreamMode(mode string) string {
 		return UpstreamModeDefault
 	case UpstreamModeProxy:
 		return UpstreamModeProxy
+	case UpstreamModeHopGroup:
+		return UpstreamModeHopGroup
 	default:
 		return UpstreamModeDirect
 	}
@@ -102,6 +108,11 @@ func (p *Proxy) chainHop() proxychain.Hop {
 // resolveProxyChain 返回 p 的完整链路（按拨号顺序，最后一个是 p 自身）。
 // 前置代理从 byID 快照中取；p 自身使用传入的值（可能比快照新）。
 func resolveProxyChain(p *Proxy, byID map[int64]Proxy, defaultUpstreamID *int64, now time.Time) ([]Proxy, error) {
+	snap := currentProxyChainSnapshot()
+	return resolveProxyChainWithGroups(p, byID, defaultUpstreamID, snap.hopGroups, snap.defaultHopGroupID, now)
+}
+
+func resolveProxyChainWithGroups(p *Proxy, byID map[int64]Proxy, defaultUpstreamID *int64, groups map[int64]ProxyHopGroup, defaultGroupID *int64, now time.Time) ([]Proxy, error) {
 	chain := []Proxy{*p}
 	visited := map[int64]struct{}{}
 	if p.ID > 0 {
@@ -110,13 +121,23 @@ func resolveProxyChain(p *Proxy, byID map[int64]Proxy, defaultUpstreamID *int64,
 	cur := *p
 	for {
 		var nextID *int64
+		var groupID *int64
 		switch NormalizeUpstreamMode(cur.UpstreamMode) {
 		case UpstreamModeProxy:
 			if cur.UpstreamProxyID == nil {
 				return nil, fmt.Errorf("%w: proxy %q has no upstream proxy selected", errProxyChainInvalid, cur.Name)
 			}
 			nextID = cur.UpstreamProxyID
+		case UpstreamModeHopGroup:
+			groupID = cur.UpstreamHopGroupID
+			if groupID == nil {
+				return nil, fmt.Errorf("%w: no first-hop group selected", errProxyChainInvalid)
+			}
 		case UpstreamModeDefault:
+			if defaultGroupID != nil {
+				groupID = defaultGroupID
+				break
+			}
 			// 未配置默认前置代理时 fail-closed（不能悄悄直连出口）；默认前置代理自身按直连处理。
 			if defaultUpstreamID == nil {
 				return nil, fmt.Errorf("%w: proxy %q follows default upstream proxy but none is configured", errProxyChainInvalid, cur.Name)
@@ -124,6 +145,17 @@ func resolveProxyChain(p *Proxy, byID map[int64]Proxy, defaultUpstreamID *int64,
 			if *defaultUpstreamID != cur.ID {
 				nextID = defaultUpstreamID
 			}
+		}
+		if groupID != nil {
+			group, ok := groups[*groupID]
+			if !ok || group.Status != StatusActive {
+				return nil, fmt.Errorf("%w: first-hop group is missing or inactive", errProxyChainInvalid)
+			}
+			chain = append([]Proxy{{ID: -group.ID, Name: group.Name, Protocol: UpstreamModeHopGroup}}, chain...)
+			if len(chain) > proxychain.MaxHops {
+				return nil, fmt.Errorf("%w: chain exceeds %d hops", errProxyChainInvalid, proxychain.MaxHops)
+			}
+			break
 		}
 		if nextID == nil {
 			break
@@ -187,9 +219,10 @@ func proxyChainURL(p *Proxy) (string, bool) {
 		return p.directURL(), true
 	}
 	if err == nil {
-		hops := make([]proxychain.Hop, len(chain))
-		for i := range chain {
-			hops[i] = chain[i].chainHop()
+		hops, hopErr := proxyChainRuntimeHops(chain)
+		if hopErr != nil {
+			logProxyChainError(p.ID, hopErr)
+			return proxyChainInvalidURL, true
 		}
 		var u string
 		if u, err = proxychain.Default().URL(hops); err == nil {
@@ -233,16 +266,18 @@ func DefaultUpstreamProxyID() *int64 {
 
 // ProxyChainService 负责刷新代理快照、维护默认前置代理设置。
 type ProxyChainService struct {
-	proxyRepo   ProxyRepository
-	settingRepo SettingRepository
-	mu          sync.Mutex
-	stopCh      chan struct{}
-	stopOnce    sync.Once
-	wg          sync.WaitGroup
+	proxyRepo    ProxyRepository
+	settingRepo  SettingRepository
+	hopGroupRepo ProxyHopGroupRepository
+	hopRuntime   hopgroup.Runtime
+	mu           sync.Mutex
+	stopCh       chan struct{}
+	stopOnce     sync.Once
+	wg           sync.WaitGroup
 }
 
-func NewProxyChainService(proxyRepo ProxyRepository, settingRepo SettingRepository) *ProxyChainService {
-	return &ProxyChainService{proxyRepo: proxyRepo, settingRepo: settingRepo, stopCh: make(chan struct{})}
+func NewProxyChainService(proxyRepo ProxyRepository, settingRepo SettingRepository, hopGroupRepo ProxyHopGroupRepository, runtime hopgroup.Runtime) *ProxyChainService {
+	return &ProxyChainService{proxyRepo: proxyRepo, settingRepo: settingRepo, hopGroupRepo: hopGroupRepo, hopRuntime: runtime, stopCh: make(chan struct{})}
 }
 
 var activeProxyChainService atomic.Pointer[ProxyChainService]
@@ -293,7 +328,9 @@ func (s *ProxyChainService) Stop() {
 	}
 	s.stopOnce.Do(func() { close(s.stopCh) })
 	s.wg.Wait()
-	activeProxyChainService.CompareAndSwap(s, nil)
+	if activeProxyChainService.CompareAndSwap(s, nil) && s.hopRuntime != nil {
+		_ = s.hopRuntime.Close()
+	}
 }
 
 func (s *ProxyChainService) loadDefaultUpstreamID(ctx context.Context) (*int64, error) {
@@ -334,24 +371,31 @@ func (s *ProxyChainService) ParseShareLink(link string) (*proxychain.ParsedLink,
 
 // ProxyChainInput 是创建代理时的链式代理字段（嵌入 CreateProxyInput）。
 type ProxyChainInput struct {
-	UpstreamMode    string
-	UpstreamProxyID *int64
-	Options         map[string]string
+	UpstreamMode       string
+	UpstreamProxyID    *int64
+	UpstreamHopGroupID *int64
+	Options            map[string]string
 }
 
 // ProxyChainUpdateInput 是更新代理时的链式代理字段（嵌入 UpdateProxyInput）。
 // 空 UpstreamMode 与 nil Options 表示保持不变；ClearUpstreamProxyID 显式清除前置代理。
 type ProxyChainUpdateInput struct {
-	UpstreamMode         string
-	UpstreamProxyID      *int64
-	ClearUpstreamProxyID bool
-	Options              map[string]string
-	OptionsSet           bool
+	UpstreamMode            string
+	UpstreamProxyID         *int64
+	ClearUpstreamProxyID    bool
+	UpstreamHopGroupID      *int64
+	ClearUpstreamHopGroupID bool
+	Options                 map[string]string
+	OptionsSet              bool
 }
 
 func applyProxyChainCreate(ctx context.Context, repo ProxyRepository, settingRepo SettingRepository, p *Proxy, in *ProxyChainInput) error {
 	p.UpstreamMode = in.UpstreamMode
 	p.UpstreamProxyID = in.UpstreamProxyID
+	p.UpstreamHopGroupID = in.UpstreamHopGroupID
+	if in.UpstreamHopGroupID != nil && NormalizeUpstreamMode(in.UpstreamMode) != UpstreamModeHopGroup {
+		return infraerrors.BadRequest("PROXY_UPSTREAM_MODE_MISMATCH", "upstream_hop_group_id requires upstream_mode=hop_group")
+	}
 	if in.UpstreamProxyID != nil && NormalizeUpstreamMode(in.UpstreamMode) != UpstreamModeProxy {
 		return infraerrors.BadRequest("PROXY_UPSTREAM_MODE_MISMATCH", "upstream_proxy_id requires upstream_mode=proxy")
 	}
@@ -382,7 +426,13 @@ func (s *ProxyChainService) Refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	proxyChainState.Store(&proxyChainSnapshot{byID: byID, defaultUpstreamID: defaultID, loaded: true})
+	groups, defaultGroupID, err := s.refreshHopGroups(ctx, byID)
+	if err != nil {
+		proxyChainState.Store(&proxyChainSnapshot{byID: byID, defaultUpstreamID: defaultID})
+		proxychain.Default().Retain(nil)
+		return err
+	}
+	proxyChainState.Store(&proxyChainSnapshot{byID: byID, defaultUpstreamID: defaultID, hopGroups: groups, defaultHopGroupID: defaultGroupID, loaded: true})
 	proxychain.Default().Retain(activeChainHops(byID, defaultID))
 	return nil
 }
@@ -397,9 +447,9 @@ func activeChainHops(byID map[int64]Proxy, defaultID *int64) [][]proxychain.Hop 
 		if err != nil || !proxyChainNeedsXray(chain) {
 			continue
 		}
-		hops := make([]proxychain.Hop, len(chain))
-		for i := range chain {
-			hops[i] = chain[i].chainHop()
+		hops, err := proxyChainRuntimeHops(chain)
+		if err != nil {
+			continue
 		}
 		out = append(out, hops)
 	}
@@ -418,45 +468,18 @@ func loadProxyMap(ctx context.Context, repo ProxyRepository) (map[int64]Proxy, e
 	return byID, nil
 }
 
-// SetDefaultUpstreamProxyID 设置（或清除）默认前置代理，并校验所有跟随默认的代理链路仍然有效。
-func (s *ProxyChainService) SetDefaultUpstreamProxyID(ctx context.Context, id *int64) error {
-	byID, err := loadProxyMap(ctx, s.proxyRepo)
-	if err != nil {
-		return err
-	}
-	if id != nil {
-		target, ok := byID[*id]
-		if !ok {
-			return ErrProxyNotFound
-		}
-		if !target.IsActive() || target.IsExpired(time.Now()) {
-			return infraerrors.BadRequest("PROXY_UPSTREAM_INACTIVE", "default upstream proxy must be active")
-		}
-	}
-	if err := validateDependentChains(byID, id, 0); err != nil {
-		return err
-	}
-	value := ""
-	if id != nil {
-		value = strconv.FormatInt(*id, 10)
-	}
-	if err := s.settingRepo.Set(ctx, SettingKeyProxyChainDefaultUpstreamID, value); err != nil {
-		return err
-	}
-	return s.Refresh(ctx)
-}
-
 // validateDependentChains 校验 byID 中所有带前置代理的代理链路都可解析；
 // changedID>0 时只检查链路经过 changedID 的代理（修改/新建某个代理时使用）。
 // 已停用/过期的代理不参与（它们本来就不出站）。
-func validateDependentChains(byID map[int64]Proxy, defaultID *int64, changedID int64) error {
+
+func validateDependentChainsWithGroups(byID map[int64]Proxy, defaultID *int64, groups map[int64]ProxyHopGroup, defaultGroupID *int64, changedID int64) error {
 	now := time.Now()
 	for id := range byID {
 		p := byID[id]
 		if NormalizeUpstreamMode(p.UpstreamMode) == UpstreamModeDirect || !p.IsActive() || p.IsExpired(now) {
 			continue
 		}
-		chain, err := resolveProxyChain(&p, byID, defaultID, now)
+		chain, err := resolveProxyChainWithGroups(&p, byID, defaultID, groups, defaultGroupID, now)
 		if changedID > 0 && err == nil && !chainContains(chain, changedID) {
 			continue
 		}
@@ -481,6 +504,12 @@ func validateProxyChainConfig(ctx context.Context, repo ProxyRepository, setting
 	p.UpstreamMode = NormalizeUpstreamMode(p.UpstreamMode)
 	if p.UpstreamMode != UpstreamModeProxy {
 		p.UpstreamProxyID = nil
+	}
+	if p.UpstreamMode != UpstreamModeHopGroup {
+		p.UpstreamHopGroupID = nil
+	}
+	if p.UpstreamMode == UpstreamModeHopGroup && p.UpstreamHopGroupID == nil {
+		return infraerrors.BadRequest("PROXY_UPSTREAM_REQUIRED", "first-hop group required when upstream_mode=hop_group")
 	}
 	p.Options = proxychain.NormalizeOptions(p.Protocol, p.Options)
 	// 基础字段（协议白名单、host、port）由 handler binding 校验；这里只校验需要 Xray 承载的协议参数。
@@ -507,8 +536,15 @@ func validateProxyChainConfig(ctx context.Context, repo ProxyRepository, setting
 	if err != nil {
 		return err
 	}
+	groups, defaultGroupID, err := loadHopGroupValidation(ctx, settingRepo)
+	if err != nil {
+		return err
+	}
+	if err := validateHopGroupMemberChange(ctx, p); err != nil {
+		return err
+	}
 	if p.UpstreamMode != UpstreamModeDirect {
-		if _, err := resolveProxyChain(p, byID, defaultID, time.Now()); err != nil {
+		if _, err := resolveProxyChainWithGroups(p, byID, defaultID, groups, defaultGroupID, time.Now()); err != nil {
 			return infraerrors.BadRequest("PROXY_CHAIN_INVALID", err.Error())
 		}
 	}
@@ -516,7 +552,7 @@ func validateProxyChainConfig(ctx context.Context, repo ProxyRepository, setting
 	// 停用代理不受此限制：允许紧急下线坏节点，依赖它的链路在运行时 fail-closed。
 	if p.ID > 0 && p.IsActive() {
 		byID[p.ID] = *p
-		if err := validateDependentChains(byID, defaultID, p.ID); err != nil {
+		if err := validateDependentChainsWithGroups(byID, defaultID, groups, defaultGroupID, p.ID); err != nil {
 			return err
 		}
 	}
@@ -527,6 +563,9 @@ func validateProxyChainConfig(ctx context.Context, repo ProxyRepository, setting
 func checkProxyUpstreamInUse(ctx context.Context, repo ProxyRepository, settingRepo SettingRepository, id int64) error {
 	defaultID, err := readDefaultUpstreamID(ctx, settingRepo)
 	if err != nil {
+		return err
+	}
+	if err := checkHopGroupMemberInUse(ctx, id); err != nil {
 		return err
 	}
 	if defaultID != nil && *defaultID == id {
@@ -558,6 +597,12 @@ func applyProxyChainUpdate(ctx context.Context, repo ProxyRepository, settingRep
 	}
 	if in.UpstreamProxyID != nil || in.ClearUpstreamProxyID {
 		p.UpstreamProxyID = in.UpstreamProxyID
+	}
+	if in.UpstreamHopGroupID != nil || in.ClearUpstreamHopGroupID {
+		p.UpstreamHopGroupID = in.UpstreamHopGroupID
+	}
+	if in.UpstreamHopGroupID != nil && NormalizeUpstreamMode(p.UpstreamMode) != UpstreamModeHopGroup {
+		return infraerrors.BadRequest("PROXY_UPSTREAM_MODE_MISMATCH", "upstream_hop_group_id requires upstream_mode=hop_group")
 	}
 	if in.UpstreamProxyID != nil && NormalizeUpstreamMode(p.UpstreamMode) != UpstreamModeProxy {
 		return infraerrors.BadRequest("PROXY_UPSTREAM_MODE_MISMATCH", "upstream_proxy_id requires upstream_mode=proxy")

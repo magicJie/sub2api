@@ -135,6 +135,11 @@ func UpstreamProxyID(v int64) predicate.Proxy {
 	return predicate.Proxy(sql.FieldEQ(FieldUpstreamProxyID, v))
 }
 
+// UpstreamHopGroupID applies equality check predicate on the "upstream_hop_group_id" field. It's identical to UpstreamHopGroupIDEQ.
+func UpstreamHopGroupID(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldEQ(FieldUpstreamHopGroupID, v))
+}
+
 // PoolID applies equality check predicate on the "pool_id" field. It's identical to PoolIDEQ.
 func PoolID(v int64) predicate.Proxy {
 	return predicate.Proxy(sql.FieldEQ(FieldPoolID, v))
@@ -1018,6 +1023,56 @@ func UpstreamProxyIDIsNil() predicate.Proxy {
 // UpstreamProxyIDNotNil applies the NotNil predicate on the "upstream_proxy_id" field.
 func UpstreamProxyIDNotNil() predicate.Proxy {
 	return predicate.Proxy(sql.FieldNotNull(FieldUpstreamProxyID))
+}
+
+// UpstreamHopGroupIDEQ applies the EQ predicate on the "upstream_hop_group_id" field.
+func UpstreamHopGroupIDEQ(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldEQ(FieldUpstreamHopGroupID, v))
+}
+
+// UpstreamHopGroupIDNEQ applies the NEQ predicate on the "upstream_hop_group_id" field.
+func UpstreamHopGroupIDNEQ(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldNEQ(FieldUpstreamHopGroupID, v))
+}
+
+// UpstreamHopGroupIDIn applies the In predicate on the "upstream_hop_group_id" field.
+func UpstreamHopGroupIDIn(vs ...int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldIn(FieldUpstreamHopGroupID, vs...))
+}
+
+// UpstreamHopGroupIDNotIn applies the NotIn predicate on the "upstream_hop_group_id" field.
+func UpstreamHopGroupIDNotIn(vs ...int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldNotIn(FieldUpstreamHopGroupID, vs...))
+}
+
+// UpstreamHopGroupIDGT applies the GT predicate on the "upstream_hop_group_id" field.
+func UpstreamHopGroupIDGT(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldGT(FieldUpstreamHopGroupID, v))
+}
+
+// UpstreamHopGroupIDGTE applies the GTE predicate on the "upstream_hop_group_id" field.
+func UpstreamHopGroupIDGTE(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldGTE(FieldUpstreamHopGroupID, v))
+}
+
+// UpstreamHopGroupIDLT applies the LT predicate on the "upstream_hop_group_id" field.
+func UpstreamHopGroupIDLT(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldLT(FieldUpstreamHopGroupID, v))
+}
+
+// UpstreamHopGroupIDLTE applies the LTE predicate on the "upstream_hop_group_id" field.
+func UpstreamHopGroupIDLTE(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldLTE(FieldUpstreamHopGroupID, v))
+}
+
+// UpstreamHopGroupIDIsNil applies the IsNil predicate on the "upstream_hop_group_id" field.
+func UpstreamHopGroupIDIsNil() predicate.Proxy {
+	return predicate.Proxy(sql.FieldIsNull(FieldUpstreamHopGroupID))
+}
+
+// UpstreamHopGroupIDNotNil applies the NotNil predicate on the "upstream_hop_group_id" field.
+func UpstreamHopGroupIDNotNil() predicate.Proxy {
+	return predicate.Proxy(sql.FieldNotNull(FieldUpstreamHopGroupID))
 }
 
 // OptionsIsNil applies the IsNil predicate on the "options" field.

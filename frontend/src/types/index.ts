@@ -955,7 +955,7 @@ export type ProxyProtocol =
   | 'vless'
   | 'trojan'
 /** 前置代理模式：direct=直连；default=跟随全局默认前置代理；proxy=使用 upstream_proxy_id 指定的代理 */
-export type ProxyUpstreamMode = 'direct' | 'default' | 'proxy'
+export type ProxyUpstreamMode = 'direct' | 'default' | 'proxy' | 'hop_group' // 链式代理（fork）
 
 /** 链路中的一跳（先拨号的在前，不含代理自身） */
 export interface ProxyChainHop {
@@ -1001,6 +1001,7 @@ export interface Proxy {
   expiry_warn_days: number
   upstream_mode?: ProxyUpstreamMode
   upstream_proxy_id?: number | null
+  upstream_hop_group_id?: number | null // 链式代理（fork）
   /** 加密协议参数（ss/vmess/vless/trojan），可能缺失或为 null */
   options?: Record<string, string> | null
   /** 已解析的前置链路（先拨号的在前，不含自身；直连时为空） */
@@ -1026,6 +1027,7 @@ export interface ParsedProxyLink {
 
 export interface ProxyChainSettings {
   default_upstream_proxy_id: number | null
+  default_upstream_hop_group_id?: number | null // 链式代理（fork）
 }
 
 export interface ProxyAccountSummary {
@@ -1712,6 +1714,7 @@ export interface CreateProxyRequest {
   expiry_warn_days?: number
   upstream_mode?: ProxyUpstreamMode
   upstream_proxy_id?: number | null
+  upstream_hop_group_id?: number | null // 链式代理（fork）
   options?: Record<string, string>
   pool_id?: number | null // 代理池（fork）
 }
@@ -1730,6 +1733,7 @@ export interface UpdateProxyRequest {
   expiry_warn_days?: number
   upstream_mode?: ProxyUpstreamMode
   upstream_proxy_id?: number | null
+  upstream_hop_group_id?: number | null // 链式代理（fork）
   options?: Record<string, string>
   pool_id?: number | null // 代理池（fork）
 }

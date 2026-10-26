@@ -30,9 +30,10 @@ type Proxy struct {
 	ExpiryWarnDays int
 
 	// 链式代理（fork）：前置代理与 ss/vmess/vless/trojan 协议参数，见 proxy_chain.go。
-	UpstreamMode    string
-	UpstreamProxyID *int64
-	Options         map[string]string
+	UpstreamMode       string
+	UpstreamProxyID    *int64
+	UpstreamHopGroupID *int64
+	Options            map[string]string
 
 	PoolID *int64 // 代理池（fork）：所属代理池，nil 为默认池，见 proxy_pool.go。
 }

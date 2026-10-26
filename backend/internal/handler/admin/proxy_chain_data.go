@@ -12,10 +12,11 @@ import (
 
 // DataProxyChain 嵌入 DataProxy。前置代理优先按 proxy_key 引用（凭据级唯一），name 仅作兜底。
 type DataProxyChain struct {
-	UpstreamMode      string            `json:"upstream_mode,omitempty"`
-	UpstreamProxyKey  string            `json:"upstream_proxy_key,omitempty"`
-	UpstreamProxyName string            `json:"upstream_proxy_name,omitempty"`
-	Options           map[string]string `json:"options,omitempty"`
+	UpstreamMode         string            `json:"upstream_mode,omitempty"`
+	UpstreamProxyKey     string            `json:"upstream_proxy_key,omitempty"`
+	UpstreamProxyName    string            `json:"upstream_proxy_name,omitempty"`
+	UpstreamHopGroupName string            `json:"upstream_hop_group_name,omitempty"`
+	Options              map[string]string `json:"options,omitempty"`
 }
 
 func dataProxyChainFromService(p *service.Proxy, exported []service.Proxy) DataProxyChain {
@@ -23,6 +24,13 @@ func dataProxyChainFromService(p *service.Proxy, exported []service.Proxy) DataP
 	mode := service.NormalizeUpstreamMode(p.UpstreamMode)
 	if mode != service.UpstreamModeDirect {
 		out.UpstreamMode = mode
+	}
+	groupID := p.UpstreamHopGroupID
+	if mode == service.UpstreamModeDefault {
+		groupID = service.DefaultUpstreamHopGroupID()
+	}
+	if groupID != nil {
+		out.UpstreamHopGroupName = service.ProxyHopGroupName(groupID)
 	}
 	// 跟随默认时也记录导出时的默认前置代理，供目标实例未配置默认值时改为显式引用。
 	ref := p.UpstreamProxyID
@@ -94,8 +102,15 @@ func (d DataProxyChain) toInput(refs *proxyChainRefs) service.ProxyChainInput {
 	switch service.NormalizeUpstreamMode(d.UpstreamMode) {
 	case service.UpstreamModeProxy:
 		in.UpstreamProxyID = refs.resolve(d)
+	case service.UpstreamModeHopGroup:
+		in.UpstreamHopGroupID = service.ResolveProxyHopGroupName(d.UpstreamHopGroupName)
 	case service.UpstreamModeDefault:
-		if service.DefaultUpstreamProxyID() == nil {
+		if service.DefaultUpstreamProxyID() == nil && service.DefaultUpstreamHopGroupID() == nil {
+			if d.UpstreamHopGroupName != "" {
+				in.UpstreamMode = service.UpstreamModeHopGroup
+				in.UpstreamHopGroupID = service.ResolveProxyHopGroupName(d.UpstreamHopGroupName)
+				break
+			}
 			if id := refs.resolve(d); id != nil {
 				in.UpstreamMode = service.UpstreamModeProxy
 				in.UpstreamProxyID = id
@@ -116,6 +131,11 @@ func (r *proxyChainRefs) reuse(item DataProxy, key string, existing *service.Pro
 	if want == service.UpstreamModeProxy {
 		if id := r.resolve(item.DataProxyChain); id == nil || existing.UpstreamProxyID == nil || *id != *existing.UpstreamProxyID {
 			return "existing proxy reused but upstream proxy differs; chain settings not changed"
+		}
+	}
+	if want == service.UpstreamModeHopGroup {
+		if id := service.ResolveProxyHopGroupName(item.UpstreamHopGroupName); id == nil || existing.UpstreamHopGroupID == nil || *id != *existing.UpstreamHopGroupID {
+			return "existing proxy reused but first-hop group differs; chain settings not changed"
 		}
 	}
 	return ""

@@ -1417,6 +1417,7 @@ var (
 		{Name: "expiry_warn_days", Type: field.TypeInt, Default: 7},
 		{Name: "upstream_mode", Type: field.TypeString, Size: 20, Default: "direct"},
 		{Name: "upstream_proxy_id", Type: field.TypeInt64, Nullable: true},
+		{Name: "upstream_hop_group_id", Type: field.TypeInt64, Nullable: true},
 		{Name: "options", Type: field.TypeJSON, Nullable: true},
 		{Name: "pool_id", Type: field.TypeInt64, Nullable: true},
 		{Name: "backup_proxy_id", Type: field.TypeInt64, Nullable: true},
@@ -1429,7 +1430,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "proxies_proxies_backup_proxy",
-				Columns:    []*schema.Column{ProxiesColumns[18]},
+				Columns:    []*schema.Column{ProxiesColumns[19]},
 				RefColumns: []*schema.Column{ProxiesColumns[0]},
 				OnDelete:   schema.SetNull,
 			},
@@ -1453,14 +1454,35 @@ var (
 			{
 				Name:    "proxy_backup_proxy_id",
 				Unique:  false,
-				Columns: []*schema.Column{ProxiesColumns[18]},
+				Columns: []*schema.Column{ProxiesColumns[19]},
 			},
 			{
 				Name:    "proxy_pool_id",
 				Unique:  false,
-				Columns: []*schema.Column{ProxiesColumns[17]},
+				Columns: []*schema.Column{ProxiesColumns[18]},
 			},
 		},
+	}
+	// ProxyHopGroupsColumns holds the columns for the "proxy_hop_groups" table.
+	ProxyHopGroupsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "name", Type: field.TypeString, Unique: true, Size: 255},
+		{Name: "strategy", Type: field.TypeString, Size: 20, Default: "fallback"},
+		{Name: "test_url", Type: field.TypeString, Default: "https://www.gstatic.com/generate_204"},
+		{Name: "interval_seconds", Type: field.TypeInt, Default: 60},
+		{Name: "tolerance_ms", Type: field.TypeInt, Default: 50},
+		{Name: "subscription_urls", Type: field.TypeJSON},
+		{Name: "member_proxy_ids", Type: field.TypeJSON},
+		{Name: "subscription_update_interval", Type: field.TypeInt, Default: 3600},
+		{Name: "status", Type: field.TypeString, Size: 20, Default: "active"},
+	}
+	// ProxyHopGroupsTable holds the schema information for the "proxy_hop_groups" table.
+	ProxyHopGroupsTable = &schema.Table{
+		Name:       "proxy_hop_groups",
+		Columns:    ProxyHopGroupsColumns,
+		PrimaryKey: []*schema.Column{ProxyHopGroupsColumns[0]},
 	}
 	// RedeemCodesColumns holds the columns for the "redeem_codes" table.
 	RedeemCodesColumns = []*schema.Column{
@@ -2125,6 +2147,7 @@ var (
 		PromoCodesTable,
 		PromoCodeUsagesTable,
 		ProxiesTable,
+		ProxyHopGroupsTable,
 		RedeemCodesTable,
 		SecuritySecretsTable,
 		SettingsTable,
@@ -2240,6 +2263,9 @@ func init() {
 	ProxiesTable.ForeignKeys[0].RefTable = ProxiesTable
 	ProxiesTable.Annotation = &entsql.Annotation{
 		Table: "proxies",
+	}
+	ProxyHopGroupsTable.Annotation = &entsql.Annotation{
+		Table: "proxy_hop_groups",
 	}
 	RedeemCodesTable.ForeignKeys[0].RefTable = GroupsTable
 	RedeemCodesTable.ForeignKeys[1].RefTable = UsersTable

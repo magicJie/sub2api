@@ -94,6 +94,10 @@ func (m *Manager) handleConn(conn net.Conn) {
 }
 
 func (m *Manager) socksAuth(br *bufio.Reader, conn net.Conn) (string, string, bool) {
+	return socksAuthenticate(br, conn, m.lookup)
+}
+
+func socksAuthenticate(br *bufio.Reader, conn net.Conn, lookup func(string, string) (string, bool)) (string, string, bool) {
 	head := make([]byte, 2)
 	if _, err := io.ReadFull(br, head); err != nil || head[0] != socksVersion {
 		return "", "", false
@@ -129,7 +133,7 @@ func (m *Manager) socksAuth(br *bufio.Reader, conn net.Conn) (string, string, bo
 	if err != nil {
 		return "", "", false
 	}
-	exitTag, ok := m.lookup(user, pass)
+	exitTag, ok := lookup(user, pass)
 	if !ok {
 		_, _ = conn.Write([]byte{0x01, 0x01})
 		return "", "", false

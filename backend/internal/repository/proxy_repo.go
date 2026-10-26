@@ -59,6 +59,7 @@ func (r *proxyRepository) Create(ctx context.Context, proxyIn *service.Proxy) er
 	if proxyIn.UpstreamProxyID != nil {
 		builder.SetUpstreamProxyID(*proxyIn.UpstreamProxyID)
 	}
+	builder.SetNillableUpstreamHopGroupID(proxyIn.UpstreamHopGroupID) // 链式代理（fork）
 	if len(proxyIn.Options) > 0 {
 		builder.SetOptions(proxyIn.Options)
 	}
@@ -192,6 +193,7 @@ func updateProxyAndInvalidateProbeSnapshots(ctx context.Context, client *dbent.C
 	} else {
 		builder.ClearUpstreamProxyID()
 	}
+	applyProxyHopGroupUpdate(builder, proxyIn.UpstreamHopGroupID) // 链式代理（fork）
 	if len(proxyIn.Options) > 0 {
 		builder.SetOptions(proxyIn.Options)
 	} else {
@@ -633,6 +635,7 @@ func proxyEntityToService(m *dbent.Proxy) *service.Proxy {
 		// 链式代理（fork）
 		UpstreamMode:    m.UpstreamMode,
 		UpstreamProxyID: m.UpstreamProxyID,
+		UpstreamHopGroupID: m.UpstreamHopGroupID,
 		Options:         m.Options,
 		PoolID:          m.PoolID, // 代理池（fork）
 	}

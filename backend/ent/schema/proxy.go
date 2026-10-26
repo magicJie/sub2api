@@ -67,10 +67,13 @@ func (Proxy) Fields() []ent.Field {
 		// 链式代理（fork）：前置代理与 Xray 协议参数，见 internal/pkg/proxychain。
 		field.String("upstream_mode").
 			MaxLen(20).Default("direct").
-			Comment("Upstream (front) proxy mode: direct | default | proxy."),
+			Comment("Upstream (front) proxy mode: direct | default | proxy | hop_group."),
 		field.Int64("upstream_proxy_id").
 			Optional().Nillable().
 			Comment("Upstream proxy id when upstream_mode=proxy (self-reference, app-level checked)."),
+		field.Int64("upstream_hop_group_id").
+			Optional().Nillable().
+			Comment("链式代理（fork）：first-hop group id when upstream_mode=hop_group."),
 		field.JSON("options", map[string]string{}).
 			Optional().
 			Comment("Protocol/transport options for ss/vmess/vless/trojan (cipher, network, security, sni ...)."),

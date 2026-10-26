@@ -47,6 +47,8 @@ const (
 	FieldUpstreamMode = "upstream_mode"
 	// FieldUpstreamProxyID holds the string denoting the upstream_proxy_id field in the database.
 	FieldUpstreamProxyID = "upstream_proxy_id"
+	// FieldUpstreamHopGroupID holds the string denoting the upstream_hop_group_id field in the database.
+	FieldUpstreamHopGroupID = "upstream_hop_group_id"
 	// FieldOptions holds the string denoting the options field in the database.
 	FieldOptions = "options"
 	// FieldPoolID holds the string denoting the pool_id field in the database.
@@ -95,6 +97,7 @@ var Columns = []string{
 	FieldExpiryWarnDays,
 	FieldUpstreamMode,
 	FieldUpstreamProxyID,
+	FieldUpstreamHopGroupID,
 	FieldOptions,
 	FieldPoolID,
 }
@@ -235,6 +238,11 @@ func ByUpstreamMode(opts ...sql.OrderTermOption) OrderOption {
 // ByUpstreamProxyID orders the results by the upstream_proxy_id field.
 func ByUpstreamProxyID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldUpstreamProxyID, opts...).ToFunc()
+}
+
+// ByUpstreamHopGroupID orders the results by the upstream_hop_group_id field.
+func ByUpstreamHopGroupID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldUpstreamHopGroupID, opts...).ToFunc()
 }
 
 // ByPoolID orders the results by the pool_id field.
