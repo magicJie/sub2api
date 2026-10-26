@@ -223,6 +223,8 @@
             :label="t('admin.accounts.usageWindow.kiroCredit')"
             :utilization="usageInfo.kiro_credit.percentage_used"
             :resets-at="usageInfo.kiro_reset_at"
+            :window-stats="usageInfo.kiro_credit.window_stats"
+            :estimated-total-cost="kiroCreditEstimatedTotalCost"
             color="indigo"
           />
           <div class="pl-[33px] text-[10px] text-gray-500 dark:text-gray-400">
@@ -937,6 +939,26 @@ const openAISevenDayEstimatedTotalCost = computed(() => {
   const sevenDay = usageInfo.value?.seven_day
   const utilization = sevenDay?.utilization
   const currentCost = sevenDay?.window_stats?.cost
+  if (
+    typeof utilization !== 'number' ||
+    typeof currentCost !== 'number' ||
+    !Number.isFinite(utilization) ||
+    !Number.isFinite(currentCost) ||
+    utilization <= 0 ||
+    currentCost <= 0
+  ) {
+    return null
+  }
+
+  const estimate = (currentCost * 100) / utilization
+  return Number.isFinite(estimate) && estimate > 0 ? estimate : null
+})
+
+// 按本地账号口径费用 / 主额度使用率，推算整份 Kiro 额度的等价价值。
+const kiroCreditEstimatedTotalCost = computed(() => {
+  const credit = usageInfo.value?.kiro_credit
+  const utilization = credit?.percentage_used
+  const currentCost = credit?.window_stats?.cost
   if (
     typeof utilization !== 'number' ||
     typeof currentCost !== 'number' ||

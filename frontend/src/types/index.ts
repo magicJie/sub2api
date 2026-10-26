@@ -1510,6 +1510,7 @@ export interface KiroCreditProgress {
   percentage_used: number
   days_remaining?: number
   expiry_date?: string | null
+  window_stats?: WindowStats | null
 }
 
 export interface KiroOverageInfo {
