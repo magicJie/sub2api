@@ -574,6 +574,21 @@ func TestBuildKiroPayloadHeaderOnlyThinking(t *testing.T) {
 	require.Contains(t, systemContent, "<thinking_mode>enabled</thinking_mode>\n<max_thinking_length>16000</max_thinking_length>")
 }
 
+func TestBuildKiroPayloadExplicitDisabledThinkingWins(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("Anthropic-Beta", "interleaved-thinking-2025-05-14")
+	for _, model := range []string{"claude-sonnet-4-6", "claude-sonnet-4-6-thinking"} {
+		body := []byte(`{"model":"` + model + `","thinking":{"type":"disabled"},"messages":[{"role":"user","content":"hello kiro"}]}`)
+
+		kiroBuildResult, err := BuildKiroPayloadWithContext(body, "claude-sonnet-4.6", "", "AI_EDITOR", headers)
+		require.NoError(t, err, model)
+		require.False(t, kiroBuildResult.Context.ThinkingEnabled, model)
+		systemContent := gjson.GetBytes(kiroBuildResult.Payload, "conversationState.history.0.userInputMessage.content").String()
+		require.NotContains(t, systemContent, "<thinking_mode>", model)
+		require.False(t, gjson.GetBytes(kiroBuildResult.Payload, "additionalModelRequestFields").Exists(), model)
+	}
+}
+
 func TestBuildKiroPayloadInjectsToolChoiceHints(t *testing.T) {
 	body := []byte(`{
 		"model":"claude-sonnet-4-5",
@@ -813,7 +828,7 @@ func TestParseNonStreamingEventStreamExtractsXMLInvokeToolCall(t *testing.T) {
 	require.Equal(t, "List files", content[1].Get("input.description").String())
 }
 
-func TestParseNonStreamingEventStreamDeduplicatesToolUsesByContent(t *testing.T) {
+func TestParseNonStreamingEventStreamKeepsSameContentToolUsesWithDifferentIDs(t *testing.T) {
 	stream := bytes.NewBuffer(nil)
 	_, _ = stream.Write(buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{
 		"assistantResponseEvent": map[string]any{
@@ -849,7 +864,102 @@ func TestParseNonStreamingEventStreamDeduplicatesToolUsesByContent(t *testing.T)
 			toolUseCount++
 		}
 	}
-	require.Equal(t, 1, toolUseCount)
+	// 上游对同一轮里两次相同参数的调用给出不同 ID，两次都要交给客户端执行。
+	require.Equal(t, 2, toolUseCount)
+}
+
+func schemaToolContext(name string, required ...string) KiroRequestContext {
+	return KiroRequestContext{ToolRequiredFields: map[string][]string{name: required}}
+}
+
+func TestStreamEventStreamAsAnthropicKeepsToolUseMatchingRequestSchema(t *testing.T) {
+	stream := bytes.NewBuffer(nil)
+	_, _ = stream.Write(buildEventStreamFrame(t, "toolUseEvent", map[string]any{
+		"toolUseEvent": map[string]any{
+			"toolUseId": "toolu_script",
+			"name":      "bash",
+			"input":     `{"script":"echo ok"}`,
+			"stop":      true,
+		},
+	}))
+
+	var out bytes.Buffer
+	result, err := StreamEventStreamAsAnthropicWithContext(context.Background(), stream, &out, "claude-sonnet-4-5", 9, schemaToolContext("bash", "script"))
+	require.NoError(t, err)
+	require.Equal(t, "tool_use", result.StopReason)
+	require.Contains(t, out.String(), `"id":"toolu_script"`)
+}
+
+func TestStreamEventStreamAsAnthropicDropsToolUseMissingSchemaRequiredField(t *testing.T) {
+	stream := bytes.NewBuffer(nil)
+	_, _ = stream.Write(buildEventStreamFrame(t, "toolUseEvent", map[string]any{
+		"toolUseEvent": map[string]any{
+			"toolUseId": "toolu_missing",
+			"name":      "Write",
+			"input":     `{"file_path":"/tmp/a"}`,
+			"stop":      true,
+		},
+	}))
+
+	var out bytes.Buffer
+	result, err := StreamEventStreamAsAnthropicWithContext(context.Background(), stream, &out, "claude-sonnet-4-5", 9, schemaToolContext("Write", "file_path", "content"))
+	require.NoError(t, err)
+	require.Equal(t, "end_turn", result.StopReason)
+	require.NotContains(t, out.String(), `"id":"toolu_missing"`)
+}
+
+func TestParseNonStreamingEventStreamKeepsToolUseMatchingRequestSchema(t *testing.T) {
+	stream := bytes.NewBuffer(nil)
+	_, _ = stream.Write(buildEventStreamFrame(t, "toolUseEvent", map[string]any{
+		"toolUseEvent": map[string]any{
+			"toolUseId": "toolu_script",
+			"name":      "bash",
+			"input":     `{"script":"echo ok"}`,
+			"stop":      true,
+		},
+	}))
+
+	result, err := ParseNonStreamingEventStreamWithContext(stream, "claude-sonnet-4-5", schemaToolContext("bash", "script"))
+	require.NoError(t, err)
+	require.Equal(t, "tool_use", result.StopReason)
+	require.Equal(t, "echo ok", gjson.GetBytes(result.ResponseBody, `content.#(type=="tool_use").input.script`).String())
+}
+
+func TestStreamEventStreamAsAnthropicKeepsSameContentToolUsesWithDifferentIDs(t *testing.T) {
+	stream := bytes.NewBuffer(nil)
+	for _, id := range []string{"toolu_a", "toolu_b"} {
+		_, _ = stream.Write(buildEventStreamFrame(t, "toolUseEvent", map[string]any{
+			"toolUseEvent": map[string]any{
+				"toolUseId": id,
+				"name":      "get_time",
+				"input":     `{"tz":"Asia/Shanghai"}`,
+				"stop":      true,
+			},
+		}))
+	}
+
+	var out bytes.Buffer
+	_, err := StreamEventStreamAsAnthropicWithContext(context.Background(), stream, &out, "claude-sonnet-4-5", 9, KiroRequestContext{})
+	require.NoError(t, err)
+	require.Contains(t, out.String(), `"id":"toolu_a"`)
+	require.Contains(t, out.String(), `"id":"toolu_b"`)
+}
+
+func TestBuildKiroPayloadRecordsToolRequiredFields(t *testing.T) {
+	body := []byte(`{
+		"model":"claude-sonnet-4-5",
+		"messages":[{"role":"user","content":"hello"}],
+		"tools":[
+			{"name":"bash","description":"run","input_schema":{"type":"object","properties":{"script":{"type":"string"}},"required":["script"]}},
+			{"name":"noop","description":"noop","input_schema":{"type":"object"}}
+		]
+	}`)
+
+	result, err := BuildKiroPayloadWithContext(body, "claude-sonnet-4.5", "", "AI_EDITOR", nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"script"}, result.Context.ToolRequiredFields["bash"])
+	_, ok := result.Context.ToolRequiredFields["noop"]
+	require.False(t, ok)
 }
 
 func TestParseNonStreamingEventStreamSkipsTruncatedToolUse(t *testing.T) {

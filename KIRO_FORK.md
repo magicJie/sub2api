@@ -32,6 +32,9 @@
     签名缺失或是本网关旧版的本地 sha256 摘要时丢弃（上游不认）；不再内联成 `<thinking>` 正文。
   - 只含工具结果的 user 消息 content 留空，结果只放在 `toolResults`（不写英文占位，避免长会话回复语言漂移）。
   - 显式 `temperature: 0` / `top_p: 0` 原样发给上游。
+  - 工具调用：只把 JSON 完整且满足请求里该工具 `input_schema.required` 的调用交给客户端（不再用写死的工具名必填表）；
+    同一轮里 ID 不同的调用即使名称和参数相同也都保留，只按 ID 去重。
+  - 客户端显式 `thinking.type: disabled` 优先于模型名 `-thinking` 后缀和 `interleaved-thinking` beta 头。
   - 非流式响应在上游未回报输入用量时，`usage.input_tokens` 用网关估算值填充（与流式一致）。
   - 推理区域：`api_region` 优先，其次 profileArn 中的区域（仅 `us-east-1` / `eu-central-1`），再按登录区域 `eu-*` → `eu-central-1`，否则 `us-east-1`。
     Builder ID 账号列不出 profile 时使用 Kiro 客户端的固定 profileArn。
