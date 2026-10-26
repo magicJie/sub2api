@@ -135,6 +135,11 @@ func UpstreamProxyID(v int64) predicate.Proxy {
 	return predicate.Proxy(sql.FieldEQ(FieldUpstreamProxyID, v))
 }
 
+// PoolID applies equality check predicate on the "pool_id" field. It's identical to PoolIDEQ.
+func PoolID(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldEQ(FieldPoolID, v))
+}
+
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
 func CreatedAtEQ(v time.Time) predicate.Proxy {
 	return predicate.Proxy(sql.FieldEQ(FieldCreatedAt, v))
@@ -1023,6 +1028,56 @@ func OptionsIsNil() predicate.Proxy {
 // OptionsNotNil applies the NotNil predicate on the "options" field.
 func OptionsNotNil() predicate.Proxy {
 	return predicate.Proxy(sql.FieldNotNull(FieldOptions))
+}
+
+// PoolIDEQ applies the EQ predicate on the "pool_id" field.
+func PoolIDEQ(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldEQ(FieldPoolID, v))
+}
+
+// PoolIDNEQ applies the NEQ predicate on the "pool_id" field.
+func PoolIDNEQ(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldNEQ(FieldPoolID, v))
+}
+
+// PoolIDIn applies the In predicate on the "pool_id" field.
+func PoolIDIn(vs ...int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldIn(FieldPoolID, vs...))
+}
+
+// PoolIDNotIn applies the NotIn predicate on the "pool_id" field.
+func PoolIDNotIn(vs ...int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldNotIn(FieldPoolID, vs...))
+}
+
+// PoolIDGT applies the GT predicate on the "pool_id" field.
+func PoolIDGT(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldGT(FieldPoolID, v))
+}
+
+// PoolIDGTE applies the GTE predicate on the "pool_id" field.
+func PoolIDGTE(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldGTE(FieldPoolID, v))
+}
+
+// PoolIDLT applies the LT predicate on the "pool_id" field.
+func PoolIDLT(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldLT(FieldPoolID, v))
+}
+
+// PoolIDLTE applies the LTE predicate on the "pool_id" field.
+func PoolIDLTE(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldLTE(FieldPoolID, v))
+}
+
+// PoolIDIsNil applies the IsNil predicate on the "pool_id" field.
+func PoolIDIsNil() predicate.Proxy {
+	return predicate.Proxy(sql.FieldIsNull(FieldPoolID))
+}
+
+// PoolIDNotNil applies the NotNil predicate on the "pool_id" field.
+func PoolIDNotNil() predicate.Proxy {
+	return predicate.Proxy(sql.FieldNotNull(FieldPoolID))
 }
 
 // HasAccounts applies the HasEdge predicate on the "accounts" edge.

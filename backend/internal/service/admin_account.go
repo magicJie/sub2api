@@ -528,6 +528,11 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	// Never persist ephemeral SSO/password secrets after OAuth conversion.
 	input.Credentials = SanitizeStoredCredentials(input.Platform, input.Credentials)
 
+	releaseProxyPool, err := beginProxyPoolAccountCreate(ctx, input) // 代理池（fork）
+	if err != nil {
+		return nil, err
+	}
+	defer releaseProxyPool()
 	account, err := buildAccountForCreate(input, accountExtra)
 	if err != nil {
 		return nil, err
@@ -536,6 +541,9 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 		return nil, err
 	}
 	if err := s.accountRepo.Create(ctx, account); err != nil {
+		return nil, err
+	}
+	if err := finishProxyPoolAccountCreate(ctx, input, account); err != nil { // 代理池（fork）
 		return nil, err
 	}
 
@@ -764,6 +772,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	// 影子代理恒继承母账号(由 propagateProxyToShadows 同步),不接受独立编辑——外审 B/P1;
 	// 否则要等母账号下次改 proxy 才被覆盖,期间影子会出现"有时继承、有时独立"的漂移。
 	if input.ProxyID != nil && !account.IsCredentialShadow() {
+		if err := checkAccountProxyPoolLock(ctx, account, input.ProxyID); err != nil { // 代理池（fork）
+			return nil, err
+		}
 		// 0 表示清除代理（前端发送 0 而不是 null 来表达清除意图）
 		if *input.ProxyID == 0 {
 			account.ProxyID = nil
@@ -1053,6 +1064,9 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 				return nil, infraerrors.Newf(http.StatusBadRequest, "SPARK_SHADOW_PROXY_INHERITED",
 					"spark shadow account %d proxy is inherited from its parent and cannot be set in bulk; manage it on the parent account", acc.ID)
 			}
+		}
+		if err := checkAccountsProxyPoolLock(ctx, cachedTargets, input.ProxyID); err != nil { // 代理池（fork）
+			return nil, err
 		}
 	}
 

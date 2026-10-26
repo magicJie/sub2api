@@ -561,6 +561,19 @@ const routes: RouteRecordRaw[] = [
       descriptionKey: 'admin.proxies.description'
     }
   },
+  // 代理池（fork）
+  {
+    path: '/admin/proxy-pools',
+    name: 'AdminProxyPools',
+    component: () => import('@/proxyPool/ProxyPoolsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Proxy Pools',
+      titleKey: 'admin.proxyPools.title',
+      descriptionKey: 'admin.proxyPools.pageDescription'
+    }
+  },
   {
     path: '/admin/redeem',
     name: 'AdminRedeem',

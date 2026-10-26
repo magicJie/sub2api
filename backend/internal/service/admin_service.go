@@ -403,6 +403,7 @@ type CreateAccountInput struct {
 	Credentials        map[string]any
 	Extra              map[string]any
 	ProxyID            *int64
+	ProxyPoolID        *int64 // 代理池（fork）：从该代理池分配代理并锁定，见 proxy_pool.go
 	Concurrency        int
 	Priority           int
 	RateMultiplier     *float64 // 账号计费倍率（>=0，允许 0）
@@ -535,7 +536,8 @@ type CreateProxyInput struct {
 	BackupProxyID  *int64
 	ExpiryWarnDays int
 
-	ProxyChainInput // 链式代理（fork）
+	ProxyChainInput        // 链式代理（fork）
+	PoolID          *int64 // 代理池（fork）
 }
 
 // UpdateProxyInput preserves omitted expiry/backup values; Clear flags explicitly
@@ -555,7 +557,9 @@ type UpdateProxyInput struct {
 	ClearBackupID  bool
 	ExpiryWarnDays *int
 
-	ProxyChainUpdateInput // 链式代理（fork）
+	ProxyChainUpdateInput        // 链式代理（fork）
+	PoolID                *int64 // 代理池（fork）：配合 PoolIDSet，nil 表示移回默认池
+	PoolIDSet             bool
 }
 
 type GenerateRedeemCodesInput struct {

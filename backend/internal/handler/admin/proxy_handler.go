@@ -37,6 +37,7 @@ type CreateProxyRequest struct {
 	FallbackMode   string `json:"fallback_mode" binding:"omitempty,oneof=none proxy direct"`
 	BackupProxyID  *int64 `json:"backup_proxy_id"`
 	ExpiryWarnDays int    `json:"expiry_warn_days" binding:"omitempty,min=0"`
+	PoolID         *int64 `json:"pool_id"` // 代理池（fork）
 
 	ProxyChainRequest // 链式代理（fork）
 }
@@ -54,6 +55,7 @@ type UpdateProxyRequest struct {
 	FallbackMode   string                 `json:"fallback_mode" binding:"omitempty,oneof=none proxy direct"`
 	BackupProxyID  dto.NullableInt64Field `json:"backup_proxy_id"`
 	ExpiryWarnDays *int                   `json:"expiry_warn_days" binding:"omitempty,min=0"`
+	PoolID         dto.NullableInt64Field `json:"pool_id"` // 代理池（fork）
 
 	ProxyChainUpdateRequest // 链式代理（fork）
 }
@@ -165,6 +167,7 @@ func (h *ProxyHandler) Create(c *gin.Context) {
 			ExpiryWarnDays: req.ExpiryWarnDays,
 
 			ProxyChainInput: req.ProxyChainRequest.toInput(), // 链式代理（fork）
+			PoolID:          req.PoolID,                      // 代理池（fork）
 		})
 		if err != nil {
 			return nil, err
@@ -215,6 +218,8 @@ func (h *ProxyHandler) Update(c *gin.Context) {
 		ExpiryWarnDays: req.ExpiryWarnDays,
 
 		ProxyChainUpdateInput: req.ProxyChainUpdateRequest.toInput(), // 链式代理（fork）
+		PoolID:                req.PoolID.Value,                      // 代理池（fork）
+		PoolIDSet:             req.PoolID.Set,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)

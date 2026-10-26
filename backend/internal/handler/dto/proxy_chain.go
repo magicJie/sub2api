@@ -9,6 +9,7 @@ type ProxyChainFields struct {
 	Options         map[string]string `json:"options"`
 	Chain           []ProxyChainHop   `json:"chain"`
 	ChainError      string            `json:"chain_error,omitempty"`
+	PoolID          *int64            `json:"pool_id"` // 代理池（fork）
 }
 
 // ProxyChainHop 是展示用的前置链路节点（按拨号顺序，不含代理自身）。
@@ -34,5 +35,6 @@ func proxyChainFieldsFromService(p *service.Proxy) ProxyChainFields {
 		Options:         options,
 		Chain:           chain,
 		ChainError:      chainErr,
+		PoolID:          p.PoolID,
 	}
 }

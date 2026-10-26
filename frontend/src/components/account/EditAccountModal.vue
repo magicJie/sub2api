@@ -1791,7 +1791,14 @@
           <label class="input-label mb-0">{{ t('admin.accounts.proxy') }}</label>
           <ProxyAdBanner />
         </div>
-        <ProxySelector v-model="form.proxy_id" :proxies="proxies" />
+        <!-- 代理池（fork）：锁定时代理只读，需先解绑 -->
+        <AccountProxyBindingField
+          class="mb-2"
+          :account-id="account?.id"
+          @update:locked="proxyPoolLocked = $event"
+          @proxy-changed="form.proxy_id = $event"
+        />
+        <ProxySelector v-if="!proxyPoolLocked" v-model="form.proxy_id" :proxies="proxies" />
       </div>
 
       <UpstreamRequestIdHeaderField
@@ -3271,6 +3278,7 @@ import type {
 } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import AccountProxyBindingField from '@/proxyPool/components/AccountProxyBindingField.vue' // 代理池（fork）
 import Select from '@/components/common/Select.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestIdHeaderField.vue'
@@ -3374,6 +3382,7 @@ interface Props {
 }
 
 const props = defineProps<Props>()
+const proxyPoolLocked = ref(false) // 代理池（fork）
 const emit = defineEmits<{
   close: []
   updated: [account: Account]

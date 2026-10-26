@@ -128,6 +128,7 @@ type CreateAccountRequest struct {
 	Credentials             map[string]any `json:"credentials" binding:"required"`
 	Extra                   map[string]any `json:"extra"`
 	ProxyID                 *int64         `json:"proxy_id"`
+	ProxyPoolID             *int64         `json:"proxy_pool_id"` // 代理池（fork）
 	Concurrency             int            `json:"concurrency"`
 	Priority                int            `json:"priority"`
 	RateMultiplier          *float64       `json:"rate_multiplier"`
@@ -1053,6 +1054,7 @@ func (h *AccountHandler) Create(c *gin.Context) {
 			Credentials:           req.Credentials,
 			Extra:                 req.Extra,
 			ProxyID:               req.ProxyID,
+			ProxyPoolID:           req.ProxyPoolID, // 代理池（fork）
 			Concurrency:           req.Concurrency,
 			Priority:              req.Priority,
 			RateMultiplier:        req.RateMultiplier,
@@ -2137,6 +2139,7 @@ func (h *AccountHandler) BatchCreate(c *gin.Context) {
 				Credentials:           item.Credentials,
 				Extra:                 item.Extra,
 				ProxyID:               item.ProxyID,
+				ProxyPoolID:           item.ProxyPoolID, // 代理池（fork）
 				Concurrency:           item.Concurrency,
 				Priority:              item.Priority,
 				RateMultiplier:        item.RateMultiplier,

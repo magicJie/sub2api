@@ -60,6 +60,7 @@ export interface GrokSSOToOAuthRequest {
   name?: string
   notes?: string | null
   proxy_id?: number | null
+  proxy_pool_id?: number | null // 代理池（fork）
   group_ids?: number[]
   credentials?: Record<string, unknown>
   extra?: Record<string, unknown>

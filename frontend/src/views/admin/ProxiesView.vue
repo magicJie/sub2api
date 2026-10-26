@@ -79,6 +79,10 @@
             <button @click="showExportDataDialog = true" class="btn btn-secondary">
               {{ selectedCount > 0 ? t('admin.proxies.dataExportSelected') : t('admin.proxies.dataExport') }}
             </button>
+            <button @click="showProxyPools = true" class="btn btn-secondary">
+              <Icon name="grid" size="md" class="mr-2" />
+              {{ t('admin.proxyPools.manage') }}
+            </button>
             <button @click="openChainSettings" class="btn btn-secondary">
               <Icon name="link" size="md" class="mr-2" />
               {{ t('admin.proxies.chainSettings') }}
@@ -617,6 +621,10 @@
           <label class="input-label">{{ t('admin.proxies.backupProxy') }}</label>
           <Select v-model="createForm.backup_proxy_id" :options="backupProxyOptions()" />
         </div>
+        <div>
+          <label class="input-label">{{ t('admin.proxyPools.pool') }}</label>
+          <Select v-model="createForm.pool_id" :options="proxyPoolOptions" />
+        </div>
 
       </form>
 
@@ -911,6 +919,10 @@
           <label class="input-label">{{ t('admin.proxies.backupProxy') }}</label>
           <Select v-model="editForm.backup_proxy_id" :options="backupProxyOptions(editingProxy?.id)" />
         </div>
+        <div>
+          <label class="input-label">{{ t('admin.proxyPools.pool') }}</label>
+          <Select v-model="editForm.pool_id" :options="proxyPoolOptions" />
+        </div>
 
       </form>
 
@@ -990,6 +1002,9 @@
       @close="showImportData = false"
       @imported="handleDataImported"
     />
+
+    <!-- 代理池（fork） -->
+    <ProxyPoolManagerModal :show="showProxyPools" @close="showProxyPools = false" @changed="handleProxyPoolsChanged" />
 
     <!-- Chain Settings Dialog -->
     <BaseDialog
@@ -1175,6 +1190,8 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import ImportDataModal from '@/components/admin/proxy/ImportDataModal.vue'
 import ProxyProtocolOptionsFields from '@/components/admin/proxy/ProxyProtocolOptionsFields.vue'
+import ProxyPoolManagerModal from '@/proxyPool/components/ProxyPoolManagerModal.vue' // 代理池（fork）
+import { useProxyPoolOptions } from '@/proxyPool/useProxyPools' // 代理池（fork）
 import Select from '@/components/common/Select.vue'
 import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -1368,6 +1385,7 @@ const createForm = reactive({
   upstream_mode: 'direct' as ProxyUpstreamMode,
   upstream_proxy_id: null as number | null,
   options: {} as ProxyOptions,
+  pool_id: null as number | null, // 代理池（fork）：null 为默认池
 })
 
 const editForm = reactive({
@@ -1385,6 +1403,7 @@ const editForm = reactive({
   upstream_mode: 'direct' as ProxyUpstreamMode,
   upstream_proxy_id: null as number | null,
   options: {} as ProxyOptions,
+  pool_id: null as number | null, // 代理池（fork）：null 为默认池
 })
 
 const allProxiesForBackup = ref<Proxy[]>([])
@@ -1403,6 +1422,14 @@ const upstreamProxyOptions = (excludeId?: number) =>
 // ── 链式代理设置(全局默认前置代理) ──
 const defaultUpstreamProxyId = ref<number | null>(null)
 const showChainSettings = ref(false)
+
+// 代理池（fork）
+const showProxyPools = ref(false)
+const { poolOptions: proxyPoolOptions, loadPools: loadProxyPools } = useProxyPoolOptions()
+const handleProxyPoolsChanged = () => {
+  void loadProxyPools()
+  loadProxies()
+}
 const loadingChainSettings = ref(false)
 const savingChainSettings = ref(false)
 const chainSettingsForm = reactive({ default_upstream_proxy_id: null as number | null })
@@ -1472,6 +1499,7 @@ watch(() => createForm.protocol, applyCreateUpstreamPreselect)
 watch(defaultUpstreamProxyId, applyCreateUpstreamPreselect)
 
 const openCreateModal = async () => {
+  void loadProxyPools() // 代理池（fork）
   createUpstreamTouched.value = false
   applyCreateUpstreamPreselect()
   showCreateModal.value = true
@@ -1625,6 +1653,7 @@ const closeCreateModal = () => {
   createForm.upstream_proxy_id = null
   createUpstreamTouched.value = false
   createForm.options = {}
+  createForm.pool_id = null // 代理池（fork）
   createShareLink.value = ''
   createPasswordVisible.value = false
   batchInput.value = ''
@@ -1787,6 +1816,7 @@ const handleCreateProxy = async () => {
       fallback_mode: createForm.fallback_mode,
       backup_proxy_id: createForm.fallback_mode === 'proxy' ? createForm.backup_proxy_id : null,
       expiry_warn_days: createForm.expiry_warn_days,
+      pool_id: createForm.pool_id, // 代理池（fork）
     })
     appStore.showSuccess(t('admin.proxies.proxyCreated'))
     closeCreateModal()
@@ -1815,6 +1845,8 @@ const handleEdit = (proxy: Proxy) => {
   editForm.upstream_mode = proxy.upstream_mode || 'direct'
   editForm.upstream_proxy_id = proxy.upstream_proxy_id ?? null
   editForm.options = { ...(proxy.options || {}) }
+  editForm.pool_id = proxy.pool_id ?? null // 代理池（fork）
+  void loadProxyPools()
   editShareLink.value = ''
   editPasswordVisible.value = false
   editPasswordDirty.value = false
@@ -1874,6 +1906,7 @@ const handleUpdateProxy = async () => {
       fallback_mode: editForm.fallback_mode,
       backup_proxy_id: editForm.fallback_mode === 'proxy' ? editForm.backup_proxy_id : null,
       expiry_warn_days: editForm.expiry_warn_days,
+      pool_id: editForm.pool_id, // 代理池（fork）
     }
 
     // Only include password if user actually modified the field
