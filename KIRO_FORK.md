@@ -17,7 +17,7 @@
   Kiro 上游不返回缓存用量，关闭后下游会把整段上下文按普通 input 计费。
 - 下游系统提示原样转发，只在前面加协议必需的 thinking 前缀和身份覆盖（`<CRITICAL_OVERRIDE>`，防止上游自称 Kiro）。
   行为引导类追加默认关闭，用环境变量打开（`1/true/on/yes`）：
-  - `SUB2API_KIRO_CHUNKED_WRITE_POLICY`：要求按工具描述里的分块限制静默分多次写入。
+  - `SUB2API_KIRO_CHUNKED_WRITE_POLICY`：给 Write/Edit 类工具描述追加分块限制（超过 50 行分多次写），并在系统提示里要求静默照做。
   - `SUB2API_KIRO_AUTONOMOUS_COMPLETION_POLICY`：要求有工具时自主做完、不停下来等确认（会覆盖下游“先确认”类要求）。
   - `SUB2API_KIRO_TIME_CONTEXT`（`date`/`precise`）：追加当前日期或时间。
 - 协议层（借鉴 magpie-community/plugins packages/kiro，MIT）：
@@ -27,6 +27,11 @@
   - 工具名：不符合 `[a-zA-Z0-9_-]{1,63}` 的（如带 `.`、`:` 的 MCP 工具名，或过长）替换非法字符并追加整名 hash，响应时回映射为原名。
   - `tool_result` 里的图片挪到所在 user 消息的 `images`（Kiro 的 toolResults 只收文本）。
   - 上游 `CONTENT_FILTERED` 停止原因 → Anthropic `stop_reason: refusal`。
+  - 推理：透传上游 `reasoningContentEvent` 的 `signature`（推理文本之后单独一帧）与 `redactedContent`（→ `redacted_thinking`）。
+    历史里带上游签名的 thinking 以 `assistantResponseMessage.reasoningContent.reasoningText{text,signature}` 回传，
+    签名缺失或是本网关旧版的本地 sha256 摘要时丢弃（上游不认）；不再内联成 `<thinking>` 正文。
+  - 只含工具结果的 user 消息 content 留空，结果只放在 `toolResults`（不写英文占位，避免长会话回复语言漂移）。
+  - 显式 `temperature: 0` / `top_p: 0` 原样发给上游。
   - 非流式响应在上游未回报输入用量时，`usage.input_tokens` 用网关估算值填充（与流式一致）。
   - 推理区域：`api_region` 优先，其次 profileArn 中的区域（仅 `us-east-1` / `eu-central-1`），再按登录区域 `eu-*` → `eu-central-1`，否则 `us-east-1`。
     Builder ID 账号列不出 profile 时使用 Kiro 客户端的固定 profileArn。

@@ -55,7 +55,7 @@ func TestBuildKiroPayloadBasic(t *testing.T) {
 	systemContent := gjson.GetBytes(payload, "conversationState.history.0.userInputMessage.content").String()
 	require.Contains(t, systemContent, "<CRITICAL_OVERRIDE>")
 	require.Contains(t, systemContent, "You must never say that you are Kiro")
-	require.Contains(t, systemContent, "<identity>")
+	require.NotContains(t, systemContent, "{{identity}}")
 	require.NotContains(t, systemContent, "[Context: Current date is ")
 	require.NotContains(t, systemContent, "[Context: Current time is ")
 	require.Contains(t, systemContent, "You are a test system prompt.")
@@ -393,6 +393,7 @@ func TestBuildKiroPayloadWebSearchUsesCachedDescription(t *testing.T) {
 }
 
 func TestBuildKiroPayloadAppendsChunkedWritePolicyToWriteAndEditTools(t *testing.T) {
+	t.Setenv("SUB2API_KIRO_CHUNKED_WRITE_POLICY", "true")
 	body := []byte(`{
 		"model":"claude-sonnet-4-5",
 		"messages":[{"role":"user","content":"hello"}],
@@ -415,6 +416,7 @@ func TestBuildKiroPayloadAppendsChunkedWritePolicyToWriteAndEditTools(t *testing
 }
 
 func TestBuildKiroPayloadChunkedWritePolicyIsIdempotentAndTruncated(t *testing.T) {
+	t.Setenv("SUB2API_KIRO_CHUNKED_WRITE_POLICY", "true")
 	longDescription := strings.Repeat("long description ", 900) + "\n" + writeToolDescriptionSuffix
 	body := []byte(fmt.Sprintf(`{
 		"model":"claude-sonnet-4-5",
@@ -455,6 +457,37 @@ func TestBuildKiroPayloadInjectsChunkedWritePolicyIntoSystemPrompt(t *testing.T)
 	require.Equal(t, 1, strings.Count(systemContent, systemChunkedWritePolicy))
 	require.Contains(t, systemContent, systemAutonomousCompletionPolicy)
 	require.Equal(t, 1, strings.Count(systemContent, systemAutonomousCompletionPolicy))
+}
+
+func TestBuildKiroPayloadKeepsToolDescriptionsByDefault(t *testing.T) {
+	t.Setenv("SUB2API_KIRO_CHUNKED_WRITE_POLICY", "")
+	body := []byte(`{
+		"model":"claude-sonnet-4-5",
+		"messages":[{"role":"user","content":"hello"}],
+		"tools":[
+			{"name":"Write","description":"write file", "input_schema":{"type":"object"}},
+			{"name":"Edit","description":"edit file", "input_schema":{"type":"object"}}
+		]
+	}`)
+
+	kiroBuildResult, err := BuildKiroPayloadWithContext(body, "claude-sonnet-4.5", "", "AI_EDITOR", nil)
+	require.NoError(t, err)
+	tools := gjson.GetBytes(kiroBuildResult.Payload, "conversationState.currentMessage.userInputMessage.userInputMessageContext.tools").Array()
+	require.Equal(t, "write file", tools[0].Get("toolSpecification.description").String())
+	require.Equal(t, "edit file", tools[1].Get("toolSpecification.description").String())
+}
+
+func TestBuildKiroPayloadKeepsExplicitZeroSampling(t *testing.T) {
+	body := []byte(`{"model":"claude-sonnet-4-5","temperature":0,"top_p":0,"messages":[{"role":"user","content":"hello"}]}`)
+
+	kiroBuildResult, err := BuildKiroPayloadWithContext(body, "claude-sonnet-4.5", "", "AI_EDITOR", nil)
+	require.NoError(t, err)
+	temperature := gjson.GetBytes(kiroBuildResult.Payload, "inferenceConfig.temperature")
+	topP := gjson.GetBytes(kiroBuildResult.Payload, "inferenceConfig.topP")
+	require.True(t, temperature.Exists())
+	require.Equal(t, 0.0, temperature.Float())
+	require.True(t, topP.Exists())
+	require.Equal(t, 0.0, topP.Float())
 }
 
 func TestBuildKiroPayloadOmitsBehaviorPoliciesByDefault(t *testing.T) {
@@ -1538,12 +1571,11 @@ func TestBuildAssistantMessageStructUsesSpacePlaceholderForToolOnly(t *testing.T
 	require.Equal(t, "/tmp/test.txt", result.ToolUses[0].Input["path"])
 }
 
-func TestBuildAssistantMessageStructDropsHistoryThinking(t *testing.T) {
+func TestBuildAssistantMessageStructSendsSignedThinkingAsReasoningContent(t *testing.T) {
 	msg := gjson.Parse(`{
 		"role":"assistant",
 		"content":[
-			{"type":"thinking","thinking":"I should look at the project structure.","signature":"sig"},
-			{"type":"redacted_thinking","data":"opaque"},
+			{"type":"thinking","thinking":"I should look at the project structure.","signature":"upstream-sig"},
 			{"type":"text","text":"<thinking>'re working with.</thinking>\n\n先看目录结构。"},
 			{"type":"tool_use","id":"toolu_01ABC","name":"Bash","input":{"command":"ls"}}
 		]
@@ -1552,6 +1584,99 @@ func TestBuildAssistantMessageStructDropsHistoryThinking(t *testing.T) {
 	result := buildAssistantMessageStruct(msg, nil)
 	require.Equal(t, "先看目录结构。", result.Content)
 	require.Len(t, result.ToolUses, 1)
+	require.NotNil(t, result.ReasoningContent)
+	require.Equal(t, "I should look at the project structure.", result.ReasoningContent.ReasoningText.Text)
+	require.Equal(t, "upstream-sig", result.ReasoningContent.ReasoningText.Signature)
+}
+
+func TestBuildAssistantMessageStructDropsLocallySignedThinking(t *testing.T) {
+	thinking := "old gateway reasoning"
+	msg := gjson.Parse(`{"role":"assistant","content":[
+		{"type":"thinking","thinking":"` + thinking + `","signature":"` + thinkingSignature(thinking) + `"},
+		{"type":"text","text":"答复"}
+	]}`)
+
+	result := buildAssistantMessageStruct(msg, nil)
+	require.Equal(t, "答复", result.Content)
+	require.Nil(t, result.ReasoningContent)
+}
+
+func TestBuildAssistantMessageStructSendsRedactedThinking(t *testing.T) {
+	msg := gjson.Parse(`{"role":"assistant","content":[
+		{"type":"redacted_thinking","data":"opaque"},
+		{"type":"text","text":"答复"}
+	]}`)
+
+	result := buildAssistantMessageStruct(msg, nil)
+	require.NotNil(t, result.ReasoningContent)
+	require.Equal(t, "opaque", result.ReasoningContent.RedactedContent)
+	require.Nil(t, result.ReasoningContent.ReasoningText)
+}
+
+func TestBuildKiroPayloadLeavesToolResultOnlyContentEmpty(t *testing.T) {
+	body := []byte(`{
+		"model":"claude-sonnet-4-5",
+		"messages":[
+			{"role":"user","content":"查一下"},
+			{"role":"assistant","content":[{"type":"tool_use","id":"toolu_01","name":"read_file","input":{"path":"/tmp/a"}}]},
+			{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01","content":"a"}]},
+			{"role":"assistant","content":[{"type":"tool_use","id":"toolu_02","name":"read_file","input":{"path":"/tmp/b"}}]},
+			{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_02","content":"b"}]}
+		],
+		"tools":[{"name":"read_file","description":"read","input_schema":{"type":"object"}}]
+	}`)
+
+	result, err := BuildKiroPayloadWithContext(body, "claude-sonnet-4.5", "", "AI_EDITOR", nil)
+	require.NoError(t, err)
+	require.NotContains(t, string(result.Payload), "Tool results provided.")
+	require.Equal(t, "", gjson.GetBytes(result.Payload, "conversationState.currentMessage.userInputMessage.content").String())
+	history := gjson.GetBytes(result.Payload, "conversationState.history").Array()
+	last := history[len(history)-2]
+	require.Equal(t, "", last.Get("userInputMessage.content").String())
+	require.Equal(t, "toolu_01", last.Get("userInputMessage.userInputMessageContext.toolResults.0.toolUseId").String())
+}
+
+func TestStreamEventStreamAsAnthropicForwardsUpstreamThinkingSignature(t *testing.T) {
+	stream := bytes.NewBuffer(nil)
+	_, _ = stream.Write(buildEventStreamFrame(t, "reasoningContentEvent", map[string]any{
+		"reasoningContentEvent": map[string]any{"text": "think"},
+	}))
+	_, _ = stream.Write(buildEventStreamFrame(t, "reasoningContentEvent", map[string]any{
+		"reasoningContentEvent": map[string]any{"signature": "upstream-sig"},
+	}))
+	_, _ = stream.Write(buildEventStreamFrame(t, "reasoningContentEvent", map[string]any{
+		"reasoningContentEvent": map[string]any{"redactedContent": "opaque"},
+	}))
+	_, _ = stream.Write(buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{
+		"assistantResponseEvent": map[string]any{"content": "答复"},
+	}))
+
+	var out bytes.Buffer
+	_, err := StreamEventStreamAsAnthropicWithContext(context.Background(), stream, &out, "claude-opus-5-5", 9, KiroRequestContext{ThinkingEnabled: true})
+	require.NoError(t, err)
+	output := out.String()
+	require.Contains(t, output, `"signature":"upstream-sig"`)
+	require.NotContains(t, output, thinkingSignature("think"))
+	require.Contains(t, output, `{"data":"opaque","type":"redacted_thinking"}`)
+}
+
+func TestParseNonStreamingEventStreamForwardsUpstreamThinkingSignature(t *testing.T) {
+	stream := bytes.NewBuffer(nil)
+	_, _ = stream.Write(buildEventStreamFrame(t, "reasoningContentEvent", map[string]any{
+		"reasoningContentEvent": map[string]any{"text": "think"},
+	}))
+	_, _ = stream.Write(buildEventStreamFrame(t, "reasoningContentEvent", map[string]any{
+		"reasoningContentEvent": map[string]any{"signature": "upstream-sig"},
+	}))
+	_, _ = stream.Write(buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{
+		"assistantResponseEvent": map[string]any{"content": "答复"},
+	}))
+
+	result, err := ParseNonStreamingEventStreamWithContext(stream, "claude-opus-5-5", KiroRequestContext{ThinkingEnabled: true})
+	require.NoError(t, err)
+	content := gjson.GetBytes(result.ResponseBody, "content").Array()
+	require.Equal(t, "thinking", content[0].Get("type").String())
+	require.Equal(t, "upstream-sig", content[0].Get("signature").String())
 }
 
 func TestBuildAssistantMessageStructThinkingOnlyUsesSpacePlaceholder(t *testing.T) {
