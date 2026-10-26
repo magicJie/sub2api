@@ -46,21 +46,6 @@ const (
                                </CRITICAL_OVERRIDE>`
 )
 
-var (
-	requiredToolFields = map[string][][]string{
-		"write":              {{"filePath", "file_path", "path"}, {"content"}},
-		"write_to_file":      {{"path"}, {"content"}},
-		"fswrite":            {{"path"}, {"content"}},
-		"create_file":        {{"path"}, {"content"}},
-		"edit_file":          {{"path"}},
-		"apply_diff":         {{"path"}, {"diff"}},
-		"str_replace_editor": {{"path"}, {"old_str"}, {"new_str"}},
-		"bash":               {{"cmd", "command"}},
-		"execute":            {{"command"}},
-		"run_command":        {{"command"}},
-	}
-)
-
 type Usage struct {
 	InputTokens                int
 	OutputTokens               int
@@ -101,7 +86,9 @@ func (c KiroContinuation) Valid() bool {
 }
 
 type KiroRequestContext struct {
-	ToolNameMap         map[string]string
+	ToolNameMap map[string]string
+	// ToolRequiredFields 是请求里每个工具 input_schema.required 的字段，按原名和发给上游的名字索引。
+	ToolRequiredFields  map[string][]string
 	ThinkingEnabled     bool
 	CacheEmulationUsage *Usage
 	// EstimatedInputTokens 是网关按请求体估算的输入 token 数；上游未回报输入用量时用它填充
@@ -520,7 +507,6 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 	textBlockOpen := false
 	thinkingBlockOpen := false
 	processedIDs := make(map[string]bool)
-	emittedToolContents := make(map[string]bool)
 	toolBlockEmitted := false
 	streamingToolNames := make(map[string]string)
 	streamingToolStopped := make(map[string]bool)
@@ -642,16 +628,11 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 		}
 
 		responseName := normalizeResponseToolName(restoreResponseToolName(name, requestCtx))
-		inputJSON, input, ok := normalizeStreamingToolInput(responseName, inputBuf.String())
-		if !ok {
+		inputJSON, input, ok := normalizeStreamingToolInput(inputBuf.String())
+		if !ok || missingRequiredToolFields(requestCtx, responseName, input) {
 			return nil
 		}
 		processedIDs[toolUseID] = true
-		tool := KiroToolUse{ToolUseID: toolUseID, Name: responseName, Input: input}
-		contentKey := toolUseContentKey(tool)
-		if contentKey == "" || emittedToolContents[contentKey] {
-			return nil
-		}
 		if err := ensureMessageStart(); err != nil {
 			return err
 		}
@@ -692,7 +673,6 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 		if err := writeEvent("content_block_stop", map[string]any{"type": "content_block_stop", "index": blockIndex}); err != nil {
 			return err
 		}
-		emittedToolContents[contentKey] = true
 		toolBlockEmitted = true
 		_, _ = outputTextBuf.WriteString(inputJSON)
 		if stopReason == "" {
@@ -809,7 +789,7 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 		})
 	}
 	emitToolUse := func(tool KiroToolUse) error {
-		if !shouldEmitToolUse(tool, emittedToolContents) {
+		if tool.IsTruncated || strings.TrimSpace(tool.Name) == "" || missingRequiredToolFields(requestCtx, restoreResponseToolName(tool.Name, requestCtx), tool.Input) {
 			return nil
 		}
 		if err := closeOpenStreamingTool(); err != nil {
@@ -1304,6 +1284,10 @@ func extractInlineSystemPrompts(messages gjson.Result) (string, []gjson.Result) 
 }
 
 func deriveThinkingDirective(body []byte, headers http.Header) *thinkingDirective {
+	// 客户端显式关闭优先于模型名后缀和 interleaved-thinking beta 头这类隐式开启。
+	if strings.EqualFold(strings.TrimSpace(gjson.GetBytes(body, "thinking.type").String()), "disabled") {
+		return nil
+	}
 	if override := thinkingDirectiveFromModel(gjson.GetBytes(body, "model").String()); override != nil {
 		if effort := strings.TrimSpace(gjson.GetBytes(body, "output_config.effort").String()); override.Mode == "adaptive" && effort != "" {
 			override.Effort = effort
@@ -1556,6 +1540,7 @@ func convertClaudeToolsToKiro(tools gjson.Result, requestCtx *KiroRequestContext
 		}
 		description = truncateKiroToolDescription(description)
 		inputSchema := normalizeKiroJSONSchema(tool.Get("input_schema").Value())
+		recordToolRequiredFields(requestCtx, originalName, name, tool.Get("input_schema.required"))
 		out = append(out, KiroToolWrapper{
 			ToolSpecification: &KiroToolSpecification{
 				Name:        name,
@@ -1664,6 +1649,40 @@ func isKiroToolName(name string) bool {
 
 func isKiroToolNameRune(r rune) bool {
 	return r == '_' || r == '-' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+}
+
+func recordToolRequiredFields(requestCtx *KiroRequestContext, originalName, kiroName string, required gjson.Result) {
+	if requestCtx == nil || !required.IsArray() {
+		return
+	}
+	var fields []string
+	for _, field := range required.Array() {
+		if field.Type == gjson.String && field.String() != "" {
+			fields = append(fields, field.String())
+		}
+	}
+	if len(fields) == 0 {
+		return
+	}
+	if requestCtx.ToolRequiredFields == nil {
+		requestCtx.ToolRequiredFields = make(map[string][]string)
+	}
+	for _, key := range []string{strings.TrimSpace(originalName), strings.TrimSpace(kiroName)} {
+		if key != "" {
+			requestCtx.ToolRequiredFields[key] = fields
+		}
+	}
+}
+
+// missingRequiredToolFields 按请求里该工具 input_schema.required 检查调用参数，
+// 没声明 required 的工具不检查。上游截断大参数时常缺字段，这类调用不能交给客户端执行。
+func missingRequiredToolFields(requestCtx KiroRequestContext, name string, input map[string]any) bool {
+	for _, field := range requestCtx.ToolRequiredFields[strings.TrimSpace(name)] {
+		if _, ok := input[field]; !ok {
+			return true
+		}
+	}
+	return false
 }
 
 func mapKiroToolName(name string, requestCtx *KiroRequestContext) string {
@@ -2436,7 +2455,7 @@ func buildClaudeResponse(content string, toolUses []KiroToolUse, model string, u
 	blocks = append(blocks, extractThinkingBlocksWithSignatures(content, reasoningMeta.Signatures)...)
 	usableTools := 0
 	for _, tool := range toolUses {
-		if tool.IsTruncated {
+		if tool.IsTruncated || missingRequiredToolFields(requestCtx, restoreResponseToolName(tool.Name, requestCtx), tool.Input) {
 			continue
 		}
 		usableTools++
@@ -3160,7 +3179,7 @@ func removeTrailingCommasOutsideStrings(input string) string {
 // can split an input across arbitrary frames, so repairing a partial fragment
 // and handing it to the client would make the client run a wrong tool call and
 // terminate the agent loop prematurely.
-func normalizeStreamingToolInput(name, raw string) (string, map[string]any, bool) {
+func normalizeStreamingToolInput(raw string) (string, map[string]any, bool) {
 	normalized := strings.TrimSpace(raw)
 	if normalized == "" {
 		return "", nil, false
@@ -3175,9 +3194,6 @@ func normalizeStreamingToolInput(name, raw string) (string, map[string]any, bool
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
-		return "", nil, false
-	}
-	if hasMissingRequiredFields(name, input) {
 		return "", nil, false
 	}
 	encoded, err := json.Marshal(input)
@@ -3242,7 +3258,7 @@ func finalizeRawToolUse(toolUseID, name, rawInput string) KiroToolUse {
 			}
 		}
 	}
-	tool.IsTruncated = !decoded || isTruncatedToolUse(tool.Name, rawInput, tool.Input)
+	tool.IsTruncated = !decoded || looksLikeTruncatedJSON(rawInput)
 	return tool
 }
 
@@ -3255,7 +3271,6 @@ func finalizeStructuredToolUse(toolUseID, name string, input map[string]any) Kir
 		Name:      normalizeResponseToolName(name),
 		Input:     input,
 	}
-	tool.IsTruncated = hasMissingRequiredFields(tool.Name, tool.Input)
 	return tool
 }
 
@@ -3265,21 +3280,6 @@ func normalizeResponseToolName(name string) string {
 		return "remote_web_search"
 	}
 	return name
-}
-
-func shouldEmitToolUse(tool KiroToolUse, emittedToolContents map[string]bool) bool {
-	if tool.IsTruncated {
-		return false
-	}
-	key := toolUseContentKey(tool)
-	if key == "" {
-		return false
-	}
-	if emittedToolContents[key] {
-		return false
-	}
-	emittedToolContents[key] = true
-	return true
 }
 
 func isEmittableToolUse(tool KiroToolUse) bool {
@@ -3295,9 +3295,10 @@ func hasUsableToolUses(toolUses []KiroToolUse) bool {
 	return false
 }
 
+// deduplicateToolUses 只按 ID 去重：模型可以在同一轮用相同参数调用同一工具多次，
+// 上游会给每次调用不同的 ID，按名称+参数合并会让客户端少执行调用。
 func deduplicateToolUses(toolUses []KiroToolUse) []KiroToolUse {
 	seenIDs := make(map[string]bool)
-	seenContent := make(map[string]bool)
 	out := make([]KiroToolUse, 0, len(toolUses))
 	for _, tool := range toolUses {
 		if tool.ToolUseID != "" {
@@ -3306,25 +3307,9 @@ func deduplicateToolUses(toolUses []KiroToolUse) []KiroToolUse {
 			}
 			seenIDs[tool.ToolUseID] = true
 		}
-		key := toolUseContentKey(tool)
-		if key != "" && seenContent[key] {
-			continue
-		}
-		if key != "" {
-			seenContent[key] = true
-		}
 		out = append(out, tool)
 	}
 	return out
-}
-
-func toolUseContentKey(tool KiroToolUse) string {
-	name := strings.TrimSpace(tool.Name)
-	if name == "" {
-		return ""
-	}
-	inputJSON, _ := json.Marshal(tool.Input)
-	return name + ":" + string(inputJSON)
 }
 
 func drainEmbeddedToolText(text string) (cleanText string, toolUses []KiroToolUse, pending string) {
@@ -3437,7 +3422,6 @@ func parseXMLInvokeToolCallAt(text string, start int) (KiroToolUse, int, int, bo
 		Name:      strings.TrimSpace(invocation.Name),
 		Input:     input,
 	}
-	tool.IsTruncated = hasMissingRequiredFields(tool.Name, tool.Input)
 	return tool, start, end, true
 }
 
@@ -3513,17 +3497,6 @@ func findMatchingJSONBracket(text string, start int) int {
 	return -1
 }
 
-func isTruncatedToolUse(name, rawInput string, input map[string]any) bool {
-	rawInput = strings.TrimSpace(rawInput)
-	if rawInput == "" {
-		return hasToolRequirements(name)
-	}
-	if looksLikeTruncatedJSON(rawInput) {
-		return true
-	}
-	return hasMissingRequiredFields(name, input)
-}
-
 func looksLikeTruncatedJSON(raw string) bool {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || raw[0] != '{' {
@@ -3535,31 +3508,6 @@ func looksLikeTruncatedJSON(raw string) bool {
 	}
 	last := raw[len(raw)-1]
 	return last == ':' || last == ','
-}
-
-func hasToolRequirements(name string) bool {
-	_, ok := requiredToolFields[strings.ToLower(strings.TrimSpace(name))]
-	return ok
-}
-
-func hasMissingRequiredFields(name string, input map[string]any) bool {
-	groups, ok := requiredToolFields[strings.ToLower(strings.TrimSpace(name))]
-	if !ok {
-		return false
-	}
-	for _, group := range groups {
-		matched := false
-		for _, candidate := range group {
-			if _, exists := input[candidate]; exists {
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			return true
-		}
-	}
-	return false
 }
 
 func updateUsageFromEvent(usage *Usage, eventType string, event map[string]any) {
