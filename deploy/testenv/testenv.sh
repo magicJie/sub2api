@@ -91,6 +91,44 @@ pre_up_snapshot() {
   done < <(find "$snapshot_dir" -maxdepth 1 -name 'pre-up-*.sql.gz' -type f | sort -r | tail -n +"$((keep + 1))")
 }
 
+# 输出库里所有未删除账号的 "id|sha256(refresh_token)"。
+refresh_token_hashes_sql="select id || '|' || encode(sha256(convert_to(credentials->>'refresh_token', 'UTF8')), 'hex')
+  from accounts where deleted_at is null and coalesce(credentials->>'refresh_token', '') <> ''"
+
+# OAuth 的 refresh token 刷新后旧值即失效（Kiro 等会轮换 RT），测试环境和生产共用同一个
+# RT 时，谁先刷新另一边就失效。启动 sub2api 前比对两边 RT 的哈希，发现重复就拒绝启动。
+# 生产库通过 kubectl 访问，在 local.env 里设置 TESTENV_PROD_KUBECONFIG 启用；
+# TESTENV_PROD_NAMESPACE（默认 sub2api）、TESTENV_PROD_PG_DEPLOY（默认 deploy/postgres）可覆盖。
+guard_shared_refresh_tokens() {
+  if [ "${TESTENV_SKIP_RT_GUARD:-}" = "1" ]; then
+    log "已跳过 RT 冲突检查（TESTENV_SKIP_RT_GUARD=1）"
+    return 0
+  fi
+  local kubeconfig=${TESTENV_PROD_KUBECONFIG:-}
+  if [ -z "$kubeconfig" ]; then
+    log "未设置 TESTENV_PROD_KUBECONFIG，跳过 RT 冲突检查（测试环境不要导入生产 OAuth 账号）"
+    return 0
+  fi
+  command -v kubectl >/dev/null || die "缺少依赖: kubectl（RT 冲突检查需要）"
+
+  local testenv_hashes prod_hashes shared
+  testenv_hashes=$("${compose[@]}" exec -T postgres psql -U sub2api -d sub2api -At -c "$refresh_token_hashes_sql")
+  [ -n "$testenv_hashes" ] || return 0
+  # shellcheck disable=SC2016 # 变量在 pod 内展开
+  prod_hashes=$(KUBECONFIG=$kubeconfig kubectl -n "${TESTENV_PROD_NAMESPACE:-sub2api}" exec -i \
+    "${TESTENV_PROD_PG_DEPLOY:-deploy/postgres}" -- sh -c 'psql -U "$POSTGRES_USER" -d "${POSTGRES_DB:-sub2api}" -At -f -' \
+    <<<"$refresh_token_hashes_sql") ||
+    die "无法读取生产库做 RT 冲突检查；确认生产没有共用账号后可设 TESTENV_SKIP_RT_GUARD=1 跳过"
+
+  shared=$(join -t '|' -1 2 -2 2 -o 1.1,2.1 \
+    <(sort -t '|' -k2,2 <<<"$testenv_hashes") <(sort -t '|' -k2,2 <<<"$prod_hashes") |
+    awk -F '|' '{printf "测试#%s=生产#%s ", $1, $2}')
+  if [ -n "$shared" ]; then
+    die "测试库与生产共用 refresh token：${shared}。启动会互相刷掉对方的 RT，请先在测试库禁用这些账号并清除 token"
+  fi
+  log "RT 冲突检查通过"
+}
+
 cmd_up() {
   require_tools
   if [ "${TESTENV_SKIP_BUILD:-}" != "1" ]; then
@@ -98,6 +136,8 @@ cmd_up() {
   fi
   pre_up_snapshot
   log "启动容器..."
+  "${compose[@]}" up -d --no-build --remove-orphans --wait postgres redis
+  guard_shared_refresh_tokens
   "${compose[@]}" up -d --no-build --remove-orphans
   wait_healthy
   cmd_info
@@ -219,6 +259,8 @@ cmd_restore() {
   gunzip -c "$file" | "${compose[@]}" exec -T postgres psql -q -v ON_ERROR_STOP=1 -U sub2api -d sub2api >/dev/null
   # 调度快照、限流计数等缓存以数据库为准重建。
   "${compose[@]}" exec -T redis redis-cli FLUSHALL >/dev/null
+  # 旧快照可能还带着生产账号的 RT。
+  guard_shared_refresh_tokens
   "${compose[@]}" start sub2api
   wait_healthy
   log "恢复完成"
