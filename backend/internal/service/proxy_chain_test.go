@@ -148,16 +148,16 @@ func TestValidateDependentChains(t *testing.T) {
 	front := byID[1]
 	front.UpstreamMode, front.UpstreamProxyID = UpstreamModeProxy, i64(2)
 	byID[1] = front
-	if err := validateDependentChains(byID, nil, 1); err == nil {
+	if err := validateDependentChainsWithGroups(byID, nil, nil, nil, 1); err == nil {
 		t.Fatalf("expected loop error for dependent proxy")
 	}
 
 	// 清除默认前置代理时，跟随默认的代理会失效，必须拒绝。
 	byID = chainTestProxies()
-	if err := validateDependentChains(byID, nil, 0); err == nil {
+	if err := validateDependentChainsWithGroups(byID, nil, nil, nil, 0); err == nil {
 		t.Fatalf("clearing default with dependents must fail")
 	}
-	if err := validateDependentChains(byID, i64(1), 0); err != nil {
+	if err := validateDependentChainsWithGroups(byID, i64(1), nil, nil, 0); err != nil {
 		t.Fatalf("valid default: %v", err)
 	}
 }

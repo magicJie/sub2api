@@ -321,6 +321,18 @@ func (f ProxyFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ProxyMutation", m)
 }
 
+// The ProxyHopGroupFunc type is an adapter to allow the use of ordinary
+// function as ProxyHopGroup mutator.
+type ProxyHopGroupFunc func(context.Context, *ent.ProxyHopGroupMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f ProxyHopGroupFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.ProxyHopGroupMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ProxyHopGroupMutation", m)
+}
+
 // The RedeemCodeFunc type is an adapter to allow the use of ordinary
 // function as RedeemCode mutator.
 type RedeemCodeFunc func(context.Context, *ent.RedeemCodeMutation) (ent.Value, error)

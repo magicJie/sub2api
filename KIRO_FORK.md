@@ -111,6 +111,14 @@ cd backend && go build ./... && go test -tags=unit ./...
 - 上游文件挂钩：`git grep -n '链式代理（fork）' -- backend`（`service/proxy.go`、`admin_proxy.go`、`admin_service.go`、`wire.go`，`repository/proxy_repo.go`，`handler/admin/{proxy_handler,proxy_data,account_data}.go`，`handler/{handler,wire}.go`，`dto/{types,mappers}.go`，`routes/admin.go`）。
 - Xray 版本固定在 v1.260206.0：更新的版本会把 `refraction-networking/utls` 升到预发布版，影响上游 TLS 指纹功能。
 
+- **mihomo 首跳组（方案 A）**：`github.com/metacubex/mihomo v1.19.33` 只负责链的第一跳，后续跳仍由 Xray 的 `sockopt.dialerProxy` 承载；AnyTLS 等机场协议从订阅加载。`config.Parse` 的 linkname 依赖要求 blank import `hub/executor`，不能删。
+- 迁移 **`249_proxy_hop_groups.sql`**（幂等）新增 `proxy_hop_groups` 表及 `proxies.upstream_hop_group_id`，Ent schema / 生成代码同步；`upstream_mode=hop_group` 引用组。手动成员必须是现有直连代理；组不能再有前置，链仍最多 5 跳（首跳组计 1 跳）。
+- 运行时：`pkg/mihomohop/` 进程内唯一配置，HTTP proxy-provider + fallback / url-test 组；每组通过复用 `proxychain/socks_bridge.go` 的随机认证回环 SOCKS5 入口成为 Xray 的第 0 跳。空组设 `empty-fallback=REJECT`，拨号前拒绝无健康节点，绝不走 DIRECT。配置变更关闭旧桥与旧连接，快照刷新继续通过 `Retain` 回收旧 Xray 链；组内健康切换/订阅节点更新不重建 Xray 链。
+- 新逻辑在 `service/proxy_hop_group*.go`、`repository/proxy_hop_groups_repo.go`、`handler/admin/proxy_hop_groups_handler.go` 与 `frontend/src/proxyHopGroups/`；`service/proxy_chain.go` / fork 路由与 DTO 承接挂钩，`repository/wire.go` 注册仓储，`service/wire.go` 注入仓储，`wire_gen.go` 重新生成。管理入口在代理页“首跳组”，API 为 `/api/v1/admin/proxy-hop-groups`。默认前置设置新增 `proxy_chain_default_upstream_hop_group_id`，与原默认代理设置原子互斥。
+- 组合根在 `cmd/server/proxy_hop_groups_wire.go` 将 `mihomohop.Default()` 注入 `pkg/hopgroup.Runtime`；service/DTO 只依赖无内核初始化副作用的契约。不要在 `service` 包重新 import mihomo：这会让所有业务调用方和单测提前装入 mihomo 的全局状态与后台任务。
+- 订阅 URL 视为凭据：Ent / service 模型不序列化原文，管理 DTO 只返回 `[REDACTED]` 与数量；更新省略 URL 列表表示保留。`service/audit_log.go` 追加敏感字段挂钩；mihomo 日志只转为不含 payload 的 slog Debug 事件，私有临时缓存目录权限 0700。原生 provider HTTP 客户端不读取环境代理，因此按 `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` 为订阅抓取生成显式 HTTP(S)/SOCKS 出站，不改变业务链路出口。
+- 代理导出只带首跳组名称，不导出组配置或订阅凭据；导入前需在目标实例手动建立同名首跳组，找不到时校验失败（不降级直连）。跨实例的默认首跳组也按同样规则恢复引用。
+
 ## 代理池（fork）
 
 代理按代理池分组；创建账号时可指定代理池，从池中分配代理并锁定到账号；账号与代理的绑定全部留痕，用于按平台限制每个代理的账号数（代理退役）。

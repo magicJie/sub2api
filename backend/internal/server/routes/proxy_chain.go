@@ -13,4 +13,10 @@ func registerProxyChainRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		proxies.GET("/chain-settings", h.Admin.ProxyChain.GetSettings)
 		proxies.PUT("/chain-settings", h.Admin.ProxyChain.UpdateSettings)
 	}
+	groups := admin.Group("/proxy-hop-groups")
+	groups.GET("", h.Admin.ProxyChain.ListHopGroups)
+	groups.POST("", h.Admin.ProxyChain.CreateHopGroup)
+	groups.GET("/:id", h.Admin.ProxyChain.GetHopGroup)
+	groups.PUT("/:id", h.Admin.ProxyChain.UpdateHopGroup)
+	groups.DELETE("/:id", h.Admin.ProxyChain.DeleteHopGroup)
 }

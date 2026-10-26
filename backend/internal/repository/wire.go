@@ -76,6 +76,7 @@ var ProviderSet = wire.NewSet(
 	NewScheduledTestResultRepository, // 定时测试结果仓储
 	NewProxyRepository,
 	NewProxyPoolRepository, // 代理池（fork）
+	NewProxyHopGroupRepository, // 链式代理（fork）
 	NewRedeemCodeRepository,
 	NewPromoCodeRepository,
 	NewAnnouncementRepository,

@@ -83,6 +83,7 @@
               <Icon name="grid" size="md" class="mr-2" />
               {{ t('admin.proxyPools.manage') }}
             </button>
+            <HopGroupManager @changed="loadHopGroups" /> <!-- 链式代理（fork） -->
             <button @click="openChainSettings" class="btn btn-secondary">
               <Icon name="link" size="md" class="mr-2" />
               {{ t('admin.proxies.chainSettings') }}
@@ -585,6 +586,7 @@
               :placeholder="t('admin.proxies.selectUpstreamProxy')"
             />
           </div>
+          <HopGroupSelect v-if="createForm.upstream_mode === 'hop_group'" id="create-hop-group" v-model="createForm.upstream_hop_group_id" /> <!-- 链式代理（fork） -->
         </fieldset>
         <div>
           <label class="input-label">{{ t('admin.proxies.expiresAt') }}</label>
@@ -879,6 +881,7 @@
               :placeholder="t('admin.proxies.selectUpstreamProxy')"
             />
           </div>
+          <HopGroupSelect v-if="editForm.upstream_mode === 'hop_group'" id="edit-hop-group" v-model="editForm.upstream_hop_group_id" /> <!-- 链式代理（fork） -->
         </fieldset>
         <div>
           <label class="input-label">{{ t('admin.proxies.status') }}</label>
@@ -1023,9 +1026,11 @@
             v-model="chainSettingsForm.default_upstream_proxy_id"
             :aria-label="t('admin.proxies.defaultUpstreamProxy')"
             :options="defaultUpstreamOptions"
+            @update:model-value="$event !== null && (chainSettingsForm.default_upstream_hop_group_id = null)"
           />
           <p class="input-hint mt-2">{{ t('admin.proxies.defaultUpstreamHint') }}</p>
         </div>
+        <HopGroupSelect id="chain-default-hop-group" v-model="chainSettingsForm.default_upstream_hop_group_id" allow-none @update:model-value="$event !== null && (chainSettingsForm.default_upstream_proxy_id = null)" /> <!-- 链式代理（fork） -->
       </form>
       <template #footer>
         <div class="flex justify-end gap-3">
@@ -1192,6 +1197,9 @@ import ImportDataModal from '@/components/admin/proxy/ImportDataModal.vue'
 import ProxyProtocolOptionsFields from '@/components/admin/proxy/ProxyProtocolOptionsFields.vue'
 import ProxyPoolManagerModal from '@/proxyPool/components/ProxyPoolManagerModal.vue' // 代理池（fork）
 import { useProxyPoolOptions } from '@/proxyPool/useProxyPools' // 代理池（fork）
+import HopGroupManager from '@/proxyHopGroups/HopGroupManager.vue' // 链式代理（fork）
+import HopGroupSelect from '@/proxyHopGroups/HopGroupSelect.vue' // 链式代理（fork）
+import { useHopGroups } from '@/proxyHopGroups/useHopGroups' // 链式代理（fork）
 import Select from '@/components/common/Select.vue'
 import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -1263,10 +1271,12 @@ const protocolSelectOptions = computed(() => [
   { value: 'trojan', label: t('admin.proxies.protocols.trojan') }
 ])
 
+const { groups: hopGroups, loadHopGroups, text: hopGroupText } = useHopGroups() // 链式代理（fork）
 const upstreamModeOptions = computed(() => [
   { value: 'direct', label: t('admin.proxies.upstreamDirect') },
   { value: 'default', label: t('admin.proxies.upstreamDefault') },
-  { value: 'proxy', label: t('admin.proxies.upstreamSpecific') }
+  { value: 'proxy', label: t('admin.proxies.upstreamSpecific') },
+  { value: 'hop_group', label: hopGroupText.value.groupMode } // 链式代理（fork）
 ])
 
 const protocolBadgeClass = (protocol: string) => {
@@ -1384,6 +1394,7 @@ const createForm = reactive({
   expiry_warn_days: 7 as number,
   upstream_mode: 'direct' as ProxyUpstreamMode,
   upstream_proxy_id: null as number | null,
+  upstream_hop_group_id: null as number | null, // 链式代理（fork）
   options: {} as ProxyOptions,
   pool_id: null as number | null, // 代理池（fork）：null 为默认池
 })
@@ -1402,6 +1413,7 @@ const editForm = reactive({
   expiry_warn_days: 7 as number,
   upstream_mode: 'direct' as ProxyUpstreamMode,
   upstream_proxy_id: null as number | null,
+  upstream_hop_group_id: null as number | null, // 链式代理（fork）
   options: {} as ProxyOptions,
   pool_id: null as number | null, // 代理池（fork）：null 为默认池
 })
@@ -1421,6 +1433,7 @@ const upstreamProxyOptions = (excludeId?: number) =>
 
 // ── 链式代理设置(全局默认前置代理) ──
 const defaultUpstreamProxyId = ref<number | null>(null)
+const defaultUpstreamHopGroupId = ref<number | null>(null) // 链式代理（fork）
 const showChainSettings = ref(false)
 
 // 代理池（fork）
@@ -1432,7 +1445,7 @@ const handleProxyPoolsChanged = () => {
 }
 const loadingChainSettings = ref(false)
 const savingChainSettings = ref(false)
-const chainSettingsForm = reactive({ default_upstream_proxy_id: null as number | null })
+const chainSettingsForm = reactive({ default_upstream_proxy_id: null as number | null, default_upstream_hop_group_id: null as number | null }) // 链式代理（fork）
 
 const defaultUpstreamOptions = computed(() => [
   { value: null, label: t('admin.proxies.noDefaultUpstream') },
@@ -1440,6 +1453,7 @@ const defaultUpstreamOptions = computed(() => [
 ])
 
 const defaultUpstreamHint = computed(() => {
+  if (defaultUpstreamHopGroupId.value) return `${hopGroupText.value.currentDefault}: ${hopGroups.value.find(group => group.id === defaultUpstreamHopGroupId.value)?.name ?? `#${defaultUpstreamHopGroupId.value}`}` // 链式代理（fork）
   const id = defaultUpstreamProxyId.value
   if (!id) return t('admin.proxies.defaultUpstreamUnset')
   const proxy = allProxiesForBackup.value.find((p) => p.id === id)
@@ -1450,6 +1464,7 @@ const loadChainSettings = async () => {
   try {
     const settings = await adminAPI.proxies.getChainSettings()
     defaultUpstreamProxyId.value = settings?.default_upstream_proxy_id ?? null
+    defaultUpstreamHopGroupId.value = settings?.default_upstream_hop_group_id ?? null // 链式代理（fork）
   } catch (error) {
     console.error('Error loading proxy chain settings:', error)
   }
@@ -1457,11 +1472,13 @@ const loadChainSettings = async () => {
 
 const openChainSettings = async () => {
   chainSettingsForm.default_upstream_proxy_id = defaultUpstreamProxyId.value
+  chainSettingsForm.default_upstream_hop_group_id = defaultUpstreamHopGroupId.value // 链式代理（fork）
   showChainSettings.value = true
   loadingChainSettings.value = true
   try {
     await Promise.all([loadChainSettings(), loadBackupProxyOptions()])
     chainSettingsForm.default_upstream_proxy_id = defaultUpstreamProxyId.value
+    chainSettingsForm.default_upstream_hop_group_id = defaultUpstreamHopGroupId.value // 链式代理（fork）
   } catch (error) {
     console.error('Error loading proxy options:', error)
   } finally {
@@ -1473,9 +1490,11 @@ const handleSaveChainSettings = async () => {
   savingChainSettings.value = true
   try {
     const result = await adminAPI.proxies.updateChainSettings({
-      default_upstream_proxy_id: chainSettingsForm.default_upstream_proxy_id ?? null
+      default_upstream_proxy_id: chainSettingsForm.default_upstream_proxy_id ?? null,
+      default_upstream_hop_group_id: chainSettingsForm.default_upstream_hop_group_id ?? null // 链式代理（fork）
     })
     defaultUpstreamProxyId.value = result?.default_upstream_proxy_id ?? chainSettingsForm.default_upstream_proxy_id ?? null
+    defaultUpstreamHopGroupId.value = result?.default_upstream_hop_group_id ?? null // 链式代理（fork）
     appStore.showSuccess(t('admin.proxies.chainSettingsSaved'))
     showChainSettings.value = false
     loadProxies()
@@ -1491,12 +1510,13 @@ const handleSaveChainSettings = async () => {
 // 加密协议通常是第一跳，预选直连。用户手动改过前置模式后不再自动覆盖。
 const createUpstreamTouched = ref(false)
 const preferredCreateUpstreamMode = (): ProxyUpstreamMode =>
-  defaultUpstreamProxyId.value && !isEncryptedProtocol(createForm.protocol) ? 'default' : 'direct'
+  (defaultUpstreamProxyId.value || defaultUpstreamHopGroupId.value) && !isEncryptedProtocol(createForm.protocol) ? 'default' : 'direct' // 链式代理（fork）
 const applyCreateUpstreamPreselect = () => {
   if (!createUpstreamTouched.value) createForm.upstream_mode = preferredCreateUpstreamMode()
 }
 watch(() => createForm.protocol, applyCreateUpstreamPreselect)
 watch(defaultUpstreamProxyId, applyCreateUpstreamPreselect)
+watch(defaultUpstreamHopGroupId, applyCreateUpstreamPreselect) // 链式代理（fork）
 
 const openCreateModal = async () => {
   void loadProxyPools() // 代理池（fork）
@@ -1536,9 +1556,10 @@ const handleParseLink = async (target: 'create' | 'edit') => {
   }
 }
 
-const upstreamPayload = (form: { upstream_mode: ProxyUpstreamMode; upstream_proxy_id: number | null }) => ({
+const upstreamPayload = (form: { upstream_mode: ProxyUpstreamMode; upstream_proxy_id: number | null; upstream_hop_group_id: number | null }) => ({
   upstream_mode: form.upstream_mode,
-  upstream_proxy_id: form.upstream_mode === 'proxy' ? form.upstream_proxy_id : null
+  upstream_proxy_id: form.upstream_mode === 'proxy' ? form.upstream_proxy_id : null,
+  upstream_hop_group_id: form.upstream_mode === 'hop_group' ? form.upstream_hop_group_id : null // 链式代理（fork）
 })
 
 let abortController: AbortController | null = null
@@ -1651,6 +1672,7 @@ const closeCreateModal = () => {
   createForm.backup_proxy_id = null
   createForm.expiry_warn_days = 7
   createForm.upstream_proxy_id = null
+  createForm.upstream_hop_group_id = null // 链式代理（fork）
   createUpstreamTouched.value = false
   createForm.options = {}
   createForm.pool_id = null // 代理池（fork）
@@ -1800,6 +1822,7 @@ const handleCreateProxy = async () => {
     appStore.showError(t('admin.proxies.upstreamProxyRequired'))
     return
   }
+  if (createForm.upstream_mode === 'hop_group' && !createForm.upstream_hop_group_id) { appStore.showError(hopGroupText.value.selectRequired); return } // 链式代理（fork）
   const encrypted = isEncryptedProtocol(createForm.protocol)
   submitting.value = true
   try {
@@ -1844,6 +1867,7 @@ const handleEdit = (proxy: Proxy) => {
   editForm.expiry_warn_days = proxy.expiry_warn_days ?? 7
   editForm.upstream_mode = proxy.upstream_mode || 'direct'
   editForm.upstream_proxy_id = proxy.upstream_proxy_id ?? null
+  editForm.upstream_hop_group_id = proxy.upstream_hop_group_id ?? null // 链式代理（fork）
   editForm.options = { ...(proxy.options || {}) }
   editForm.pool_id = proxy.pool_id ?? null // 代理池（fork）
   void loadProxyPools()
@@ -1890,6 +1914,7 @@ const handleUpdateProxy = async () => {
     appStore.showError(t('admin.proxies.upstreamProxyRequired'))
     return
   }
+  if (editForm.upstream_mode === 'hop_group' && !editForm.upstream_hop_group_id) { appStore.showError(hopGroupText.value.selectRequired); return } // 链式代理（fork）
 
   submitting.value = true
   try {

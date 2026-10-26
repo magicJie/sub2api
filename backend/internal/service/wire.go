@@ -11,6 +11,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/hopgroup" // 链式代理（fork）
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/google/wire"
@@ -438,8 +439,8 @@ func ProvideProxyExpiryService(proxyRepo ProxyRepository) *ProxyExpiryService {
 }
 
 // ProvideProxyChainService creates and starts ProxyChainService（链式代理，fork）.
-func ProvideProxyChainService(proxyRepo ProxyRepository, settingRepo SettingRepository) *ProxyChainService {
-	svc := NewProxyChainService(proxyRepo, settingRepo)
+func ProvideProxyChainService(proxyRepo ProxyRepository, settingRepo SettingRepository, hopGroupRepo ProxyHopGroupRepository, runtime hopgroup.Runtime) *ProxyChainService {
+	svc := NewProxyChainService(proxyRepo, settingRepo, hopGroupRepo, runtime)
 	svc.Start()
 	return svc
 }

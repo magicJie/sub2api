@@ -46,10 +46,12 @@ type Proxy struct {
 	BackupProxyID *int64 `json:"backup_proxy_id,omitempty"`
 	// Days before expiry to flag as expiring-soon (per proxy).
 	ExpiryWarnDays int `json:"expiry_warn_days,omitempty"`
-	// Upstream (front) proxy mode: direct | default | proxy.
+	// Upstream (front) proxy mode: direct | default | proxy | hop_group.
 	UpstreamMode string `json:"upstream_mode,omitempty"`
 	// Upstream proxy id when upstream_mode=proxy (self-reference, app-level checked).
 	UpstreamProxyID *int64 `json:"upstream_proxy_id,omitempty"`
+	// 链式代理（fork）：first-hop group id when upstream_mode=hop_group.
+	UpstreamHopGroupID *int64 `json:"upstream_hop_group_id,omitempty"`
 	// Protocol/transport options for ss/vmess/vless/trojan (cipher, network, security, sni ...).
 	Options map[string]string `json:"options,omitempty"`
 	// Proxy pool id (proxy_pools, app-level checked). NULL is treated as the default pool.
@@ -109,7 +111,7 @@ func (*Proxy) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case proxy.FieldOptions:
 			values[i] = new([]byte)
-		case proxy.FieldID, proxy.FieldPort, proxy.FieldBackupProxyID, proxy.FieldExpiryWarnDays, proxy.FieldUpstreamProxyID, proxy.FieldPoolID:
+		case proxy.FieldID, proxy.FieldPort, proxy.FieldBackupProxyID, proxy.FieldExpiryWarnDays, proxy.FieldUpstreamProxyID, proxy.FieldUpstreamHopGroupID, proxy.FieldPoolID:
 			values[i] = new(sql.NullInt64)
 		case proxy.FieldName, proxy.FieldProtocol, proxy.FieldHost, proxy.FieldUsername, proxy.FieldPassword, proxy.FieldStatus, proxy.FieldFallbackMode, proxy.FieldUpstreamMode:
 			values[i] = new(sql.NullString)
@@ -238,6 +240,13 @@ func (_m *Proxy) assignValues(columns []string, values []any) error {
 				_m.UpstreamProxyID = new(int64)
 				*_m.UpstreamProxyID = value.Int64
 			}
+		case proxy.FieldUpstreamHopGroupID:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field upstream_hop_group_id", values[i])
+			} else if value.Valid {
+				_m.UpstreamHopGroupID = new(int64)
+				*_m.UpstreamHopGroupID = value.Int64
+			}
 		case proxy.FieldOptions:
 			if value, ok := values[i].(*[]byte); !ok {
 				return fmt.Errorf("unexpected type %T for field options", values[i])
@@ -361,6 +370,11 @@ func (_m *Proxy) String() string {
 	builder.WriteString(", ")
 	if v := _m.UpstreamProxyID; v != nil {
 		builder.WriteString("upstream_proxy_id=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.UpstreamHopGroupID; v != nil {
+		builder.WriteString("upstream_hop_group_id=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
 	builder.WriteString(", ")

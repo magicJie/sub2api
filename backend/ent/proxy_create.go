@@ -215,6 +215,20 @@ func (_c *ProxyCreate) SetNillableUpstreamProxyID(v *int64) *ProxyCreate {
 	return _c
 }
 
+// SetUpstreamHopGroupID sets the "upstream_hop_group_id" field.
+func (_c *ProxyCreate) SetUpstreamHopGroupID(v int64) *ProxyCreate {
+	_c.mutation.SetUpstreamHopGroupID(v)
+	return _c
+}
+
+// SetNillableUpstreamHopGroupID sets the "upstream_hop_group_id" field if the given value is not nil.
+func (_c *ProxyCreate) SetNillableUpstreamHopGroupID(v *int64) *ProxyCreate {
+	if v != nil {
+		_c.SetUpstreamHopGroupID(*v)
+	}
+	return _c
+}
+
 // SetOptions sets the "options" field.
 func (_c *ProxyCreate) SetOptions(v map[string]string) *ProxyCreate {
 	_c.mutation.SetOptions(v)
@@ -498,6 +512,10 @@ func (_c *ProxyCreate) createSpec() (*Proxy, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.UpstreamProxyID(); ok {
 		_spec.SetField(proxy.FieldUpstreamProxyID, field.TypeInt64, value)
 		_node.UpstreamProxyID = &value
+	}
+	if value, ok := _c.mutation.UpstreamHopGroupID(); ok {
+		_spec.SetField(proxy.FieldUpstreamHopGroupID, field.TypeInt64, value)
+		_node.UpstreamHopGroupID = &value
 	}
 	if value, ok := _c.mutation.Options(); ok {
 		_spec.SetField(proxy.FieldOptions, field.TypeJSON, value)
@@ -839,6 +857,30 @@ func (u *ProxyUpsert) AddUpstreamProxyID(v int64) *ProxyUpsert {
 // ClearUpstreamProxyID clears the value of the "upstream_proxy_id" field.
 func (u *ProxyUpsert) ClearUpstreamProxyID() *ProxyUpsert {
 	u.SetNull(proxy.FieldUpstreamProxyID)
+	return u
+}
+
+// SetUpstreamHopGroupID sets the "upstream_hop_group_id" field.
+func (u *ProxyUpsert) SetUpstreamHopGroupID(v int64) *ProxyUpsert {
+	u.Set(proxy.FieldUpstreamHopGroupID, v)
+	return u
+}
+
+// UpdateUpstreamHopGroupID sets the "upstream_hop_group_id" field to the value that was provided on create.
+func (u *ProxyUpsert) UpdateUpstreamHopGroupID() *ProxyUpsert {
+	u.SetExcluded(proxy.FieldUpstreamHopGroupID)
+	return u
+}
+
+// AddUpstreamHopGroupID adds v to the "upstream_hop_group_id" field.
+func (u *ProxyUpsert) AddUpstreamHopGroupID(v int64) *ProxyUpsert {
+	u.Add(proxy.FieldUpstreamHopGroupID, v)
+	return u
+}
+
+// ClearUpstreamHopGroupID clears the value of the "upstream_hop_group_id" field.
+func (u *ProxyUpsert) ClearUpstreamHopGroupID() *ProxyUpsert {
+	u.SetNull(proxy.FieldUpstreamHopGroupID)
 	return u
 }
 
@@ -1199,6 +1241,34 @@ func (u *ProxyUpsertOne) UpdateUpstreamProxyID() *ProxyUpsertOne {
 func (u *ProxyUpsertOne) ClearUpstreamProxyID() *ProxyUpsertOne {
 	return u.Update(func(s *ProxyUpsert) {
 		s.ClearUpstreamProxyID()
+	})
+}
+
+// SetUpstreamHopGroupID sets the "upstream_hop_group_id" field.
+func (u *ProxyUpsertOne) SetUpstreamHopGroupID(v int64) *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.SetUpstreamHopGroupID(v)
+	})
+}
+
+// AddUpstreamHopGroupID adds v to the "upstream_hop_group_id" field.
+func (u *ProxyUpsertOne) AddUpstreamHopGroupID(v int64) *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.AddUpstreamHopGroupID(v)
+	})
+}
+
+// UpdateUpstreamHopGroupID sets the "upstream_hop_group_id" field to the value that was provided on create.
+func (u *ProxyUpsertOne) UpdateUpstreamHopGroupID() *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.UpdateUpstreamHopGroupID()
+	})
+}
+
+// ClearUpstreamHopGroupID clears the value of the "upstream_hop_group_id" field.
+func (u *ProxyUpsertOne) ClearUpstreamHopGroupID() *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.ClearUpstreamHopGroupID()
 	})
 }
 
@@ -1732,6 +1802,34 @@ func (u *ProxyUpsertBulk) UpdateUpstreamProxyID() *ProxyUpsertBulk {
 func (u *ProxyUpsertBulk) ClearUpstreamProxyID() *ProxyUpsertBulk {
 	return u.Update(func(s *ProxyUpsert) {
 		s.ClearUpstreamProxyID()
+	})
+}
+
+// SetUpstreamHopGroupID sets the "upstream_hop_group_id" field.
+func (u *ProxyUpsertBulk) SetUpstreamHopGroupID(v int64) *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.SetUpstreamHopGroupID(v)
+	})
+}
+
+// AddUpstreamHopGroupID adds v to the "upstream_hop_group_id" field.
+func (u *ProxyUpsertBulk) AddUpstreamHopGroupID(v int64) *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.AddUpstreamHopGroupID(v)
+	})
+}
+
+// UpdateUpstreamHopGroupID sets the "upstream_hop_group_id" field to the value that was provided on create.
+func (u *ProxyUpsertBulk) UpdateUpstreamHopGroupID() *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.UpdateUpstreamHopGroupID()
+	})
+}
+
+// ClearUpstreamHopGroupID clears the value of the "upstream_hop_group_id" field.
+func (u *ProxyUpsertBulk) ClearUpstreamHopGroupID() *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.ClearUpstreamHopGroupID()
 	})
 }
 
