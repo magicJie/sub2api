@@ -49,6 +49,8 @@ const (
 	FieldUpstreamProxyID = "upstream_proxy_id"
 	// FieldOptions holds the string denoting the options field in the database.
 	FieldOptions = "options"
+	// FieldPoolID holds the string denoting the pool_id field in the database.
+	FieldPoolID = "pool_id"
 	// EdgeAccounts holds the string denoting the accounts edge name in mutations.
 	EdgeAccounts = "accounts"
 	// EdgePrimaryProxies holds the string denoting the primary_proxies edge name in mutations.
@@ -94,6 +96,7 @@ var Columns = []string{
 	FieldUpstreamMode,
 	FieldUpstreamProxyID,
 	FieldOptions,
+	FieldPoolID,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -232,6 +235,11 @@ func ByUpstreamMode(opts ...sql.OrderTermOption) OrderOption {
 // ByUpstreamProxyID orders the results by the upstream_proxy_id field.
 func ByUpstreamProxyID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldUpstreamProxyID, opts...).ToFunc()
+}
+
+// ByPoolID orders the results by the pool_id field.
+func ByPoolID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldPoolID, opts...).ToFunc()
 }
 
 // ByAccountsCount orders the results by accounts count.

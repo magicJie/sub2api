@@ -28,6 +28,7 @@ type CodexSessionImportRequest struct {
 	Notes                   *string        `json:"notes"`
 	GroupIDs                []int64        `json:"group_ids"`
 	ProxyID                 *int64         `json:"proxy_id"`
+	ProxyPoolID             *int64         `json:"proxy_pool_id"` // 代理池（fork）
 	Concurrency             *int           `json:"concurrency"`
 	Priority                *int           `json:"priority"`
 	RateMultiplier          *float64       `json:"rate_multiplier"`
@@ -336,6 +337,7 @@ func (h *AccountHandler) importCodexSessions(ctx context.Context, req CodexSessi
 			Credentials:           credentials,
 			Extra:                 extra,
 			ProxyID:               req.ProxyID,
+			ProxyPoolID:           req.ProxyPoolID, // 代理池（fork）
 			Concurrency:           concurrency,
 			Priority:              priority,
 			RateMultiplier:        req.RateMultiplier,

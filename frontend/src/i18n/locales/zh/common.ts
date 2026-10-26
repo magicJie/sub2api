@@ -184,6 +184,7 @@ export default {
     accounts: '账号管理',
     plugins: '插件管理',
     proxies: 'IP管理',
+    proxyPools: '代理池', // 代理池（fork）
     redeemCodes: '兑换码',
     ops: '运维监控',
     promoCodes: '优惠码',

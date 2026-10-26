@@ -70,6 +70,9 @@ func RegisterAdminRoutes(
 		// 链式代理，链式代理（fork），见 routes/proxy_chain.go
 		registerProxyChainRoutes(admin, h)
 
+		// 代理池，代理池（fork），见 routes/proxy_pool.go
+		registerProxyPoolRoutes(admin, h)
+
 		// 代理管理
 		registerProxyRoutes(admin, h, stepUpAuth)
 

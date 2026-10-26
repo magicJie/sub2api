@@ -85,6 +85,11 @@ func (s *adminServiceImpl) CreateProxy(ctx context.Context, input *CreateProxyIn
 		BackupProxyID:  input.BackupProxyID,
 		ExpiryWarnDays: input.ExpiryWarnDays,
 	}
+	poolID, err := normalizeProxyPoolRef(ctx, input.PoolID) // 代理池（fork）
+	if err != nil {
+		return nil, err
+	}
+	proxy.PoolID = poolID
 	if err := applyProxyChainCreate(ctx, s.proxyRepo, s.proxyChainSettingRepo(), proxy, &input.ProxyChainInput); err != nil { // 链式代理（fork）
 		return nil, err
 	}
@@ -154,6 +159,11 @@ func (s *adminServiceImpl) UpdateProxy(ctx context.Context, id int64, input *Upd
 	proxy.BackupProxyID = backupID
 	if input.ExpiryWarnDays != nil {
 		proxy.ExpiryWarnDays = *input.ExpiryWarnDays
+	}
+	if input.PoolIDSet { // 代理池（fork）
+		if proxy.PoolID, err = normalizeProxyPoolRef(ctx, input.PoolID); err != nil {
+			return nil, err
+		}
 	}
 	if err := applyProxyChainUpdate(ctx, s.proxyRepo, s.proxyChainSettingRepo(), proxy, &input.ProxyChainUpdateInput); err != nil { // 链式代理（fork）
 		return nil, err

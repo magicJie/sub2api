@@ -47,6 +47,8 @@ type AdminHandlers struct {
 
 	// 链式代理（fork）
 	ProxyChain *admin.ProxyChainHandler
+	// 代理池（fork）
+	ProxyPool *admin.ProxyPoolHandler
 }
 
 // Handlers contains all HTTP handlers

@@ -300,6 +300,33 @@ func (_u *ProxyUpdate) ClearOptions() *ProxyUpdate {
 	return _u
 }
 
+// SetPoolID sets the "pool_id" field.
+func (_u *ProxyUpdate) SetPoolID(v int64) *ProxyUpdate {
+	_u.mutation.ResetPoolID()
+	_u.mutation.SetPoolID(v)
+	return _u
+}
+
+// SetNillablePoolID sets the "pool_id" field if the given value is not nil.
+func (_u *ProxyUpdate) SetNillablePoolID(v *int64) *ProxyUpdate {
+	if v != nil {
+		_u.SetPoolID(*v)
+	}
+	return _u
+}
+
+// AddPoolID adds value to the "pool_id" field.
+func (_u *ProxyUpdate) AddPoolID(v int64) *ProxyUpdate {
+	_u.mutation.AddPoolID(v)
+	return _u
+}
+
+// ClearPoolID clears the value of the "pool_id" field.
+func (_u *ProxyUpdate) ClearPoolID() *ProxyUpdate {
+	_u.mutation.ClearPoolID()
+	return _u
+}
+
 // AddAccountIDs adds the "accounts" edge to the Account entity by IDs.
 func (_u *ProxyUpdate) AddAccountIDs(ids ...int64) *ProxyUpdate {
 	_u.mutation.AddAccountIDs(ids...)
@@ -558,6 +585,15 @@ func (_u *ProxyUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.OptionsCleared() {
 		_spec.ClearField(proxy.FieldOptions, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.PoolID(); ok {
+		_spec.SetField(proxy.FieldPoolID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedPoolID(); ok {
+		_spec.AddField(proxy.FieldPoolID, field.TypeInt64, value)
+	}
+	if _u.mutation.PoolIDCleared() {
+		_spec.ClearField(proxy.FieldPoolID, field.TypeInt64)
 	}
 	if _u.mutation.AccountsCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -969,6 +1005,33 @@ func (_u *ProxyUpdateOne) ClearOptions() *ProxyUpdateOne {
 	return _u
 }
 
+// SetPoolID sets the "pool_id" field.
+func (_u *ProxyUpdateOne) SetPoolID(v int64) *ProxyUpdateOne {
+	_u.mutation.ResetPoolID()
+	_u.mutation.SetPoolID(v)
+	return _u
+}
+
+// SetNillablePoolID sets the "pool_id" field if the given value is not nil.
+func (_u *ProxyUpdateOne) SetNillablePoolID(v *int64) *ProxyUpdateOne {
+	if v != nil {
+		_u.SetPoolID(*v)
+	}
+	return _u
+}
+
+// AddPoolID adds value to the "pool_id" field.
+func (_u *ProxyUpdateOne) AddPoolID(v int64) *ProxyUpdateOne {
+	_u.mutation.AddPoolID(v)
+	return _u
+}
+
+// ClearPoolID clears the value of the "pool_id" field.
+func (_u *ProxyUpdateOne) ClearPoolID() *ProxyUpdateOne {
+	_u.mutation.ClearPoolID()
+	return _u
+}
+
 // AddAccountIDs adds the "accounts" edge to the Account entity by IDs.
 func (_u *ProxyUpdateOne) AddAccountIDs(ids ...int64) *ProxyUpdateOne {
 	_u.mutation.AddAccountIDs(ids...)
@@ -1257,6 +1320,15 @@ func (_u *ProxyUpdateOne) sqlSave(ctx context.Context) (_node *Proxy, err error)
 	}
 	if _u.mutation.OptionsCleared() {
 		_spec.ClearField(proxy.FieldOptions, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.PoolID(); ok {
+		_spec.SetField(proxy.FieldPoolID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedPoolID(); ok {
+		_spec.AddField(proxy.FieldPoolID, field.TypeInt64, value)
+	}
+	if _u.mutation.PoolIDCleared() {
+		_spec.ClearField(proxy.FieldPoolID, field.TypeInt64)
 	}
 	if _u.mutation.AccountsCleared() {
 		edge := &sqlgraph.EdgeSpec{

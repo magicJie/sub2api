@@ -221,6 +221,20 @@ func (_c *ProxyCreate) SetOptions(v map[string]string) *ProxyCreate {
 	return _c
 }
 
+// SetPoolID sets the "pool_id" field.
+func (_c *ProxyCreate) SetPoolID(v int64) *ProxyCreate {
+	_c.mutation.SetPoolID(v)
+	return _c
+}
+
+// SetNillablePoolID sets the "pool_id" field if the given value is not nil.
+func (_c *ProxyCreate) SetNillablePoolID(v *int64) *ProxyCreate {
+	if v != nil {
+		_c.SetPoolID(*v)
+	}
+	return _c
+}
+
 // AddAccountIDs adds the "accounts" edge to the Account entity by IDs.
 func (_c *ProxyCreate) AddAccountIDs(ids ...int64) *ProxyCreate {
 	_c.mutation.AddAccountIDs(ids...)
@@ -488,6 +502,10 @@ func (_c *ProxyCreate) createSpec() (*Proxy, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Options(); ok {
 		_spec.SetField(proxy.FieldOptions, field.TypeJSON, value)
 		_node.Options = value
+	}
+	if value, ok := _c.mutation.PoolID(); ok {
+		_spec.SetField(proxy.FieldPoolID, field.TypeInt64, value)
+		_node.PoolID = &value
 	}
 	if nodes := _c.mutation.AccountsIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -842,6 +860,30 @@ func (u *ProxyUpsert) ClearOptions() *ProxyUpsert {
 	return u
 }
 
+// SetPoolID sets the "pool_id" field.
+func (u *ProxyUpsert) SetPoolID(v int64) *ProxyUpsert {
+	u.Set(proxy.FieldPoolID, v)
+	return u
+}
+
+// UpdatePoolID sets the "pool_id" field to the value that was provided on create.
+func (u *ProxyUpsert) UpdatePoolID() *ProxyUpsert {
+	u.SetExcluded(proxy.FieldPoolID)
+	return u
+}
+
+// AddPoolID adds v to the "pool_id" field.
+func (u *ProxyUpsert) AddPoolID(v int64) *ProxyUpsert {
+	u.Add(proxy.FieldPoolID, v)
+	return u
+}
+
+// ClearPoolID clears the value of the "pool_id" field.
+func (u *ProxyUpsert) ClearPoolID() *ProxyUpsert {
+	u.SetNull(proxy.FieldPoolID)
+	return u
+}
+
 // UpdateNewValues updates the mutable fields using the new values that were set on create.
 // Using this option is equivalent to using:
 //
@@ -1178,6 +1220,34 @@ func (u *ProxyUpsertOne) UpdateOptions() *ProxyUpsertOne {
 func (u *ProxyUpsertOne) ClearOptions() *ProxyUpsertOne {
 	return u.Update(func(s *ProxyUpsert) {
 		s.ClearOptions()
+	})
+}
+
+// SetPoolID sets the "pool_id" field.
+func (u *ProxyUpsertOne) SetPoolID(v int64) *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.SetPoolID(v)
+	})
+}
+
+// AddPoolID adds v to the "pool_id" field.
+func (u *ProxyUpsertOne) AddPoolID(v int64) *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.AddPoolID(v)
+	})
+}
+
+// UpdatePoolID sets the "pool_id" field to the value that was provided on create.
+func (u *ProxyUpsertOne) UpdatePoolID() *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.UpdatePoolID()
+	})
+}
+
+// ClearPoolID clears the value of the "pool_id" field.
+func (u *ProxyUpsertOne) ClearPoolID() *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.ClearPoolID()
 	})
 }
 
@@ -1683,6 +1753,34 @@ func (u *ProxyUpsertBulk) UpdateOptions() *ProxyUpsertBulk {
 func (u *ProxyUpsertBulk) ClearOptions() *ProxyUpsertBulk {
 	return u.Update(func(s *ProxyUpsert) {
 		s.ClearOptions()
+	})
+}
+
+// SetPoolID sets the "pool_id" field.
+func (u *ProxyUpsertBulk) SetPoolID(v int64) *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.SetPoolID(v)
+	})
+}
+
+// AddPoolID adds v to the "pool_id" field.
+func (u *ProxyUpsertBulk) AddPoolID(v int64) *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.AddPoolID(v)
+	})
+}
+
+// UpdatePoolID sets the "pool_id" field to the value that was provided on create.
+func (u *ProxyUpsertBulk) UpdatePoolID() *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.UpdatePoolID()
+	})
+}
+
+// ClearPoolID clears the value of the "pool_id" field.
+func (u *ProxyUpsertBulk) ClearPoolID() *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.ClearPoolID()
 	})
 }
 

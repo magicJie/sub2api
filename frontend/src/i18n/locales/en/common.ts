@@ -184,6 +184,7 @@ export default {
     accounts: 'Accounts',
     plugins: 'Plugins',
     proxies: 'Proxies',
+    proxyPools: 'Proxy Pools', // 代理池（fork）
     redeemCodes: 'Redeem Codes',
     ops: 'Ops',
     promoCodes: 'Promo Codes',

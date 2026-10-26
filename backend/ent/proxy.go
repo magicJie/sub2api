@@ -52,6 +52,8 @@ type Proxy struct {
 	UpstreamProxyID *int64 `json:"upstream_proxy_id,omitempty"`
 	// Protocol/transport options for ss/vmess/vless/trojan (cipher, network, security, sni ...).
 	Options map[string]string `json:"options,omitempty"`
+	// Proxy pool id (proxy_pools, app-level checked). NULL is treated as the default pool.
+	PoolID *int64 `json:"pool_id,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the ProxyQuery when eager-loading is set.
 	Edges        ProxyEdges `json:"edges"`
@@ -107,7 +109,7 @@ func (*Proxy) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case proxy.FieldOptions:
 			values[i] = new([]byte)
-		case proxy.FieldID, proxy.FieldPort, proxy.FieldBackupProxyID, proxy.FieldExpiryWarnDays, proxy.FieldUpstreamProxyID:
+		case proxy.FieldID, proxy.FieldPort, proxy.FieldBackupProxyID, proxy.FieldExpiryWarnDays, proxy.FieldUpstreamProxyID, proxy.FieldPoolID:
 			values[i] = new(sql.NullInt64)
 		case proxy.FieldName, proxy.FieldProtocol, proxy.FieldHost, proxy.FieldUsername, proxy.FieldPassword, proxy.FieldStatus, proxy.FieldFallbackMode, proxy.FieldUpstreamMode:
 			values[i] = new(sql.NullString)
@@ -244,6 +246,13 @@ func (_m *Proxy) assignValues(columns []string, values []any) error {
 					return fmt.Errorf("unmarshal field options: %w", err)
 				}
 			}
+		case proxy.FieldPoolID:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field pool_id", values[i])
+			} else if value.Valid {
+				_m.PoolID = new(int64)
+				*_m.PoolID = value.Int64
+			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
 		}
@@ -357,6 +366,11 @@ func (_m *Proxy) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("options=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Options))
+	builder.WriteString(", ")
+	if v := _m.PoolID; v != nil {
+		builder.WriteString("pool_id=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
 	builder.WriteByte(')')
 	return builder.String()
 }

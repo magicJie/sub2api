@@ -1007,6 +1007,8 @@ export interface Proxy {
   chain?: ProxyChainHop[]
   /** 链路无法解析时的错误（前置代理缺失/停用、成环、过深） */
   chain_error?: string
+  /** 代理池（fork）：所属代理池，null 为默认池 */
+  pool_id?: number | null
   created_at: string
   updated_at: string
 }
@@ -1633,6 +1635,8 @@ export interface CreateAccountRequest {
   credentials: Record<string, unknown>
   extra?: Record<string, unknown>
   proxy_id?: number | null
+  /** 代理池（fork）：从该代理池分配代理并锁定 */
+  proxy_pool_id?: number | null
   concurrency?: number
   load_factor?: number | null
   priority?: number
@@ -1708,6 +1712,7 @@ export interface CreateProxyRequest {
   upstream_mode?: ProxyUpstreamMode
   upstream_proxy_id?: number | null
   options?: Record<string, string>
+  pool_id?: number | null // 代理池（fork）
 }
 
 export interface UpdateProxyRequest {
@@ -1725,6 +1730,7 @@ export interface UpdateProxyRequest {
   upstream_mode?: ProxyUpstreamMode
   upstream_proxy_id?: number | null
   options?: Record<string, string>
+  pool_id?: number | null // 代理池（fork）
 }
 
 export interface AdminDataPayload {
@@ -1786,6 +1792,7 @@ export interface CodexSessionImportRequest {
   notes?: string | null
   group_ids?: number[]
   proxy_id?: number | null
+  proxy_pool_id?: number | null // 代理池（fork）
   concurrency?: number
   priority?: number
   rate_multiplier?: number
@@ -1805,6 +1812,7 @@ export interface OpenAICodexPATCreateRequest {
   notes?: string | null
   group_ids?: number[]
   proxy_id?: number | null
+  proxy_pool_id?: number | null // 代理池（fork）
   concurrency?: number
   priority?: number
   rate_multiplier?: number

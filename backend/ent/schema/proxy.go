@@ -74,6 +74,10 @@ func (Proxy) Fields() []ent.Field {
 		field.JSON("options", map[string]string{}).
 			Optional().
 			Comment("Protocol/transport options for ss/vmess/vless/trojan (cipher, network, security, sni ...)."),
+		// 代理池（fork）：所属代理池分组，见 internal/service/proxy_pool.go。
+		field.Int64("pool_id").
+			Optional().Nillable().
+			Comment("Proxy pool id (proxy_pools, app-level checked). NULL is treated as the default pool."),
 	}
 }
 
@@ -99,5 +103,6 @@ func (Proxy) Indexes() []ent.Index {
 		index.Fields("deleted_at"),
 		index.Fields("expires_at"),
 		index.Fields("backup_proxy_id"),
+		index.Fields("pool_id"),
 	}
 }

@@ -103,6 +103,18 @@ cd backend && go build ./... && go test -tags=unit ./...
 - 上游文件挂钩：`git grep -n '链式代理（fork）' -- backend`（`service/proxy.go`、`admin_proxy.go`、`admin_service.go`、`wire.go`，`repository/proxy_repo.go`，`handler/admin/{proxy_handler,proxy_data,account_data}.go`，`handler/{handler,wire}.go`，`dto/{types,mappers}.go`，`routes/admin.go`）。
 - Xray 版本固定在 v1.260206.0：更新的版本会把 `refraction-networking/utls` 升到预发布版，影响上游 TLS 指纹功能。
 
+## 代理池（fork）
+
+代理按代理池分组；创建账号时可指定代理池，从池中分配代理并锁定到账号；账号与代理的绑定全部留痕，用于按平台限制每个代理的账号数（代理退役）。
+
+- 逻辑：`service/proxy_pool.go`、`repository/proxy_pool_repo.go`、`handler/admin/proxy_pool_handler.go`、`server/routes/proxy_pool.go`；前端 `frontend/src/proxyPool/`（管理弹窗由代理页“代理池”按钮打开）。
+- 迁移 `248_proxy_pools.sql`：`proxy_pools`（含唯一的默认池 `default`）、`proxies.pool_id`（NULL 即默认池，删池时回到默认池）、`proxy_account_bindings`，以及 `accounts` 上的触发器 `trg_accounts_proxy_binding`。触发器在 `proxy_id` 变化或账号软删除时写绑定记录，所以任何改代理的路径（手动、过期回退、CRS 同步）都会被记录；spark 影子账号不计。上游占用同号迁移时同样改名为更大编号。
+- 平台上限配置在代理池上（`platform_limits`，如 `{"kiro": 5}`），按**历史累计**计数：一个代理被该平台多少个不同账号绑定过（含已解绑、已删除）。达到上限即对该平台退役，不再分配。未配置的平台不限。
+- 分配策略：池内 active、未过期、未退役的代理里，选该平台历史计数最少的，同数取 id 小的。挑选到落库在进程内串行（`ProxyPoolService.mu`），多实例同时建号仍可能超出上限 1 个。
+- 锁定：从池中分配的绑定 `locked=true`，管理端单个/批量编辑改代理会被拒绝（`ACCOUNT_PROXY_LOCKED`），需先调 `POST /admin/accounts/:id/proxy-unbind` 解锁（代理不变，历史仍计数）。系统改投（过期回退）沿用原锁定。手动直接选代理的账号不锁定，行为与上游一致。
+- OAuth 建号：前端选池后先调 `GET /admin/proxy-pools/:id/preview?platform=` 取将分配的代理，用它完成授权并作为 `proxy_id` 随 `proxy_pool_id` 提交；建号时若该代理已不可用则改分配池内其他代理。
+- 上游文件挂钩：`git grep -n '代理池（fork）' -- backend frontend/src`。
+
 ## 未移植 / 待办
 
 - 前端：旧 fork 的分组级 cache emulation 设置（已改为账号级）、用量页 Kiro 会话指纹列未移植（依赖未移植的后端表结构）。

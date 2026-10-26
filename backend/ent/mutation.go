@@ -37529,6 +37529,8 @@ type ProxyMutation struct {
 	upstream_proxy_id      *int64
 	addupstream_proxy_id   *int64
 	options                *map[string]string
+	pool_id                *int64
+	addpool_id             *int64
 	clearedFields          map[string]struct{}
 	accounts               map[int64]struct{}
 	removedaccounts        map[int64]struct{}
@@ -38405,6 +38407,76 @@ func (m *ProxyMutation) ResetOptions() {
 	delete(m.clearedFields, proxy.FieldOptions)
 }
 
+// SetPoolID sets the "pool_id" field.
+func (m *ProxyMutation) SetPoolID(i int64) {
+	m.pool_id = &i
+	m.addpool_id = nil
+}
+
+// PoolID returns the value of the "pool_id" field in the mutation.
+func (m *ProxyMutation) PoolID() (r int64, exists bool) {
+	v := m.pool_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPoolID returns the old "pool_id" field's value of the Proxy entity.
+// If the Proxy object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProxyMutation) OldPoolID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPoolID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPoolID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPoolID: %w", err)
+	}
+	return oldValue.PoolID, nil
+}
+
+// AddPoolID adds i to the "pool_id" field.
+func (m *ProxyMutation) AddPoolID(i int64) {
+	if m.addpool_id != nil {
+		*m.addpool_id += i
+	} else {
+		m.addpool_id = &i
+	}
+}
+
+// AddedPoolID returns the value that was added to the "pool_id" field in this mutation.
+func (m *ProxyMutation) AddedPoolID() (r int64, exists bool) {
+	v := m.addpool_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearPoolID clears the value of the "pool_id" field.
+func (m *ProxyMutation) ClearPoolID() {
+	m.pool_id = nil
+	m.addpool_id = nil
+	m.clearedFields[proxy.FieldPoolID] = struct{}{}
+}
+
+// PoolIDCleared returns if the "pool_id" field was cleared in this mutation.
+func (m *ProxyMutation) PoolIDCleared() bool {
+	_, ok := m.clearedFields[proxy.FieldPoolID]
+	return ok
+}
+
+// ResetPoolID resets all changes to the "pool_id" field.
+func (m *ProxyMutation) ResetPoolID() {
+	m.pool_id = nil
+	m.addpool_id = nil
+	delete(m.clearedFields, proxy.FieldPoolID)
+}
+
 // AddAccountIDs adds the "accounts" edge to the Account entity by ids.
 func (m *ProxyMutation) AddAccountIDs(ids ...int64) {
 	if m.accounts == nil {
@@ -38574,7 +38646,7 @@ func (m *ProxyMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ProxyMutation) Fields() []string {
-	fields := make([]string, 0, 17)
+	fields := make([]string, 0, 18)
 	if m.created_at != nil {
 		fields = append(fields, proxy.FieldCreatedAt)
 	}
@@ -38626,6 +38698,9 @@ func (m *ProxyMutation) Fields() []string {
 	if m.options != nil {
 		fields = append(fields, proxy.FieldOptions)
 	}
+	if m.pool_id != nil {
+		fields = append(fields, proxy.FieldPoolID)
+	}
 	return fields
 }
 
@@ -38668,6 +38743,8 @@ func (m *ProxyMutation) Field(name string) (ent.Value, bool) {
 		return m.UpstreamProxyID()
 	case proxy.FieldOptions:
 		return m.Options()
+	case proxy.FieldPoolID:
+		return m.PoolID()
 	}
 	return nil, false
 }
@@ -38711,6 +38788,8 @@ func (m *ProxyMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldUpstreamProxyID(ctx)
 	case proxy.FieldOptions:
 		return m.OldOptions(ctx)
+	case proxy.FieldPoolID:
+		return m.OldPoolID(ctx)
 	}
 	return nil, fmt.Errorf("unknown Proxy field %s", name)
 }
@@ -38839,6 +38918,13 @@ func (m *ProxyMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetOptions(v)
 		return nil
+	case proxy.FieldPoolID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPoolID(v)
+		return nil
 	}
 	return fmt.Errorf("unknown Proxy field %s", name)
 }
@@ -38856,6 +38942,9 @@ func (m *ProxyMutation) AddedFields() []string {
 	if m.addupstream_proxy_id != nil {
 		fields = append(fields, proxy.FieldUpstreamProxyID)
 	}
+	if m.addpool_id != nil {
+		fields = append(fields, proxy.FieldPoolID)
+	}
 	return fields
 }
 
@@ -38870,6 +38959,8 @@ func (m *ProxyMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedExpiryWarnDays()
 	case proxy.FieldUpstreamProxyID:
 		return m.AddedUpstreamProxyID()
+	case proxy.FieldPoolID:
+		return m.AddedPoolID()
 	}
 	return nil, false
 }
@@ -38900,6 +38991,13 @@ func (m *ProxyMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddUpstreamProxyID(v)
 		return nil
+	case proxy.FieldPoolID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddPoolID(v)
+		return nil
 	}
 	return fmt.Errorf("unknown Proxy numeric field %s", name)
 }
@@ -38928,6 +39026,9 @@ func (m *ProxyMutation) ClearedFields() []string {
 	}
 	if m.FieldCleared(proxy.FieldOptions) {
 		fields = append(fields, proxy.FieldOptions)
+	}
+	if m.FieldCleared(proxy.FieldPoolID) {
+		fields = append(fields, proxy.FieldPoolID)
 	}
 	return fields
 }
@@ -38963,6 +39064,9 @@ func (m *ProxyMutation) ClearField(name string) error {
 		return nil
 	case proxy.FieldOptions:
 		m.ClearOptions()
+		return nil
+	case proxy.FieldPoolID:
+		m.ClearPoolID()
 		return nil
 	}
 	return fmt.Errorf("unknown Proxy nullable field %s", name)
@@ -39022,6 +39126,9 @@ func (m *ProxyMutation) ResetField(name string) error {
 		return nil
 	case proxy.FieldOptions:
 		m.ResetOptions()
+		return nil
+	case proxy.FieldPoolID:
+		m.ResetPoolID()
 		return nil
 	}
 	return fmt.Errorf("unknown Proxy field %s", name)

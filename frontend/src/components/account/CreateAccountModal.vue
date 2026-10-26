@@ -3329,7 +3329,18 @@
           <label class="input-label mb-0">{{ t('admin.accounts.proxy') }}</label>
           <ProxyAdBanner />
         </div>
-        <ProxySelector v-model="form.proxy_id" :proxies="proxies" />
+        <!-- 代理池（fork）：选了代理池时代理由池分配并锁定 -->
+        <Select v-model="form.proxy_pool_id" :options="accountPoolOptions" class="mb-2" />
+        <p v-if="form.proxy_pool_id" class="input-hint">
+          {{ t('admin.proxyPools.poolHint') }}
+          <span v-if="proxyPoolPreview" class="font-medium text-gray-700 dark:text-gray-200">
+            {{ t('admin.proxyPools.poolPreview', { name: proxyPoolPreview.name }) }}
+          </span>
+          <span v-if="proxyPoolPreviewError" class="text-red-600 dark:text-red-400">
+            {{ t('admin.proxyPools.poolPreviewFailed', { error: proxyPoolPreviewError }) }}
+          </span>
+        </p>
+        <ProxySelector v-else v-model="form.proxy_id" :proxies="proxies" />
       </div>
 
       <UpstreamRequestIdHeaderField
@@ -4302,6 +4313,9 @@ import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
 import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
+import proxyPoolAPI from '@/proxyPool/api' // 代理池（fork）
+import { extractI18nErrorMessage } from '@/utils/apiError'
+import { useProxyPoolOptions } from '@/proxyPool/useProxyPools'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
 import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
@@ -5185,6 +5199,7 @@ const form = reactive({
   type: 'oauth' as AccountType, // Will be 'oauth', 'setup-token', or 'apikey'
   credentials: {} as Record<string, unknown>,
   proxy_id: null as number | null,
+  proxy_pool_id: null as number | null, // 代理池（fork）
   concurrency: 10,
   load_factor: null as number | null,
   priority: 1,
@@ -5243,10 +5258,39 @@ const canExchangeCode = computed(() => {
 })
 
 // Watchers
+// 代理池（fork）：选中代理池后预览将分配的代理并写入 form.proxy_id，OAuth 授权与建号使用同一出口。
+const { loadPools: loadProxyPools, accountPoolOptions } = useProxyPoolOptions()
+const proxyPoolPreview = ref<Proxy | null>(null)
+const proxyPoolPreviewError = ref('')
+const refreshProxyPoolPreview = async () => {
+  proxyPoolPreview.value = null
+  proxyPoolPreviewError.value = ''
+  const poolId = form.proxy_pool_id
+  if (!poolId) return
+  try {
+    const proxy = await proxyPoolAPI.previewProxy(poolId, form.platform)
+    if (form.proxy_pool_id !== poolId) return
+    proxyPoolPreview.value = proxy
+    form.proxy_id = proxy.id
+  } catch (error) {
+    if (form.proxy_pool_id !== poolId) return
+    form.proxy_id = null
+    proxyPoolPreviewError.value = extractI18nErrorMessage(error, t, 'admin.proxyPools.errors', '')
+  }
+}
+watch(
+  () => [form.proxy_pool_id, form.platform] as const,
+  ([poolId], [prevPoolId]) => {
+    if (!poolId && prevPoolId) form.proxy_id = null
+    void refreshProxyPoolPreview()
+  }
+)
+
 watch(
   () => props.show,
   (newVal) => {
     if (newVal) {
+      void loadProxyPools() // 代理池（fork）
       // Load TLS fingerprint profiles
       adminAPI.tlsFingerprintProfiles.list()
         .then(profiles => { tlsFingerprintProfiles.value = profiles.map(p => ({ id: p.id, name: p.name })) })
@@ -5797,6 +5841,9 @@ const resetForm = () => {
   form.type = 'oauth'
   form.credentials = {}
   form.proxy_id = null
+  form.proxy_pool_id = null // 代理池（fork）
+  proxyPoolPreview.value = null
+  proxyPoolPreviewError.value = ''
   form.concurrency = 10
   form.load_factor = null
   form.priority = 1
@@ -6562,6 +6609,7 @@ const createAccountAndFinish = async (
     credentials,
     extra: finalExtra,
     proxy_id: form.proxy_id,
+    proxy_pool_id: form.proxy_pool_id, // 代理池（fork）
     concurrency: form.concurrency,
     load_factor: form.load_factor ?? undefined,
     priority: form.priority,
@@ -6629,6 +6677,7 @@ const handleGrokValidateRT = async (refreshTokenInput: string) => {
           credentials,
           extra: withUpstreamRequestIdHeader(extra),
           proxy_id: form.proxy_id,
+          proxy_pool_id: form.proxy_pool_id, // 代理池（fork）
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,
           priority: form.priority,
@@ -6695,6 +6744,7 @@ const handleGrokImportSSO = async (ssoInput: string) => {
       name: form.name || undefined,
       notes: form.notes || undefined,
       proxy_id: form.proxy_id,
+      proxy_pool_id: form.proxy_pool_id, // 代理池（fork）
       group_ids: form.group_ids,
       credentials,
       concurrency: form.concurrency,
@@ -6806,6 +6856,7 @@ const handleGrokAuthorizePassword = async (emailPasswordInput: string) => {
           credentials,
           extra: withUpstreamRequestIdHeader(extra),
           proxy_id: form.proxy_id,
+          proxy_pool_id: form.proxy_pool_id, // 代理池（fork）
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,
           priority: form.priority,
@@ -6905,6 +6956,7 @@ const handleOpenAIExchange = async (authCode: string) => {
         credentials,
         extra: withUpstreamRequestIdHeader(extra),
         proxy_id: form.proxy_id,
+        proxy_pool_id: form.proxy_pool_id, // 代理池（fork）
         concurrency: form.concurrency,
         load_factor: form.load_factor ?? undefined,
         priority: form.priority,
@@ -7010,6 +7062,7 @@ const handleOpenAIImportCodexSession = async (content: string) => {
       name: form.name,
       notes: form.notes || null,
       proxy_id: form.proxy_id,
+      proxy_pool_id: form.proxy_pool_id, // 代理池（fork）
       concurrency: form.concurrency,
       load_factor: form.load_factor ?? undefined,
       priority: form.priority,
@@ -7088,6 +7141,7 @@ const handleOpenAIImportCodexPAT = async (accessToken: string) => {
       name: form.name,
       notes: form.notes || null,
       proxy_id: form.proxy_id,
+      proxy_pool_id: form.proxy_pool_id, // 代理池（fork）
       concurrency: form.concurrency,
       load_factor: form.load_factor ?? undefined,
       priority: form.priority,
@@ -7186,6 +7240,7 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
             credentials,
             extra: withUpstreamRequestIdHeader(extra),
             proxy_id: form.proxy_id,
+            proxy_pool_id: form.proxy_pool_id, // 代理池（fork）
             concurrency: form.concurrency,
             load_factor: form.load_factor ?? undefined,
             priority: form.priority,
@@ -7285,6 +7340,7 @@ const handleAntigravityValidateRT = async (refreshTokenInput: string) => {
           credentials,
           extra: withUpstreamRequestIdHeader({}),
           proxy_id: form.proxy_id,
+          proxy_pool_id: form.proxy_pool_id, // 代理池（fork）
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,
           priority: form.priority,
@@ -7724,6 +7780,7 @@ const handleCookieAuth = async (sessionKey: string) => {
           credentials,
           extra: withUpstreamRequestIdHeader(extra),
           proxy_id: form.proxy_id,
+          proxy_pool_id: form.proxy_pool_id, // 代理池（fork）
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,
           priority: form.priority,
