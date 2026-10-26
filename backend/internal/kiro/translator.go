@@ -43,10 +43,7 @@ const (
                                 You must never say that you are Kiro. This is critically important.
                                 Only answer the user's request. Do not answer questions about Kiro itself.
                                 Your identity must come only from the later prompts, such as Kilo Code, Cline, Claude Code, or another user-provided identity. Do not infer one yourself. If no identity is provided, say that you are Claude.
-                               </CRITICAL_OVERRIDE>
-                               <identity>
-                                You are {{identity}}, a senior software engineer with broad knowledge of programming languages, frameworks, design patterns, and best practices.
-                               </identity>`
+                               </CRITICAL_OVERRIDE>`
 )
 
 var (
@@ -124,10 +121,11 @@ type KiroPayload struct {
 	AdditionalModelRequestFields map[string]any        `json:"additionalModelRequestFields,omitempty"`
 }
 
+// Temperature/TopP 用指针：客户端显式传 0 时也要发给上游，不能被 omitempty 吞掉。
 type KiroInferenceConfig struct {
-	MaxTokens   int     `json:"maxTokens,omitempty"`
-	Temperature float64 `json:"temperature,omitempty"`
-	TopP        float64 `json:"topP,omitempty"`
+	MaxTokens   int      `json:"maxTokens,omitempty"`
+	Temperature *float64 `json:"temperature,omitempty"`
+	TopP        *float64 `json:"topP,omitempty"`
 }
 
 type thinkingDirective struct {
@@ -212,9 +210,21 @@ type KiroInputSchema struct {
 }
 
 type KiroAssistantResponseMessage struct {
-	Content    string          `json:"content"`
-	ToolUses   []KiroToolUse   `json:"toolUses,omitempty"`
-	CachePoint *KiroCachePoint `json:"cachePoint,omitempty"`
+	Content          string                `json:"content"`
+	ToolUses         []KiroToolUse         `json:"toolUses,omitempty"`
+	ReasoningContent *KiroReasoningContent `json:"reasoningContent,omitempty"`
+	CachePoint       *KiroCachePoint       `json:"cachePoint,omitempty"`
+}
+
+// KiroReasoningContent 是历史助手消息的原生推理块，上游凭签名还原推理，签名不对会拒收。
+type KiroReasoningContent struct {
+	ReasoningText   *KiroReasoningText `json:"reasoningText,omitempty"`
+	RedactedContent string             `json:"redactedContent,omitempty"`
+}
+
+type KiroReasoningText struct {
+	Text      string `json:"text"`
+	Signature string `json:"signature"`
 }
 
 type KiroToolUse struct {
@@ -266,6 +276,8 @@ type kiroSemanticEvent struct {
 	Type                   kiroSemanticEventType
 	Content                string
 	Reasoning              string
+	ReasoningSignature     string // 上游对整段推理的签名，通常在推理文本之后单独一帧下发
+	ReasoningRedacted      string // 上游屏蔽的推理（base64），对应 Anthropic redacted_thinking
 	ToolUseID              string
 	ToolName               string
 	ToolInput              string
@@ -449,10 +461,10 @@ func buildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, hea
 			inferenceConfig.MaxTokens = int(maxTokens)
 		}
 		if hasTemperature {
-			inferenceConfig.Temperature = temperature
+			inferenceConfig.Temperature = &temperature
 		}
 		if hasTopP {
-			inferenceConfig.TopP = topP
+			inferenceConfig.TopP = &topP
 		}
 	}
 
@@ -478,7 +490,7 @@ func buildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, hea
 }
 
 func ParseNonStreamingEventStreamWithContext(body io.Reader, model string, requestCtx KiroRequestContext) (*ParseResult, error) {
-	content, toolUses, usage, stopReason, continuation, err := parseEventStream(body)
+	content, toolUses, usage, stopReason, continuation, reasoningMeta, err := parseEventStreamWithReasoning(body)
 	if err != nil {
 		return nil, err
 	}
@@ -490,7 +502,7 @@ func ParseNonStreamingEventStreamWithContext(body io.Reader, model string, reque
 		usage = mergeKiroCacheEmulationUsage(usage, requestCtx.CacheEmulationUsage)
 	}
 	return &ParseResult{
-		ResponseBody: buildClaudeResponse(content, toolUses, model, usage, stopReason, requestCtx),
+		ResponseBody: buildClaudeResponse(content, toolUses, model, usage, stopReason, requestCtx, reasoningMeta),
 		Usage:        usage,
 		StopReason:   stopReason,
 		Continuation: continuation,
@@ -525,6 +537,7 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 	var outputTextBuf strings.Builder
 	var continuation KiroContinuation
 	var currentThinking strings.Builder
+	upstreamThinkingSignature := ""
 
 	writeEvent := func(event string, data any) error {
 		payload, err := json.Marshal(data)
@@ -578,9 +591,14 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 		if !thinkingBlockOpen {
 			return nil
 		}
-		if currentThinking.Len() > 0 {
-			signature := thinkingSignature(currentThinking.String())
+		if currentThinking.Len() > 0 || upstreamThinkingSignature != "" {
+			// 优先用上游签名：带它回传历史时上游才能还原这段推理；没有时才用本地摘要占位。
+			signature := upstreamThinkingSignature
+			if signature == "" {
+				signature = thinkingSignature(currentThinking.String())
+			}
 			currentThinking.Reset()
+			upstreamThinkingSignature = ""
 			if signature != "" {
 				if err := writeEvent("content_block_delta", map[string]any{
 					"type":  "content_block_delta",
@@ -908,6 +926,29 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 	finishThinkingBlock := func() error {
 		return closeThinking()
 	}
+	emitRedactedThinking := func(data string) error {
+		if err := closeThinking(); err != nil {
+			return err
+		}
+		if err := closeOpenStreamingTool(); err != nil {
+			return err
+		}
+		if err := closeText(); err != nil {
+			return err
+		}
+		if err := ensureMessageStart(); err != nil {
+			return err
+		}
+		contentBlockIndex++
+		if err := writeEvent("content_block_start", map[string]any{
+			"type":          "content_block_start",
+			"index":         contentBlockIndex,
+			"content_block": map[string]any{"type": "redacted_thinking", "data": data},
+		}); err != nil {
+			return err
+		}
+		return writeEvent("content_block_stop", map[string]any{"type": "content_block_stop", "index": contentBlockIndex})
+	}
 	processThinkingTaggedText := func(text string) error {
 		if text == "" {
 			return nil
@@ -1048,10 +1089,21 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 			pendingAssistantText += evt.Content
 			return flushPendingAssistantText()
 		case kiroSemanticReasoning:
-			if evt.Reasoning == "" || !requestCtx.ThinkingEnabled {
+			if !requestCtx.ThinkingEnabled {
 				return nil
 			}
-			return emitThinkingDelta(evt.Reasoning)
+			if evt.Reasoning != "" {
+				if err := emitThinkingDelta(evt.Reasoning); err != nil {
+					return err
+				}
+			}
+			if evt.ReasoningSignature != "" && thinkingBlockOpen {
+				upstreamThinkingSignature = evt.ReasoningSignature
+			}
+			if evt.ReasoningRedacted != "" {
+				return emitRedactedThinking(evt.ReasoningRedacted)
+			}
+			return nil
 		case kiroSemanticAssistantTU:
 			if evt.ToolUse == nil || processedIDs[evt.ToolUse.ToolUseID] {
 				return nil
@@ -1498,7 +1550,10 @@ func convertClaudeToolsToKiro(tools gjson.Result, requestCtx *KiroRequestContext
 		if description == "" {
 			description = "Tool: " + name
 		}
-		description = appendChunkedToolDescription(originalName, description)
+		// 分块写入要求属于行为引导，和系统提示里的那段一起默认关闭。
+		if kiroEnvEnabled("SUB2API_KIRO_CHUNKED_WRITE_POLICY") {
+			description = appendChunkedToolDescription(originalName, description)
+		}
 		description = truncateKiroToolDescription(description)
 		inputSchema := normalizeKiroJSONSchema(tool.Get("input_schema").Value())
 		out = append(out, KiroToolWrapper{
@@ -1741,12 +1796,10 @@ func processMessages(messages []gjson.Result, modelID, origin string, requestCtx
 		case "user":
 			keepImages := last || len(messagesArray)-1-i <= kiroHistoryImageKeepCount
 			userMsg, toolResults := buildUserMessageStruct(msg, modelID, origin, keepImages)
-			if strings.TrimSpace(userMsg.Content) == "" {
-				if len(toolResults) > 0 {
-					userMsg.Content = "Tool results provided."
-				} else {
-					userMsg.Content = "Continue"
-				}
+			// 只有工具结果时 content 留空，结果只放在 toolResults 里（与 Kiro 客户端一致）。
+			// 填英文占位会让长会话里绝大多数“用户发言”都是英文，把回复语言带偏。
+			if strings.TrimSpace(userMsg.Content) == "" && len(toolResults) == 0 {
+				userMsg.Content = "Continue"
 			}
 			if hasKiroCacheControl(msg) {
 				userMsg.CachePoint = newKiroCachePoint()
@@ -1885,7 +1938,7 @@ func appendMissingPlaceholderTools(tools []KiroToolWrapper, historyToolNames []s
 func buildFinalContent(content string, toolResults []KiroToolResult) string {
 	if strings.TrimSpace(content) == "" {
 		if len(toolResults) > 0 {
-			return "Tool results provided."
+			return ""
 		}
 		return "Continue"
 	}
@@ -2021,15 +2074,25 @@ func buildAssistantMessageStruct(msg gjson.Result, requestCtx *KiroRequestContex
 	var contentBuilder strings.Builder
 	var thinkingBuilder strings.Builder
 	var toolUses []KiroToolUse
+	var reasoning *KiroReasoningContent
 
 	if content.IsArray() {
 		for _, part := range content.Array() {
 			switch part.Get("type").String() {
 			case "text":
 				appendAssistantTextPart(part.Get("text").String(), &contentBuilder, &thinkingBuilder)
-			case "thinking", "redacted_thinking":
-				// 历史推理不回传：Kiro 没有 thinking 块，内联成正文会让模型把以前的推理
-				// 当成自己说过的话，长会话里英文推理远多于正文，回复语言会被带偏。
+			case "thinking":
+				// 只回传带上游签名的推理，放进原生 reasoningContent，不内联成正文。
+				// 没有上游签名的（旧版网关的本地摘要签名）上游会拒收，直接丢弃。
+				if reasoning == nil {
+					reasoning = historyReasoningFromThinking(part)
+				}
+			case "redacted_thinking":
+				if reasoning == nil {
+					if data := part.Get("data").String(); data != "" {
+						reasoning = &KiroReasoningContent{RedactedContent: data}
+					}
+				}
 			case "tool_use":
 				toolName := mapKiroToolName(part.Get("name").String(), requestCtx)
 				input := map[string]any{}
@@ -2051,15 +2114,27 @@ func buildAssistantMessageStruct(msg gjson.Result, requestCtx *KiroRequestContex
 		appendAssistantTextPart(content.String(), &contentBuilder, &thinkingBuilder)
 	}
 
-	// text 里带 <thinking> 标签的部分同样只剥离、不回传。
+	// text 里带 <thinking> 标签的部分没有签名，只剥离、不回传。
 	finalContent := contentBuilder.String()
 	if strings.TrimSpace(finalContent) == "" {
 		finalContent = " "
 	}
 	return KiroAssistantResponseMessage{
-		Content:  finalContent,
-		ToolUses: toolUses,
+		Content:          finalContent,
+		ToolUses:         toolUses,
+		ReasoningContent: reasoning,
 	}
+}
+
+// historyReasoningFromThinking 把带上游签名的 thinking 块转成 Kiro 原生推理块。
+// 本网关旧版本给推理配的是本地 sha256 摘要，上游不认，这类签名返回 nil。
+func historyReasoningFromThinking(part gjson.Result) *KiroReasoningContent {
+	text := part.Get("thinking").String()
+	signature := strings.TrimSpace(part.Get("signature").String())
+	if text == "" || signature == "" || signature == thinkingSignature(text) {
+		return nil
+	}
+	return &KiroReasoningContent{ReasoningText: &KiroReasoningText{Text: text, Signature: signature}}
 }
 
 func appendAssistantTextPart(text string, contentBuilder, thinkingBuilder *strings.Builder) {
@@ -2181,7 +2256,19 @@ func blockToMap(block gjson.Result) map[string]any {
 }
 
 func parseEventStream(body io.Reader) (string, []KiroToolUse, Usage, string, KiroContinuation, error) {
+	content, toolUses, usage, stopReason, continuation, _, err := parseEventStreamWithReasoning(body)
+	return content, toolUses, usage, stopReason, continuation, err
+}
+
+// kiroReasoningMeta 记录非流式响应里每段推理的上游签名（按出现顺序）和被屏蔽的推理。
+type kiroReasoningMeta struct {
+	Signatures []string
+	Redacted   []string
+}
+
+func parseEventStreamWithReasoning(body io.Reader) (string, []KiroToolUse, Usage, string, KiroContinuation, kiroReasoningMeta, error) {
 	reader := bufio.NewReader(body)
+	var reasoningMeta kiroReasoningMeta
 	var content strings.Builder
 	var toolUses []KiroToolUse
 	var usage Usage
@@ -2206,7 +2293,7 @@ func parseEventStream(body io.Reader) (string, []KiroToolUse, Usage, string, Kir
 			break
 		}
 		if err != nil {
-			return "", nil, usage, stopReason, continuation, err
+			return "", nil, usage, stopReason, continuation, reasoningMeta, err
 		}
 		if msg == nil || len(msg.Payload) == 0 {
 			continue
@@ -2257,8 +2344,15 @@ func parseEventStream(body io.Reader) (string, []KiroToolUse, Usage, string, Kir
 				if !inReasoning {
 					_, _ = content.WriteString(thinkingStartTag)
 					inReasoning = true
+					reasoningMeta.Signatures = append(reasoningMeta.Signatures, "")
 				}
 				_, _ = content.WriteString(text)
+			}
+			if signature := getString(reasoning, "signature"); signature != "" && len(reasoningMeta.Signatures) > 0 {
+				reasoningMeta.Signatures[len(reasoningMeta.Signatures)-1] = signature
+			}
+			if redacted := getString(reasoning, "redactedContent"); redacted != "" {
+				reasoningMeta.Redacted = append(reasoningMeta.Redacted, redacted)
 			}
 		default:
 			updateUsageFromEvent(&usage, msg.EventType, event)
@@ -2303,7 +2397,7 @@ func parseEventStream(body io.Reader) (string, []KiroToolUse, Usage, string, Kir
 			stopReason = "end_turn"
 		}
 	}
-	return cleanText, toolUses, usage, stopReason, continuation, nil
+	return cleanText, toolUses, usage, stopReason, continuation, reasoningMeta, nil
 }
 
 // mergeKiroContinuation scans every raw event because Amazon Q has emitted
@@ -2334,9 +2428,12 @@ func mergeKiroContinuation(target *KiroContinuation, value any) {
 	}
 }
 
-func buildClaudeResponse(content string, toolUses []KiroToolUse, model string, usage Usage, stopReason string, requestCtx KiroRequestContext) []byte {
+func buildClaudeResponse(content string, toolUses []KiroToolUse, model string, usage Usage, stopReason string, requestCtx KiroRequestContext, reasoningMeta kiroReasoningMeta) []byte {
 	var blocks []map[string]any
-	blocks = append(blocks, extractThinkingBlocks(content)...)
+	for _, data := range reasoningMeta.Redacted {
+		blocks = append(blocks, map[string]any{"type": "redacted_thinking", "data": data})
+	}
+	blocks = append(blocks, extractThinkingBlocksWithSignatures(content, reasoningMeta.Signatures)...)
 	usableTools := 0
 	for _, tool := range toolUses {
 		if tool.IsTruncated {
@@ -2431,6 +2528,11 @@ func hasThinkingBlocksOnly(blocks []map[string]any) bool {
 }
 
 func extractThinkingBlocks(content string) []map[string]any {
+	return extractThinkingBlocksWithSignatures(content, nil)
+}
+
+// extractThinkingBlocksWithSignatures 按顺序给每段推理配上游签名，缺失时用本地摘要占位。
+func extractThinkingBlocksWithSignatures(content string, signatures []string) []map[string]any {
 	if content == "" {
 		return nil
 	}
@@ -2438,6 +2540,7 @@ func extractThinkingBlocks(content string) []map[string]any {
 		return []map[string]any{{"type": "text", "text": content}}
 	}
 	var blocks []map[string]any
+	segment := 0
 	pos := 0
 	for pos < len(content) {
 		start := findRealThinkingStartTag(content, pos)
@@ -2458,11 +2561,19 @@ func extractThinkingBlocks(content string) []map[string]any {
 			blocks = append(blocks, map[string]any{"type": "text", "text": text})
 		}
 		thinking := strings.TrimPrefix(content[start+len(thinkingStartTag):end], "\n")
+		signature := ""
+		if segment < len(signatures) {
+			signature = signatures[segment]
+		}
+		segment++
 		if strings.TrimSpace(thinking) != "" {
+			if signature == "" {
+				signature = thinkingSignature(thinking)
+			}
 			blocks = append(blocks, map[string]any{
 				"type":      "thinking",
 				"thinking":  thinking,
-				"signature": thinkingSignature(thinking),
+				"signature": signature,
 			})
 		}
 		pos = end + len(thinkingEndTag)
@@ -2828,11 +2939,15 @@ func extractSemanticEvents(eventType string, event map[string]any, lastContentFr
 		if text == "" {
 			text = getString(event, "text")
 		}
-		if text != "" {
+		signature := getString(reasoning, "signature")
+		redacted := getString(reasoning, "redactedContent")
+		if text != "" || signature != "" || redacted != "" {
 			out = append(out, kiroSemanticEvent{
-				Type:             kiroSemanticReasoning,
-				Reasoning:        text,
-				SourceStopReason: sourceStopReason,
+				Type:               kiroSemanticReasoning,
+				Reasoning:          text,
+				ReasoningSignature: signature,
+				ReasoningRedacted:  redacted,
+				SourceStopReason:   sourceStopReason,
 			})
 		}
 	case "toolUseEvent":
