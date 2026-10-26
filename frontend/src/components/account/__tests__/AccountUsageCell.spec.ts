@@ -539,6 +539,37 @@ describe('AccountUsageCell', () => {
     }])
   })
 
+  it('Kiro OAuth 主额度会透传窗口统计并按使用率推算总价值', async () => {
+    getUsage.mockResolvedValue({
+      kiro_reset_at: '2026-11-01T00:00:00Z',
+      kiro_credit: {
+        current_usage: 500,
+        usage_limit: 2000,
+        percentage_used: 25,
+        window_stats: { requests: 120, tokens: 4500000, cost: 30, standard_cost: 30, user_cost: 36 }
+      }
+    })
+
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({ id: 1004, platform: 'kiro', type: 'oauth' })
+      },
+      global: {
+        stubs: {
+          UsageProgressBar: {
+            props: ['label', 'windowStats', 'estimatedTotalCost'],
+            template: '<div class="usage-bar">{{ label }}|{{ windowStats?.requests }}|{{ estimatedTotalCost }}</div>'
+          },
+          AccountQuotaInfo: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('admin.accounts.usageWindow.kiroCredit|120|120')
+  })
+
 
   it('OpenAI OAuth 快照已过期时首屏会重新请求 usage', async () => {
     getUsage.mockResolvedValue({

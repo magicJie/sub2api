@@ -7,6 +7,7 @@ package service
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -37,6 +38,8 @@ type KiroCreditProgress struct {
 	PercentageUsed float64    `json:"percentage_used"`
 	DaysRemaining  int        `json:"days_remaining,omitempty"`
 	ExpiryDate     *time.Time `json:"expiry_date,omitempty"`
+	// WindowStats 为本地 usage_logs 在当前账期内的请求/token/费用统计（仅主额度填充）。
+	WindowStats *WindowStats `json:"window_stats,omitempty"`
 }
 
 // KiroOverageInfo 表示 Kiro 账号的 overage 状态。
@@ -143,8 +146,36 @@ func (s *AccountUsageService) getKiroUsageForAccount(ctx context.Context, accoun
 	usage, err := s.getKiroUsage(ctx, account, "active", forceProbe)
 	if err == nil {
 		s.tryClearRecoverableAccountError(ctx, account)
+		s.attachKiroCreditWindowStats(ctx, account, usage, time.Now())
 	}
 	return usage, err
+}
+
+// attachKiroCreditWindowStats 为 Kiro 主额度附加当前账期内的本地用量统计，
+// 账期起点取 kiro_reset_at 往前一个月；重置时间未知时退化为最近 30 天。
+func (s *AccountUsageService) attachKiroCreditWindowStats(ctx context.Context, account *Account, usage *UsageInfo, now time.Time) {
+	if s == nil || s.usageLogRepo == nil || account == nil || usage == nil || usage.KiroCredit == nil {
+		return
+	}
+	start := kiroCreditWindowStart(usage.KiroResetAt, now)
+	stats, err := s.usageLogRepo.GetAccountWindowStats(ctx, account.ID, start)
+	if err != nil {
+		slog.Warn("kiro_credit_window_stats_query_failed", "account_id", account.ID, "window_start", start, "error", err)
+		return
+	}
+	// cloneUsageInfo 是浅拷贝，复制一份 KiroCredit，避免把统计写进缓存快照。
+	credit := *usage.KiroCredit
+	credit.WindowStats = windowStatsFromAccountStats(stats)
+	usage.KiroCredit = &credit
+}
+
+func kiroCreditWindowStart(resetAt *time.Time, now time.Time) time.Time {
+	if resetAt != nil && resetAt.After(now) {
+		if start := resetAt.AddDate(0, -1, 0); !start.After(now) {
+			return start
+		}
+	}
+	return now.Add(-30 * 24 * time.Hour)
 }
 
 // isKiroRuntimeSchedulable 检查 Kiro 直连账号是否处于活跃冷却状态。
