@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/hopgroup"
@@ -37,9 +38,11 @@ import (
 // entries instead of mutating these, so dial and Status need no per-entry lock.
 type groupEntry struct {
 	proxy         C.Proxy
+	strategy      string
 	testURL       string
 	bridge        *proxychain.SOCKSBridge
 	providerNames []string
+	active        sync.Map // node name -> *atomic.Int64 open connections through this bridge
 }
 type providerState struct {
 	mu        sync.Mutex
@@ -166,7 +169,7 @@ func (m *Manager) Replace(ctx context.Context, groups []hopgroup.Group) error {
 	tunnel.OnRunning()
 	m.groups = make(map[int64]*groupEntry, len(groups))
 	for _, group := range groups {
-		entry := &groupEntry{proxy: cfg.Proxies[groupName(group.ID)], testURL: group.TestURL, providerNames: providerNames[group.ID]}
+		entry := &groupEntry{proxy: cfg.Proxies[groupName(group.ID)], strategy: group.Strategy, testURL: group.TestURL, providerNames: providerNames[group.ID]}
 		if entry.proxy == nil {
 			m.closeLocked()
 			return errors.New("first-hop group missing from runtime")
@@ -242,11 +245,15 @@ func (m *Manager) Status(id int64) (hopgroup.GroupStatus, error) {
 		if !transportProxy(node) {
 			continue
 		}
-		result.Nodes = append(result.Nodes, hopgroup.NodeStatus{Name: node.Name(), Alive: node.AliveForTestUrl(entry.testURL), DelayMS: node.LastDelayForTestUrl(entry.testURL)})
+		result.Nodes = append(result.Nodes, hopgroup.NodeStatus{Name: node.Name(), Alive: node.AliveForTestUrl(entry.testURL), DelayMS: node.LastDelayForTestUrl(entry.testURL), ActiveConnections: entry.activeCount(node.Name())})
 	}
-	selected := entry.proxy.Unwrap(&C.Metadata{NetWork: C.TCP}, false)
-	if transportProxy(selected) && selected.AliveForTestUrl(entry.testURL) {
-		result.Selected = selected.Name()
+	// load-balance has no single current node, and asking its strategy would only
+	// report "whoever is next"; leave Selected empty instead of calling Unwrap.
+	if entry.strategy != hopgroup.StrategyLoadBalance {
+		selected := entry.proxy.Unwrap(&C.Metadata{NetWork: C.TCP}, false)
+		if transportProxy(selected) && selected.AliveForTestUrl(entry.testURL) {
+			result.Selected = selected.Name()
+		}
 	}
 	for _, name := range entry.providerNames {
 		pd := m.providers[name]
@@ -280,11 +287,46 @@ func (entry *groupEntry) dial(ctx context.Context, host string, port uint16) (ne
 		return nil, errors.New("first-hop group dial failed")
 	}
 	// An emptied group falls back to REJECT, whose dial "succeeds" with a nop conn.
-	if !transportMember(group.Proxies(), conn.Chains().Last()) {
+	// A load-balance group whose members all died after the precheck returns its
+	// first member, which is still a proxy node and never a direct path.
+	node := conn.Chains().Last()
+	if !transportMember(group.Proxies(), node) {
 		_ = conn.Close()
 		return nil, errors.New("no healthy first-hop group member")
 	}
-	return conn, nil
+	return entry.track(node, conn), nil
+}
+
+func (entry *groupEntry) activeCount(node string) int64 {
+	if counter, ok := entry.active.Load(node); ok {
+		return counter.(*atomic.Int64).Load()
+	}
+	return 0
+}
+
+func (entry *groupEntry) track(node string, conn net.Conn) net.Conn {
+	value, _ := entry.active.LoadOrStore(node, &atomic.Int64{})
+	counter := value.(*atomic.Int64)
+	counter.Add(1)
+	return &trackedConn{Conn: conn, counter: counter}
+}
+
+// trackedConn keeps CloseWrite reachable for the bridge's half-close handling.
+type trackedConn struct {
+	net.Conn
+	counter *atomic.Int64
+	once    sync.Once
+}
+
+func (c *trackedConn) Close() error {
+	c.once.Do(func() { c.counter.Add(-1) })
+	return c.Conn.Close()
+}
+func (c *trackedConn) CloseWrite() error {
+	if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return nil
 }
 
 // Membership checks read the group's cached list without Unwrap, so they never
@@ -363,7 +405,7 @@ func buildConfig(groups []hopgroup.Group) (map[string]any, map[int64][]string, e
 	providerNames := make(map[int64][]string, len(groups))
 	proxyFunc := httpproxy.FromEnvironment().ProxyFunc()
 	for _, group := range groups {
-		if group.ID <= 0 || (group.Strategy != "fallback" && group.Strategy != "url-test") || group.IntervalSeconds <= 0 || group.SubscriptionUpdateInterval <= 0 || group.ToleranceMS < 0 {
+		if group.ID <= 0 || !hopgroup.ValidStrategy(group.Strategy) || group.IntervalSeconds <= 0 || group.SubscriptionUpdateInterval <= 0 || group.ToleranceMS < 0 {
 			return nil, nil, errors.New("invalid first-hop group configuration")
 		}
 		members := []string{}
@@ -408,7 +450,14 @@ func buildConfig(groups []hopgroup.Group) (map[string]any, map[int64][]string, e
 		if len(members) == 0 && len(use) == 0 {
 			members = append(members, "REJECT")
 		}
-		proxyGroups = append(proxyGroups, map[string]any{"name": groupName(group.ID), "type": group.Strategy, "url": group.TestURL, "interval": group.IntervalSeconds, "timeout": 5000, "tolerance": group.ToleranceMS, "lazy": false, "proxies": members, "use": use, "empty-fallback": "REJECT"})
+		mapping := map[string]any{"name": groupName(group.ID), "type": group.Strategy, "url": group.TestURL, "interval": group.IntervalSeconds, "timeout": 5000, "tolerance": group.ToleranceMS, "lazy": false, "proxies": members, "use": use, "empty-fallback": "REJECT"}
+		if group.Strategy == hopgroup.StrategyLoadBalance {
+			// Round-robin only: the first hop always targets the same landing proxy,
+			// so consistent-hashing / sticky-sessions would pin all traffic to one node.
+			// Round-robin skips members whose url/interval health check marks them dead.
+			mapping["strategy"] = "round-robin"
+		}
+		proxyGroups = append(proxyGroups, mapping)
 	}
 	return map[string]any{"mode": "rule", "log-level": "silent", "proxies": proxies, "proxy-providers": providers, "proxy-groups": proxyGroups, "rules": []string{"MATCH,REJECT"}}, providerNames, nil
 }

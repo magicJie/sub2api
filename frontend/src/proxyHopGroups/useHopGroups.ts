@@ -11,6 +11,11 @@ const en = {
   strategy: 'Strategy',
   fallback: 'Fallback · first healthy node',
   urlTest: 'URL test · lowest latency',
+  loadBalance: 'Load balance · round-robin per connection',
+  loadBalanceHint:
+    'Each new connection goes to the next healthy node; unhealthy nodes are skipped. HTTP keep-alive and HTTP/2 reuse one connection, so requests on it stay on one node. If the landing proxy allows only certain source IPs, allow every first-hop node. Hashing and sticky modes are not offered: the first hop always targets the same landing proxy, so hashing would send all traffic to one node.',
+  balancedSelection: 'Round-robin across healthy nodes',
+  activeConnections: 'Active connections',
   testURL: 'Health-check URL',
   interval: 'Health-check interval (seconds)',
   tolerance: 'Latency tolerance (ms)',
@@ -74,6 +79,11 @@ const zh: Copy = {
   strategy: '切换策略',
   fallback: 'Fallback · 优先首个健康节点',
   urlTest: 'URL test · 优先低延迟节点',
+  loadBalance: 'Load balance · 按连接轮询',
+  loadBalanceHint:
+    '每个新连接依次分给下一个健康节点，不健康的节点会被跳过。HTTP keep-alive 和 HTTP/2 会复用同一条连接，复用期间的请求留在同一节点。落地代理若有来源 IP 白名单，需要放行所有首跳节点。不提供哈希和粘性模式：首跳的目标恒为同一个落地代理，哈希会把流量全部压到一个节点。',
+  balancedSelection: '在健康节点间轮询',
+  activeConnections: '活动连接',
   testURL: '健康检查地址',
   interval: '健康检查间隔（秒）',
   tolerance: '延迟容差（毫秒）',

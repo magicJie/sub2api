@@ -73,8 +73,15 @@
               ><select v-model="form.strategy" class="input w-full">
                 <option value="fallback">{{ text.fallback }}</option>
                 <option value="url-test">{{ text.urlTest }}</option>
+                <option value="load-balance">{{ text.loadBalance }}</option>
               </select></label
             >
+            <p
+              v-if="form.strategy === 'load-balance'"
+              class="input-hint sm:col-span-2"
+            >
+              {{ text.loadBalanceHint }}
+            </p>
             <label class="block sm:col-span-2"
               ><span class="input-label">{{ text.testURL }}</span
               ><input
@@ -246,7 +253,11 @@
             <div>
               <p class="text-xs text-gray-500">{{ text.selected }}</p>
               <p class="mt-1 break-all font-medium">
-                {{ selected.runtime?.selected || text.noneSelected }}
+                {{
+                  selected.strategy === 'load-balance'
+                    ? text.balancedSelection
+                    : selected.runtime?.selected || text.noneSelected
+                }}
               </p>
             </div>
             <button
@@ -270,6 +281,7 @@
                   <th class="p-3">{{ text.nodes }}</th>
                   <th class="p-3">{{ text.status }}</th>
                   <th class="p-3">{{ text.delay }}</th>
+                  <th class="p-3">{{ text.activeConnections }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -289,6 +301,7 @@
                   <td class="p-3">
                     {{ node.alive ? `${node.delay_ms} ms` : '—' }}
                   </td>
+                  <td class="p-3">{{ node.active_connections ?? 0 }}</td>
                 </tr>
               </tbody>
             </table>
