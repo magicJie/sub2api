@@ -167,6 +167,32 @@ describe('UsageProgressBar', () => {
     expect(wrapper.get('.h-1\\.5 > div').classes()).toContain('bg-red-500')
   })
 
+  it('未满 100% 时向下取一位小数且最多 99.9%，>=100 才显示 100%', () => {
+    const percentAt = (utilization: number) =>
+      mount(UsageProgressBar, {
+        props: { label: 'mo', utilization, color: 'indigo' }
+      }).get('.h-1\\.5 + span').text()
+
+    expect(percentAt(99.77)).toBe('99.7%')
+    expect(percentAt(99.95)).toBe('99.9%')
+    expect(percentAt(99.999)).toBe('99.9%')
+    expect(percentAt(100)).toBe('100%')
+    expect(percentAt(120)).toBe('120%')
+    expect(percentAt(1500)).toBe('>999%')
+    // 其他平台的常见值：整数原样、小数取一位
+    expect(percentAt(42.9)).toBe('42.9%')
+    expect(percentAt(57.3)).toBe('57.3%')
+    expect(percentAt(42)).toBe('42%')
+    expect(percentAt(0)).toBe('0%')
+  })
+
+  it('剩余容量模式同样不把 99.95 进位成 100%', () => {
+    const wrapper = mount(UsageProgressBar, {
+      props: { label: 'left', utilization: 99.95, color: 'emerald', remainingCapacity: true }
+    })
+    expect(wrapper.get('.h-1\\.5 + span').text()).toBe('99.9%')
+  })
+
   it('默认利用率模式按 75/90 阈值提前预警分级', () => {
     const mountAt = (utilization: number) =>
       mount(UsageProgressBar, {

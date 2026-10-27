@@ -227,8 +227,11 @@
             :estimated-total-cost="kiroCreditEstimatedTotalCost"
             color="indigo"
           />
-          <div class="pl-[33px] text-[10px] text-gray-500 dark:text-gray-400">
-            {{ formatKiroCredit(usageInfo.kiro_credit) }}
+          <div
+            data-test="kiro-credit-remaining"
+            :class="['pl-[33px] text-[10px]', kiroCreditTextClass(usageInfo.kiro_credit)]"
+          >
+            {{ formatKiroCredit(usageInfo.kiro_credit) }}<template v-if="!kiroUpstreamRejected && isKiroCreditNearlyExhausted(usageInfo.kiro_credit)"> · {{ t('admin.accounts.usageWindow.kiroNearlyExhausted') }}</template>
           </div>
         </template>
         <template v-if="usageInfo.kiro_bonus">
@@ -238,10 +241,20 @@
             :resets-at="usageInfo.kiro_bonus.expiry_date"
             color="emerald"
           />
-          <div class="pl-[33px] text-[10px] text-gray-500 dark:text-gray-400">
+          <div
+            data-test="kiro-bonus-remaining"
+            :class="['pl-[33px] text-[10px]', kiroCreditTextClass(usageInfo.kiro_bonus)]"
+          >
             {{ formatKiroCredit(usageInfo.kiro_bonus) }}{{ kiroBonusRemaining }}
           </div>
         </template>
+        <div
+          v-if="kiroUpstreamRejected"
+          data-test="kiro-upstream-rejected"
+          class="text-[10px] font-medium text-rose-600 dark:text-rose-400"
+        >
+          {{ t('admin.accounts.usageWindow.kiroUpstreamRejected', { time: formatDateTimeToMinute(account.rate_limit_reset_at) }) }}
+        </div>
         <div v-if="kiroOverageLabel" class="text-[10px] text-amber-600 dark:text-amber-400">
           {{ kiroOverageLabel }}
         </div>
@@ -777,7 +790,7 @@ import { adminAPI } from '@/api/admin'
 import type { Account, AccountUsageInfo, GeminiCredentials, WindowStats } from '@/types'
 import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { enqueueUsageRequest } from '@/utils/usageLoadQueue'
-import { formatCompactNumber } from '@/utils/format'
+import { formatCompactNumber, formatDateTimeToMinute } from '@/utils/format'
 import { isOfficialGeminiBaseUrl } from '@/utils/geminiExplicitCache'
 import { supportsAccountQuota } from '@/utils/accountQuota'
 import UsageProgressBar from './UsageProgressBar.vue'
@@ -1067,11 +1080,43 @@ const aiCreditsDisplay = computed(() => {
 
 const kiroSubscriptionLabel = computed(() => usageInfo.value?.kiro_subscription_name?.trim() ?? '')
 
-const formatKiroCredit = (credit: NonNullable<AccountUsageInfo['kiro_credit']>) =>
-  t('admin.accounts.usageWindow.kiroUsed', {
-    used: formatCompactNumber(credit.current_usage),
-    limit: formatCompactNumber(credit.usage_limit)
+type KiroCredit = NonNullable<AccountUsageInfo['kiro_credit']>
+
+// Kiro 额度向下取一位小数、不用 K 缩写：4988.28 / 5000 显示为「剩 11.7 / 5000」，
+// 不会把仅剩十几 credit 的账号显示成满额。
+const formatKiroAmount = (value: number) =>
+  String(Math.floor(Math.max(value, 0) * 10 + 1e-9) / 10)
+
+const kiroCreditRemaining = (credit: KiroCredit) =>
+  Math.max((credit.usage_limit ?? 0) - (credit.current_usage ?? 0), 0)
+
+const formatKiroCredit = (credit: KiroCredit) =>
+  t('admin.accounts.usageWindow.kiroRemaining', {
+    remaining: formatKiroAmount(kiroCreditRemaining(credit)),
+    limit: formatKiroAmount(credit.usage_limit)
   })
+
+// 即将耗尽：剩余 < 1% 或 < 50 credit（上游在 100% 时直接 402 拒绝）。
+const KIRO_NEARLY_EXHAUSTED_CREDITS = 50
+const isKiroCreditNearlyExhausted = (credit: KiroCredit) => {
+  if (!(credit.usage_limit > 0)) return false
+  const remaining = kiroCreditRemaining(credit)
+  return remaining < KIRO_NEARLY_EXHAUSTED_CREDITS || remaining < credit.usage_limit * 0.01
+}
+
+// 已被上游拒绝：账号处于限流中（如 402 MONTHLY_REQUEST_COUNT 标记到月初）。
+const kiroUpstreamRejected = computed(() => {
+  const resetAt = props.account.rate_limit_reset_at
+  if (!resetAt) return false
+  const resetTime = Date.parse(resetAt)
+  return Number.isFinite(resetTime) && resetTime > Date.now()
+})
+
+const kiroCreditTextClass = (credit: KiroCredit) => {
+  if (kiroUpstreamRejected.value) return 'text-rose-600 dark:text-rose-400'
+  if (isKiroCreditNearlyExhausted(credit)) return 'text-amber-600 dark:text-amber-400'
+  return 'text-gray-500 dark:text-gray-400'
+}
 
 const kiroBonusRemaining = computed(() => {
   const days = usageInfo.value?.kiro_bonus?.days_remaining

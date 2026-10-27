@@ -129,6 +129,7 @@ func (s *GatewayService) forwardKiroMessagesAttempt(ctx context.Context, c *gin.
 					UpstreamStatusCode: failoverErr.StatusCode,
 					Kind:               "failover",
 					Message:            sanitizeUpstreamErrorMessage(err.Error()),
+					Detail:             s.kiroUpstreamErrorDetail(failoverErr.ResponseBody),
 				})
 				return nil, failoverErr
 			}
@@ -215,6 +216,7 @@ func (s *GatewayService) forwardKiroMessagesAttempt(ctx context.Context, c *gin.
 					UpstreamStatusCode: failoverErr.StatusCode,
 					Kind:               "failover",
 					Message:            sanitizeUpstreamErrorMessage(webSearchErr.Error()),
+					Detail:             s.kiroUpstreamErrorDetail(failoverErr.ResponseBody),
 				})
 				return nil, failoverErr
 			}
@@ -242,6 +244,7 @@ func (s *GatewayService) forwardKiroMessagesAttempt(ctx context.Context, c *gin.
 				UpstreamStatusCode: failoverErr.StatusCode,
 				Kind:               "failover",
 				Message:            sanitizeUpstreamErrorMessage(err.Error()),
+				Detail:             s.kiroUpstreamErrorDetail(failoverErr.ResponseBody),
 			})
 			return nil, failoverErr
 		}
@@ -939,6 +942,7 @@ func (s *GatewayService) classifyKiroHTTPErrorAndRecordOps(ctx context.Context, 
 	if classification.Category == kiroErrorBadRequestInvalidModel && account != nil && account.Type == AccountTypeOAuth {
 		s.markKiroInvalidModelRateLimited(ctx, account, mappedModel)
 		event := s.buildKiroInvalidModelUpstreamEvent(account, resp, upstreamMsg, mappedModel, requestBody, c)
+		event.Detail = s.kiroUpstreamErrorDetail(respBody)
 		appendOpsUpstreamError(c, event)
 		return nil, &UpstreamFailoverError{
 			StatusCode:      resp.StatusCode,
@@ -958,6 +962,7 @@ func (s *GatewayService) classifyKiroHTTPErrorAndRecordOps(ctx context.Context, 
 			UpstreamRequestID:  resp.Header.Get("x-request-id"),
 			Kind:               "http_error",
 			Message:            upstreamMsg,
+			Detail:             s.kiroUpstreamErrorDetail(respBody),
 		})
 		return &kiroHTTPErrorOutcome{
 			StatusCode: http.StatusBadRequest,
@@ -975,6 +980,7 @@ func (s *GatewayService) classifyKiroHTTPErrorAndRecordOps(ctx context.Context, 
 			UpstreamRequestID:  resp.Header.Get("x-request-id"),
 			Kind:               "failover",
 			Message:            upstreamMsg,
+			Detail:             s.kiroUpstreamErrorDetail(respBody),
 		})
 		return nil, &UpstreamFailoverError{
 			StatusCode:             529,
@@ -993,6 +999,7 @@ func (s *GatewayService) classifyKiroHTTPErrorAndRecordOps(ctx context.Context, 
 			UpstreamRequestID:  resp.Header.Get("x-request-id"),
 			Kind:               "failover",
 			Message:            upstreamMsg,
+			Detail:             s.kiroUpstreamErrorDetail(respBody),
 		})
 		if s.rateLimitService != nil {
 			s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
@@ -1013,6 +1020,7 @@ func (s *GatewayService) classifyKiroHTTPErrorAndRecordOps(ctx context.Context, 
 		UpstreamRequestID:  resp.Header.Get("x-request-id"),
 		Kind:               "http_error",
 		Message:            upstreamMsg,
+		Detail:             s.kiroUpstreamErrorDetail(respBody),
 	})
 	return &kiroHTTPErrorOutcome{
 		StatusCode: mapUpstreamStatusCode(resp.StatusCode),
@@ -1033,6 +1041,30 @@ func (s *GatewayService) handleKiroHTTPError(ctx context.Context, resp *http.Res
 		},
 	})
 	return fmt.Errorf("kiro upstream error: %d %s", outcome.StatusCode, outcome.Message)
+}
+
+// kiroUpstreamErrorDetailMaxBytes 是 gateway.log_upstream_error_body_max_bytes 未配置时的默认截断长度。
+const kiroUpstreamErrorDetailMaxBytes = 2048
+
+// kiroUpstreamErrorDetail 把 Kiro 上游错误体（402/429 等，小 JSON，不含凭据）截断后
+// 写进 ops 事件的 Detail，最终落到 ops_error_logs.upstream_error_detail。
+// 遵循 gateway.log_upstream_error_body 开关；未注入配置时按默认开启处理。
+// 入库前 OpsService 还会再做 JSON 敏感字段脱敏。
+func (s *GatewayService) kiroUpstreamErrorDetail(body []byte) string {
+	maxBytes := kiroUpstreamErrorDetailMaxBytes
+	if s != nil && s.cfg != nil {
+		if !s.cfg.Gateway.LogUpstreamErrorBody {
+			return ""
+		}
+		if s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes > 0 {
+			maxBytes = s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
+		}
+	}
+	detail := strings.TrimSpace(string(body))
+	if detail == "" {
+		return ""
+	}
+	return truncateString(sanitizeUpstreamErrorMessage(detail), maxBytes)
 }
 
 func (s *GatewayService) buildKiroInvalidModelUpstreamEvent(account *Account, resp *http.Response, upstreamMsg, mappedModel string, requestBody []byte, c *gin.Context) OpsUpstreamErrorEvent {

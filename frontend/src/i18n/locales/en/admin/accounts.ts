@@ -1747,7 +1747,9 @@ export default {
         estimatedTotalCostTooltip: 'Estimated total cost at 100% utilization, based on current window cost and utilization',
         kiroCredit: 'Credit',
         kiroBonus: 'Bonus',
-        kiroUsed: '{used} / {limit}',
+        kiroRemaining: '{remaining} left / {limit}',
+        kiroNearlyExhausted: 'Nearly exhausted',
+        kiroUpstreamRejected: 'Rejected by upstream, resets {time}',
         kiroDaysRemaining: '{days}d left',
         kiroOverage: 'Overage {used}, charge {charge}'
       },
