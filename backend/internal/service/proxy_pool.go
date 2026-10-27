@@ -119,6 +119,8 @@ type ProxyPoolRepository interface {
 type ProxyPoolService struct {
 	repo        ProxyPoolRepository
 	accountRepo AccountRepository
+	// latencyCache 提供探测到的国家，换 IP 时同国家优先（可为空）。
+	latencyCache ProxyLatencyCache
 	// mu 串行化“挑选代理 → 写入账号 → 锁定绑定”，避免并发创建超出平台上限（单实例内）。
 	mu sync.Mutex
 }

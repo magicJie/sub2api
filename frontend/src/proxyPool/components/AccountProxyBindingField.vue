@@ -6,9 +6,14 @@
         <Icon name="lock" size="sm" class="shrink-0 text-amber-600" />
         <span class="truncate font-medium text-gray-900 dark:text-white">{{ binding.proxy_name || `#${binding.proxy_id}` }}</span>
       </div>
-      <button type="button" class="btn btn-secondary btn-sm" :disabled="busy" @click="confirmUnbind = true">
-        {{ t('admin.proxyPools.unbind') }}
-      </button>
+      <div class="flex shrink-0 gap-2">
+        <button type="button" class="btn btn-secondary btn-sm" :disabled="busy" @click="showReplace = true">
+          {{ t('admin.proxyPools.replaceIp') }}
+        </button>
+        <button type="button" class="btn btn-secondary btn-sm" :disabled="busy" @click="confirmUnbind = true">
+          {{ t('admin.proxyPools.unbind') }}
+        </button>
+      </div>
     </div>
     <p class="input-hint mt-1">{{ t('admin.proxyPools.lockedHint', { pool: binding.pool_name }) }}</p>
   </div>
@@ -20,6 +25,13 @@
       {{ t('admin.proxyPools.assignFromPool') }}
     </button>
   </div>
+
+  <ReplaceProxyDialog
+    :show="showReplace"
+    :account-id="accountId ?? null"
+    @close="showReplace = false"
+    @replaced="onReplaced"
+  />
 
   <ConfirmDialog
     :show="confirmUnbind"
@@ -39,6 +51,7 @@ import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { extractI18nErrorMessage } from '@/utils/apiError'
 import proxyPoolAPI, { type ProxyAccountBinding } from '../api'
+import ReplaceProxyDialog from './ReplaceProxyDialog.vue'
 import { useProxyPoolOptions } from '../useProxyPools'
 
 const props = defineProps<{ accountId: number | null | undefined }>()
@@ -57,6 +70,12 @@ const binding = ref<ProxyAccountBinding | null>(null)
 const assignPoolId = ref<number | null>(null)
 const busy = ref(false)
 const confirmUnbind = ref(false)
+const showReplace = ref(false)
+
+const onReplaced = async (proxyId: number) => {
+  emit('proxy-changed', proxyId)
+  await load()
+}
 
 const poolOptions = computed(() => pools.value.map((p) => ({ value: p.id, label: p.name })))
 

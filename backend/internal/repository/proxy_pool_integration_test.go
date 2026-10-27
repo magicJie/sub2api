@@ -243,3 +243,72 @@ func (s *ProxyPoolSuite) TestPolicyCRUD() {
 	s.Require().NoError(s.pools.DeletePolicy(s.ctx, "test-churn"))
 	s.Require().ErrorIs(s.pools.DeletePolicy(s.ctx, "test-churn"), service.ErrProxyIPPolicyNotFound)
 }
+
+func (s *ProxyPoolSuite) TestEgressIncidentLifecycle() {
+	p := s.mkProxy("inc", nil)
+	a := s.mkAccount("opencode_go", &p)
+
+	in, err := s.pools.RecordIncidentFailure(s.ctx, p, service.ProxyIncidentLayerEgress, "e1")
+	s.Require().NoError(err)
+	s.Require().Equal(1, in.FailCount)
+	in, err = s.pools.RecordIncidentFailure(s.ctx, p, service.ProxyIncidentLayerEgress, "e2")
+	s.Require().NoError(err)
+	s.Require().Equal(2, in.FailCount)
+	s.Require().Equal("e2", in.LastError)
+
+	alertID := int64(42)
+	s.Require().NoError(s.pools.MarkIncidentHandled(s.ctx, in.ID, &alertID))
+	got, err := s.pools.GetOpenIncident(s.ctx, p)
+	s.Require().NoError(err)
+	s.Require().NotNil(got.HandledAt)
+	s.Require().Equal(alertID, *got.AlertEventID)
+
+	// 层级变化：重新计数、待重新处置，仍是同一条故障。
+	in2, err := s.pools.RecordIncidentFailure(s.ctx, p, service.ProxyIncidentLayerTransport, "t1")
+	s.Require().NoError(err)
+	s.Require().Equal(in.ID, in2.ID)
+	s.Require().Equal(1, in2.FailCount)
+	s.Require().Nil(in2.HandledAt)
+
+	ids, err := s.pools.ListProxyAccountIDs(s.ctx, p)
+	s.Require().NoError(err)
+	s.Require().Equal([]int64{a}, ids)
+
+	s.Require().NoError(s.pools.RecordIncidentAccount(s.ctx, &service.ProxyEgressIncidentAccount{IncidentID: in.ID, AccountID: a, Action: service.ProxyIncidentActionPaused}))
+	// 同一故障同一账号只记一次。
+	s.Require().NoError(s.pools.RecordIncidentAccount(s.ctx, &service.ProxyEgressIncidentAccount{IncidentID: in.ID, AccountID: a, Action: service.ProxyIncidentActionAlertOnly}))
+	rec, err := s.pools.GetPausedIncidentAccount(s.ctx, a)
+	s.Require().NoError(err)
+	s.Require().NotNil(rec)
+
+	list, err := s.pools.ListIncidents(s.ctx, 10)
+	s.Require().NoError(err)
+	var found *service.ProxyEgressIncident
+	for i := range list {
+		if list[i].ID == in.ID {
+			found = &list[i]
+		}
+	}
+	s.Require().NotNil(found)
+	s.Require().Len(found.Accounts, 1)
+	s.Require().Equal(service.ProxyIncidentActionPaused, found.Accounts[0].Action)
+	s.Require().Equal("opencode_go", found.Accounts[0].Platform)
+
+	s.Require().NoError(s.pools.MarkAccountResumed(s.ctx, a))
+	rec, err = s.pools.GetPausedIncidentAccount(s.ctx, a)
+	s.Require().NoError(err)
+	s.Require().Nil(rec)
+
+	s.Require().NoError(s.pools.ResolveIncident(s.ctx, in.ID))
+	got, err = s.pools.GetOpenIncident(s.ctx, p)
+	s.Require().NoError(err)
+	s.Require().Nil(got)
+	open, err := s.pools.ListOpenIncidentProxyIDs(s.ctx)
+	s.Require().NoError(err)
+	s.Require().NotContains(open, p)
+
+	// 恢复后再故障：新开一条。
+	in3, err := s.pools.RecordIncidentFailure(s.ctx, p, service.ProxyIncidentLayerEgress, "again")
+	s.Require().NoError(err)
+	s.Require().NotEqual(in.ID, in3.ID)
+}

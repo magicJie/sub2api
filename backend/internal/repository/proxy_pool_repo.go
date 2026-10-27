@@ -395,3 +395,241 @@ func (r *proxyPoolRepository) DeletePolicy(ctx context.Context, platform string)
 	}
 	return nil
 }
+
+// ---------------------------------------------------------------------------
+// 落地 IP 故障与处置（迁移 252）
+// ---------------------------------------------------------------------------
+
+func (r *proxyPoolRepository) ListProxyAccountIDs(ctx context.Context, proxyID int64) ([]int64, error) {
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT id FROM accounts
+		WHERE proxy_id = $1 AND deleted_at IS NULL AND parent_account_id IS NULL
+		ORDER BY id`, proxyID)
+	if err != nil {
+		return nil, err
+	}
+	return scanInt64Rows(rows)
+}
+
+func (r *proxyPoolRepository) ListOpenIncidentProxyIDs(ctx context.Context) ([]int64, error) {
+	rows, err := r.sql.QueryContext(ctx, `SELECT proxy_id FROM proxy_egress_incidents WHERE status = 'open' ORDER BY proxy_id`)
+	if err != nil {
+		return nil, err
+	}
+	return scanInt64Rows(rows)
+}
+
+func scanInt64Rows(rows *sql.Rows) ([]int64, error) {
+	defer func() { _ = rows.Close() }()
+	out := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+const proxyIncidentColumns = `i.id, i.proxy_id, COALESCE(px.name, ''), i.layer, i.status, i.last_error, i.fail_count,
+	i.first_failed_at, i.last_checked_at, i.resolved_at, i.handled_at, i.alert_event_id`
+
+func scanProxyIncident(scan func(dest ...any) error) (*service.ProxyEgressIncident, error) {
+	var in service.ProxyEgressIncident
+	var resolvedAt, handledAt sql.NullTime
+	var alertID sql.NullInt64
+	if err := scan(&in.ID, &in.ProxyID, &in.ProxyName, &in.Layer, &in.Status, &in.LastError, &in.FailCount,
+		&in.FirstFailedAt, &in.LastCheckedAt, &resolvedAt, &handledAt, &alertID); err != nil {
+		return nil, err
+	}
+	if resolvedAt.Valid {
+		in.ResolvedAt = &resolvedAt.Time
+	}
+	if handledAt.Valid {
+		in.HandledAt = &handledAt.Time
+	}
+	if alertID.Valid {
+		in.AlertEventID = &alertID.Int64
+	}
+	return &in, nil
+}
+
+func (r *proxyPoolRepository) GetOpenIncident(ctx context.Context, proxyID int64) (*service.ProxyEgressIncident, error) {
+	rows, err := r.sql.QueryContext(ctx, `SELECT `+proxyIncidentColumns+`
+		FROM proxy_egress_incidents i LEFT JOIN proxies px ON px.id = i.proxy_id
+		WHERE i.proxy_id = $1 AND i.status = 'open'`, proxyID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+	return scanProxyIncident(rows.Scan)
+}
+
+// RecordIncidentFailure 记一次探测失败：没有未恢复的故障则新建，否则累加连续失败次数并更新层级与错误。
+func (r *proxyPoolRepository) RecordIncidentFailure(ctx context.Context, proxyID int64, layer, lastError string) (*service.ProxyEgressIncident, error) {
+	rows, err := r.sql.QueryContext(ctx, `
+		WITH up AS (
+			INSERT INTO proxy_egress_incidents (proxy_id, layer, last_error)
+			VALUES ($1, $2, $3)
+			ON CONFLICT (proxy_id) WHERE status = 'open' DO UPDATE SET
+				-- 故障层级变化（如前置恢复后落地不通）时重新计数并重新处置。
+				fail_count = CASE WHEN proxy_egress_incidents.layer = EXCLUDED.layer
+					THEN proxy_egress_incidents.fail_count + 1 ELSE 1 END,
+				handled_at = CASE WHEN proxy_egress_incidents.layer = EXCLUDED.layer
+					THEN proxy_egress_incidents.handled_at ELSE NULL END,
+				layer = EXCLUDED.layer, last_error = EXCLUDED.last_error, last_checked_at = NOW()
+			RETURNING *
+		)
+		SELECT `+proxyIncidentColumns+` FROM up i LEFT JOIN proxies px ON px.id = i.proxy_id`, proxyID, layer, lastError)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, sql.ErrNoRows
+	}
+	return scanProxyIncident(rows.Scan)
+}
+
+func (r *proxyPoolRepository) MarkIncidentHandled(ctx context.Context, incidentID int64, alertEventID *int64) error {
+	_, err := r.sql.ExecContext(ctx, `
+		UPDATE proxy_egress_incidents SET handled_at = NOW(), alert_event_id = COALESCE($2, alert_event_id)
+		WHERE id = $1`, incidentID, alertEventID)
+	return err
+}
+
+func (r *proxyPoolRepository) ResolveIncident(ctx context.Context, incidentID int64) error {
+	_, err := r.sql.ExecContext(ctx, `
+		UPDATE proxy_egress_incidents SET status = 'resolved', resolved_at = NOW(), last_checked_at = NOW()
+		WHERE id = $1 AND status = 'open'`, incidentID)
+	return err
+}
+
+func (r *proxyPoolRepository) RecordIncidentAccount(ctx context.Context, rec *service.ProxyEgressIncidentAccount) error {
+	_, err := r.sql.ExecContext(ctx, `
+		INSERT INTO proxy_egress_incident_accounts (incident_id, account_id, action, to_proxy_id, message)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (incident_id, account_id) DO NOTHING`,
+		rec.IncidentID, rec.AccountID, rec.Action, rec.ToProxyID, rec.Message)
+	return err
+}
+
+// GetPausedIncidentAccount 返回账号当前因落地 IP 故障被暂停、尚未恢复的处置记录。
+func (r *proxyPoolRepository) GetPausedIncidentAccount(ctx context.Context, accountID int64) (*service.ProxyEgressIncidentAccount, error) {
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT id, incident_id, account_id, action, to_proxy_id, message, created_at, resumed_at
+		FROM proxy_egress_incident_accounts
+		WHERE account_id = $1 AND action = 'paused' AND resumed_at IS NULL
+		ORDER BY id DESC LIMIT 1`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	recs, err := scanIncidentAccounts(rows)
+	if err != nil || len(recs) == 0 {
+		return nil, err
+	}
+	return &recs[0], nil
+}
+
+// MarkAccountResumed 标记账号的所有未恢复处置记录已处理（人工恢复或换 IP）。
+func (r *proxyPoolRepository) MarkAccountResumed(ctx context.Context, accountID int64) error {
+	_, err := r.sql.ExecContext(ctx, `
+		UPDATE proxy_egress_incident_accounts SET resumed_at = NOW()
+		WHERE account_id = $1 AND resumed_at IS NULL`, accountID)
+	return err
+}
+
+func scanIncidentAccounts(rows *sql.Rows) ([]service.ProxyEgressIncidentAccount, error) {
+	defer func() { _ = rows.Close() }()
+	out := make([]service.ProxyEgressIncidentAccount, 0)
+	for rows.Next() {
+		var a service.ProxyEgressIncidentAccount
+		var toProxy sql.NullInt64
+		var resumedAt sql.NullTime
+		if err := rows.Scan(&a.ID, &a.IncidentID, &a.AccountID, &a.Action, &toProxy, &a.Message, &a.CreatedAt, &resumedAt); err != nil {
+			return nil, err
+		}
+		if toProxy.Valid {
+			a.ToProxyID = &toProxy.Int64
+		}
+		if resumedAt.Valid {
+			a.ResumedAt = &resumedAt.Time
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// ListIncidents 返回未恢复的故障，以及最近 resolvedLimit 条已恢复的故障，附带账号处置记录。
+func (r *proxyPoolRepository) ListIncidents(ctx context.Context, resolvedLimit int) ([]service.ProxyEgressIncident, error) {
+	rows, err := r.sql.QueryContext(ctx, `
+		(SELECT `+proxyIncidentColumns+` FROM proxy_egress_incidents i LEFT JOIN proxies px ON px.id = i.proxy_id
+		 WHERE i.status = 'open')
+		UNION ALL
+		(SELECT `+proxyIncidentColumns+` FROM proxy_egress_incidents i LEFT JOIN proxies px ON px.id = i.proxy_id
+		 WHERE i.status = 'resolved' ORDER BY i.resolved_at DESC LIMIT $1)`, resolvedLimit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]service.ProxyEgressIncident, 0)
+	index := map[int64]int{}
+	ids := make([]int64, 0)
+	func() {
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			in, scanErr := scanProxyIncident(rows.Scan)
+			if scanErr != nil {
+				err = scanErr
+				return
+			}
+			in.Accounts = []service.ProxyEgressIncidentAccount{}
+			index[in.ID] = len(out)
+			ids = append(ids, in.ID)
+			out = append(out, *in)
+		}
+		err = rows.Err()
+	}()
+	if err != nil || len(ids) == 0 {
+		return out, err
+	}
+	arows, err := r.sql.QueryContext(ctx, `
+		SELECT ia.id, ia.incident_id, ia.account_id, ia.action, ia.to_proxy_id, ia.message, ia.created_at, ia.resumed_at,
+			COALESCE(a.name, ''), COALESCE(a.platform, ''), COALESCE(a.schedulable, FALSE), a.proxy_id
+		FROM proxy_egress_incident_accounts ia
+		LEFT JOIN accounts a ON a.id = ia.account_id
+		WHERE ia.incident_id = ANY($1)
+		ORDER BY ia.id`, pq.Array(ids))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = arows.Close() }()
+	for arows.Next() {
+		var a service.ProxyEgressIncidentAccount
+		var toProxy, curProxy sql.NullInt64
+		var resumedAt sql.NullTime
+		if err := arows.Scan(&a.ID, &a.IncidentID, &a.AccountID, &a.Action, &toProxy, &a.Message, &a.CreatedAt, &resumedAt,
+			&a.AccountName, &a.Platform, &a.Schedulable, &curProxy); err != nil {
+			return nil, err
+		}
+		if toProxy.Valid {
+			a.ToProxyID = &toProxy.Int64
+		}
+		if resumedAt.Valid {
+			a.ResumedAt = &resumedAt.Time
+		}
+		if curProxy.Valid {
+			a.CurrentProxyID = &curProxy.Int64
+		}
+		if i, ok := index[a.IncidentID]; ok {
+			out[i].Accounts = append(out[i].Accounts, a)
+		}
+	}
+	return out, arows.Err()
+}
