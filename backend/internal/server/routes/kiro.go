@@ -15,5 +15,8 @@ func registerKiroOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		kiro.POST("/oauth/refresh-token", h.Admin.KiroOAuth.RefreshToken)
 		kiro.POST("/oauth/import-token", h.Admin.KiroOAuth.ImportToken)
 		kiro.GET("/routes", h.Admin.KiroOAuth.RecentRoutes)
+		kiro.GET("/usage-refresh/settings", h.Admin.KiroOAuth.GetUsageRefreshSettings)
+		kiro.PUT("/usage-refresh/settings", h.Admin.KiroOAuth.UpdateUsageRefreshSettings)
+		kiro.POST("/usage-refresh/refresh-all", h.Admin.KiroOAuth.RefreshAllUsage)
 	}
 }

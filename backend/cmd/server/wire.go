@@ -129,6 +129,7 @@ func provideCleanup(
 	upstreamBillingProbe *service.UpstreamBillingProbeService,
 	ollamaCloudUsage *service.OllamaCloudUsageService,
 	opencodeGoUsage *service.OpenCodeGoUsageService,
+	kiroUsageRefresh *service.KiroUsageRefreshService, // Kiro（fork）
 	auditLog *service.AuditLogService,
 	openAIAutoReset *service.OpenAIQuotaAutoResetService,
 	promptAudit *securityaudit.PromptService,
@@ -403,6 +404,10 @@ func provideCleanup(
 				if opencodeGoUsage != nil {
 					opencodeGoUsage.Stop()
 				}
+				return nil
+			}},
+			{"KiroUsageRefreshService", func() error { // Kiro（fork）
+				kiroUsageRefresh.Stop()
 				return nil
 			}},
 		}

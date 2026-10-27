@@ -20,6 +20,9 @@ export default {
       moreActions: '更多操作',
       dataActions: '数据操作',
       toolActions: '工具',
+      kiroRefreshAllUsage: '刷新全部 Kiro 额度',
+      kiroRefreshAllQueued: '已将 {count} 个 Kiro 账号排进后台刷新队列',
+      kiroRefreshAllFailed: '排队刷新 Kiro 额度失败',
       viewColumns: '列显示',
       selectedCount: '已选 {count}',
       dataExportConfirmMessage: '导出的数据包含账号与代理的敏感信息，请妥善保存。',
@@ -560,7 +563,9 @@ export default {
         kiroNearlyExhausted: '即将耗尽',
         kiroUpstreamRejected: '已被上游拒绝，{time} 恢复',
         kiroDaysRemaining: '剩余 {days} 天',
-        kiroOverage: '超额 {used}，费用 {charge}'
+        kiroOverage: '超额 {used}，费用 {charge}',
+        kiroUpdatedAgo: '更新于 {time}',
+        kiroUsagePending: '排队刷新中'
       },
       openaiReferral: {
         available: '可邀请',

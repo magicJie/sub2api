@@ -589,6 +589,11 @@ func (s *AccountUsageService) EnrichAccountWithKiroRuntimeState(ctx context.Cont
 		account.KiroQuotaState = usage.KiroQuotaState
 		account.KiroQuotaReason = usage.KiroQuotaReason
 		account.KiroQuotaResetAt = usage.KiroQuotaResetAt
+	} else if snapshot := decodeKiroUsageSnapshot(account.Extra); snapshot != nil {
+		// 本实例没拉过时用落库快照（后台刷新器可能跑在别的实例上）。
+		account.KiroQuotaState = snapshot.KiroQuotaState
+		account.KiroQuotaReason = snapshot.KiroQuotaReason
+		account.KiroQuotaResetAt = snapshot.KiroQuotaResetAt
 	}
 	if s.kiroCooldownStore == nil {
 		return

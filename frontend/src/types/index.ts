@@ -1574,6 +1574,10 @@ export interface AccountUsageInfo {
   kiro_runtime_state?: string
   kiro_runtime_reason?: string
   kiro_runtime_reset_at?: string | null
+  /** Kiro（fork）：还没有落库快照或已排进"全部刷新"队列，后台稍后补上。 */
+  kiro_usage_pending?: boolean
+  /** Kiro（fork）：后台最近一次尝试拉取的时间；updated_at 是最近一次成功。 */
+  kiro_usage_last_attempt_at?: string | null
   // Antigravity 403 forbidden 状态
   is_forbidden?: boolean
   forbidden_reason?: string

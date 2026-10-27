@@ -426,7 +426,8 @@ func redactAccountManagedExtra(extra map[string]any) map[string]any {
 			service.OllamaCloudUsageAutoRefreshExtraKey,
 			service.OllamaCloudUsageSnapshotExtraKey,
 			service.OpenCodeGoUsageAutoRefreshExtraKey,
-			service.OpenCodeGoUsageSnapshotExtraKey:
+			service.OpenCodeGoUsageSnapshotExtraKey,
+			service.KiroUsageSnapshotExtraKey: // Kiro（fork）：经 usage 接口返回
 			continue
 		default:
 			redacted[key] = value

@@ -10,7 +10,8 @@ package service
 //     即「剩余额度相对剩余时间最多」的账号先用；与档内最高值相差 10% 以内视为同一档，
 //     交给后续 LRU 打散，避免所有新会话挤到同一个账号。
 //   - 没有用量快照的账号按「刚开新周期、30 天内用完」估算，不会被饿死。
-// 用量来自 AccountUsageService 拉取 Kiro 额度时写入的进程内快照，调度时不发网络请求。
+// 用量来自进程内快照：后台刷新器（kiro_usage_refresher.go）从落库的 kiro_usage_snapshot 恢复，
+// 或 AccountUsageService 拉取 Kiro 额度时写入；调度时不发网络请求。
 // 粘性会话（Layer 1.5）在此之前生效，同一会话不会因为排序变化而换账号。
 // 设置 SUB2API_KIRO_PACE_SCHEDULING=off 可关闭，回到原有排序。
 
@@ -47,6 +48,14 @@ var kiroPaceRefreshAttempts sync.Map // accountID -> time.Time
 func maybeRefreshKiroPace(account *Account, now time.Time) {
 	usageService := kiroPaceRefresher.Load()
 	if usageService == nil || account == nil || account.Type != AccountTypeOAuth {
+		return
+	}
+	if usageService.kiroUsageSnapshotMode() {
+		// 后台刷新器维护落库快照并每轮恢复到 kiroPaceSnapshots，调度不再自己打上游；
+		// 快照缺失时只唤醒刷新器。
+		if _, ok := kiroPaceSnapshots.Load(account.ID); !ok {
+			usageService.kiroUsageRefresher.Wake()
+		}
 		return
 	}
 	if value, ok := kiroPaceSnapshots.Load(account.ID); ok && now.Sub(value.(kiroPaceSnapshot).updatedAt) < kiroPaceRefreshAfter {
