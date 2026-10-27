@@ -155,7 +155,92 @@ export async function unbindAccountProxy(accountId: number): Promise<void> {
   await apiClient.post(`/admin/accounts/${accountId}/proxy-unbind`)
 }
 
+/** 落地 IP 故障：egress 落地 IP 不通（按策略处置账号）；transport 前置链路不可用（只告警） */
+export interface ProxyEgressIncidentAccount {
+  account_id: number
+  account_name: string
+  platform: string
+  action: 'paused' | 'reassigned' | 'alert_only'
+  to_proxy_id: number | null
+  message: string
+  created_at: string
+  resumed_at: string | null
+  schedulable: boolean
+  current_proxy_id: number | null
+}
+
+export interface ProxyEgressIncident {
+  id: number
+  proxy_id: number
+  proxy_name: string
+  layer: 'egress' | 'transport'
+  status: 'open' | 'resolved'
+  last_error: string
+  fail_count: number
+  first_failed_at: string
+  last_checked_at: string
+  resolved_at: string | null
+  handled_at: string | null
+  accounts: ProxyEgressIncidentAccount[]
+}
+
+export interface ProxyReplaceCandidate {
+  proxy: Proxy
+  pool_id: number
+  pool_name: string
+  history_counts: Record<string, number>
+  active_counts: Record<string, number>
+  country: string
+  same_country: boolean
+}
+
+export interface ProxyMigrateResult {
+  account_id: number
+  to_proxy_id: number | null
+  error?: string
+}
+
+export async function listIncidents(): Promise<ProxyEgressIncident[]> {
+  const { data } = await apiClient.get<ProxyEgressIncident[]>('/admin/proxy-incidents')
+  return Array.isArray(data) ? data : []
+}
+
+export async function getReplaceCandidates(accountId: number): Promise<ProxyReplaceCandidate[]> {
+  const { data } = await apiClient.get<ProxyReplaceCandidate[]>(`/admin/accounts/${accountId}/proxy-replace-candidates`)
+  return Array.isArray(data) ? data : []
+}
+
+/** 换落地 IP 并锁定；proxyId 省略时自动选第一个候选。因故障暂停的账号会同时恢复调度。 */
+export async function replaceAccountProxy(accountId: number, proxyId?: number): Promise<Proxy> {
+  const { data } = await apiClient.post<Proxy>(`/admin/accounts/${accountId}/proxy-replace`, proxyId ? { proxy_id: proxyId } : {})
+  return data
+}
+
+/** 落地 IP 已恢复：解除故障暂停、恢复调度，不换 IP */
+export async function resumeAccountProxy(accountId: number): Promise<void> {
+  await apiClient.post(`/admin/accounts/${accountId}/proxy-resume`)
+}
+
+export async function migrateProxyAccounts(proxyId: number): Promise<ProxyMigrateResult[]> {
+  const { data } = await apiClient.post<ProxyMigrateResult[]>(`/admin/proxies/${proxyId}/migrate-accounts`)
+  return Array.isArray(data) ? data : []
+}
+
+/** 立即巡检一次，返回当前未恢复的故障（无故障为 null） */
+export async function checkProxyHealth(proxyId: number): Promise<{ id: number; layer: string; fail_count: number; last_error: string; handled: boolean } | null> {
+  const { data } = await apiClient.post<{ id: number; layer: string; fail_count: number; last_error: string; handled: boolean } | null>(
+    `/admin/proxies/${proxyId}/health-check`
+  )
+  return data ?? null
+}
+
 export const proxyPoolAPI = {
+  listIncidents,
+  getReplaceCandidates,
+  replaceAccountProxy,
+  resumeAccountProxy,
+  migrateProxyAccounts,
+  checkProxyHealth,
   listPolicies,
   upsertPolicy,
   deletePolicy,

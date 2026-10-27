@@ -23,11 +23,17 @@ func registerProxyPoolRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		policies.PUT("/:platform", h.Admin.ProxyPool.UpsertPolicy)
 		policies.DELETE("/:platform", h.Admin.ProxyPool.DeletePolicy)
 	}
+	admin.GET("/proxy-incidents", h.Admin.ProxyPool.ListIncidents)
 	admin.GET("/proxies/:id/bindings", h.Admin.ProxyPool.ProxyBindings)
+	admin.POST("/proxies/:id/migrate-accounts", h.Admin.ProxyPool.MigrateProxyAccounts)
+	admin.POST("/proxies/:id/health-check", h.Admin.ProxyPool.CheckProxyHealth)
 	accounts := admin.Group("/accounts")
 	{
 		accounts.GET("/:id/proxy-binding", h.Admin.ProxyPool.AccountBinding)
 		accounts.POST("/:id/proxy-pool", h.Admin.ProxyPool.AssignAccount)
 		accounts.POST("/:id/proxy-unbind", h.Admin.ProxyPool.UnbindAccount)
+		accounts.GET("/:id/proxy-replace-candidates", h.Admin.ProxyPool.ReplaceCandidates)
+		accounts.POST("/:id/proxy-replace", h.Admin.ProxyPool.ReplaceAccountProxy)
+		accounts.POST("/:id/proxy-resume", h.Admin.ProxyPool.ResumeAccount)
 	}
 }

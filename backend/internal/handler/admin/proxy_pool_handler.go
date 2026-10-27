@@ -380,3 +380,174 @@ func (h *ProxyPoolHandler) DeletePolicy(c *gin.Context) {
 	}
 	response.Success(c, gin.H{"message": "Platform IP policy deleted"})
 }
+
+// ---------------------------------------------------------------------------
+// 落地 IP 故障与一键处置
+// ---------------------------------------------------------------------------
+
+type ProxyEgressIncidentAccountDTO struct {
+	AccountID      int64      `json:"account_id"`
+	AccountName    string     `json:"account_name"`
+	Platform       string     `json:"platform"`
+	Action         string     `json:"action"`
+	ToProxyID      *int64     `json:"to_proxy_id"`
+	Message        string     `json:"message"`
+	CreatedAt      time.Time  `json:"created_at"`
+	ResumedAt      *time.Time `json:"resumed_at"`
+	Schedulable    bool       `json:"schedulable"`
+	CurrentProxyID *int64     `json:"current_proxy_id"`
+}
+
+type ProxyEgressIncidentDTO struct {
+	ID            int64                           `json:"id"`
+	ProxyID       int64                           `json:"proxy_id"`
+	ProxyName     string                          `json:"proxy_name"`
+	Layer         string                          `json:"layer"`
+	Status        string                          `json:"status"`
+	LastError     string                          `json:"last_error"`
+	FailCount     int                             `json:"fail_count"`
+	FirstFailedAt time.Time                       `json:"first_failed_at"`
+	LastCheckedAt time.Time                       `json:"last_checked_at"`
+	ResolvedAt    *time.Time                      `json:"resolved_at"`
+	HandledAt     *time.Time                      `json:"handled_at"`
+	Accounts      []ProxyEgressIncidentAccountDTO `json:"accounts"`
+}
+
+// ListIncidents GET /api/v1/admin/proxy-incidents
+func (h *ProxyPoolHandler) ListIncidents(c *gin.Context) {
+	incidents, err := h.poolService.ListIncidents(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	out := make([]ProxyEgressIncidentDTO, 0, len(incidents))
+	for i := range incidents {
+		in := &incidents[i]
+		accounts := make([]ProxyEgressIncidentAccountDTO, 0, len(in.Accounts))
+		for _, a := range in.Accounts {
+			accounts = append(accounts, ProxyEgressIncidentAccountDTO{
+				AccountID: a.AccountID, AccountName: a.AccountName, Platform: a.Platform, Action: a.Action,
+				ToProxyID: a.ToProxyID, Message: a.Message, CreatedAt: a.CreatedAt, ResumedAt: a.ResumedAt,
+				Schedulable: a.Schedulable, CurrentProxyID: a.CurrentProxyID,
+			})
+		}
+		out = append(out, ProxyEgressIncidentDTO{
+			ID: in.ID, ProxyID: in.ProxyID, ProxyName: in.ProxyName, Layer: in.Layer, Status: in.Status,
+			LastError: in.LastError, FailCount: in.FailCount, FirstFailedAt: in.FirstFailedAt,
+			LastCheckedAt: in.LastCheckedAt, ResolvedAt: in.ResolvedAt, HandledAt: in.HandledAt, Accounts: accounts,
+		})
+	}
+	response.Success(c, out)
+}
+
+type ProxyReplaceCandidateDTO struct {
+	Proxy         dto.AdminProxy   `json:"proxy"`
+	PoolID        int64            `json:"pool_id"`
+	PoolName      string           `json:"pool_name"`
+	HistoryCounts map[string]int64 `json:"history_counts"`
+	ActiveCounts  map[string]int64 `json:"active_counts"`
+	Country       string           `json:"country"`
+	SameCountry   bool             `json:"same_country"`
+}
+
+// ReplaceCandidates GET /api/v1/admin/accounts/:id/proxy-replace-candidates
+func (h *ProxyPoolHandler) ReplaceCandidates(c *gin.Context) {
+	id, ok := parseProxyPoolIDParam(c, "id")
+	if !ok {
+		return
+	}
+	cands, err := h.poolService.ReplaceCandidates(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	out := make([]ProxyReplaceCandidateDTO, 0, len(cands))
+	for i := range cands {
+		cd := &cands[i]
+		out = append(out, ProxyReplaceCandidateDTO{
+			Proxy: *dto.ProxyFromServiceAdmin(&cd.Proxy), PoolID: cd.PoolID, PoolName: cd.PoolName,
+			HistoryCounts: cd.HistoryCounts, ActiveCounts: cd.ActiveCounts, Country: cd.Country, SameCountry: cd.SameCountry,
+		})
+	}
+	response.Success(c, out)
+}
+
+// ReplaceAccountProxy POST /api/v1/admin/accounts/:id/proxy-replace  {"proxy_id": 12}（省略则自动选）
+// 换落地 IP 并锁定；若账号因落地 IP 故障被暂停，同时恢复调度。
+func (h *ProxyPoolHandler) ReplaceAccountProxy(c *gin.Context) {
+	id, ok := parseProxyPoolIDParam(c, "id")
+	if !ok {
+		return
+	}
+	var req struct {
+		ProxyID *int64 `json:"proxy_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil && c.Request.ContentLength > 0 {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	p, err := h.poolService.ReplaceAccountProxy(c.Request.Context(), id, req.ProxyID, 0)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, dto.ProxyFromServiceAdmin(p))
+}
+
+// ResumeAccount POST /api/v1/admin/accounts/:id/proxy-resume
+// 落地 IP 已恢复：解除故障暂停、恢复调度，不换 IP。
+func (h *ProxyPoolHandler) ResumeAccount(c *gin.Context) {
+	id, ok := parseProxyPoolIDParam(c, "id")
+	if !ok {
+		return
+	}
+	if err := h.poolService.ResumeAccount(c.Request.Context(), id); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"message": "Account resumed"})
+}
+
+type ProxyMigrateResultDTO struct {
+	AccountID int64  `json:"account_id"`
+	ToProxyID *int64 `json:"to_proxy_id"`
+	Error     string `json:"error,omitempty"`
+}
+
+// MigrateProxyAccounts POST /api/v1/admin/proxies/:id/migrate-accounts
+// 把挂在该落地代理上的账号逐个换到其他可用 IP（各自按平台策略选），失败的保留原状。
+func (h *ProxyPoolHandler) MigrateProxyAccounts(c *gin.Context) {
+	id, ok := parseProxyPoolIDParam(c, "id")
+	if !ok {
+		return
+	}
+	results, err := h.poolService.MigrateProxyAccounts(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	out := make([]ProxyMigrateResultDTO, 0, len(results))
+	for _, r := range results {
+		out = append(out, ProxyMigrateResultDTO{AccountID: r.AccountID, ToProxyID: r.ToProxyID, Error: r.Error})
+	}
+	response.Success(c, out)
+}
+
+// CheckProxyHealth POST /api/v1/admin/proxies/:id/health-check
+// 立即巡检一次（确认恢复或复现故障），返回最新的未恢复故障（无故障为 null）。
+func (h *ProxyPoolHandler) CheckProxyHealth(c *gin.Context) {
+	id, ok := parseProxyPoolIDParam(c, "id")
+	if !ok {
+		return
+	}
+	in, err := h.poolService.CheckProxyHealth(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if in == nil {
+		response.Success(c, nil)
+		return
+	}
+	response.Success(c, gin.H{"id": in.ID, "layer": in.Layer, "fail_count": in.FailCount, "last_error": in.LastError, "handled": in.HandledAt != nil})
+}

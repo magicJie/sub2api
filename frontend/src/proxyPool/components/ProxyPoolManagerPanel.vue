@@ -1,5 +1,6 @@
 <template>
   <div class="space-y-6">
+    <ProxyIncidentPanel :active="active" @changed="onIncidentsChanged" />
     <PlatformIPPolicyPanel :policies="policies" :pools="pools" @changed="onPoliciesChanged" />
     <div class="flex min-h-[420px] flex-col gap-4 md:flex-row">
       <!-- 左：代理池列表 -->
@@ -241,6 +242,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import PlatformIPPolicyPanel from './PlatformIPPolicyPanel.vue'
+import ProxyIncidentPanel from './ProxyIncidentPanel.vue'
 import { formatDateTime } from '@/utils/format'
 import { extractI18nErrorMessage } from '@/utils/apiError'
 import proxyPoolAPI, { type ProxyBindingsResult, type ProxyIPPolicy, type ProxyPool, type ProxyPoolMember } from '../api'
@@ -366,6 +368,11 @@ const loadPolicies = async () => {
   } catch (error) {
     showError(error, t('admin.proxyPools.loadFailed'))
   }
+}
+
+const onIncidentsChanged = async () => {
+  await loadMembers()
+  emit('changed')
 }
 
 const onPoliciesChanged = async () => {

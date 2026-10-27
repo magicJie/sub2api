@@ -961,8 +961,9 @@ var ProviderSet = wire.NewSet(
 	ProvideOpenAICodexVersionSyncService,
 	ProvideClaudeCodeVersionSyncService,
 	ProvideProxyExpiryService,
-	ProvideProxyChainService, // 链式代理（fork）
-	ProvideProxyPoolService,  // 代理池（fork）
+	ProvideProxyChainService,        // 链式代理（fork）
+	ProvideProxyPoolService,         // 代理池（fork）
+	ProvideProxyEgressHealthService, // 代理池（fork）：落地 IP 巡检
 	ProvideSubscriptionExpiryService,
 	ProvideTimingWheelService,
 	ProvideDashboardAggregationService,
