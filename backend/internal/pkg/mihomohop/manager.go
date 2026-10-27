@@ -33,8 +33,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Fields are immutable once Replace publishes the entry; a cutover builds new
+// entries instead of mutating these, so dial and Status need no per-entry lock.
 type groupEntry struct {
-	mu            sync.Mutex
 	proxy         C.Proxy
 	testURL       string
 	bridge        *proxychain.SOCKSBridge
@@ -232,8 +233,6 @@ func (m *Manager) Status(id int64) (hopgroup.GroupStatus, error) {
 	if entry == nil {
 		return hopgroup.GroupStatus{}, errors.New("first-hop group unavailable")
 	}
-	entry.mu.Lock()
-	defer entry.mu.Unlock()
 	result := hopgroup.GroupStatus{Nodes: []hopgroup.NodeStatus{}, Providers: []hopgroup.ProviderStatus{}}
 	group, ok := entry.proxy.Adapter().(interface{ Proxies() []C.Proxy })
 	if !ok {
@@ -270,18 +269,41 @@ func (entry *groupEntry) dial(ctx context.Context, host string, port uint16) (ne
 	} else {
 		metadata.Host = host
 	}
-	entry.mu.Lock()
-	defer entry.mu.Unlock()
-	selected := entry.proxy.Unwrap(metadata, false)
-	if !transportProxy(selected) || !selected.AliveForTestUrl(entry.testURL) {
+	group, ok := entry.proxy.Adapter().(interface{ Proxies() []C.Proxy })
+	if !ok || !anyAliveMember(group.Proxies(), entry.testURL) {
 		return nil, errors.New("no healthy first-hop group member")
 	}
-	// Only the group chooses nodes; no direct dial path exists here.
+	// Only the group chooses nodes; no direct dial path exists here. Dialing runs
+	// unlocked so one slow node handshake never serializes the group's other dials.
 	conn, err := entry.proxy.DialContext(ctx, metadata)
 	if err != nil {
 		return nil, errors.New("first-hop group dial failed")
 	}
+	// An emptied group falls back to REJECT, whose dial "succeeds" with a nop conn.
+	if !transportMember(group.Proxies(), conn.Chains().Last()) {
+		_ = conn.Close()
+		return nil, errors.New("no healthy first-hop group member")
+	}
 	return conn, nil
+}
+
+// Membership checks read the group's cached list without Unwrap, so they never
+// advance a group's own selection state.
+func anyAliveMember(members []C.Proxy, testURL string) bool {
+	for _, member := range members {
+		if transportProxy(member) && member.AliveForTestUrl(testURL) {
+			return true
+		}
+	}
+	return false
+}
+func transportMember(members []C.Proxy, name string) bool {
+	for _, member := range members {
+		if member.Name() == name {
+			return transportProxy(member)
+		}
+	}
+	return false
 }
 
 func transportProxy(proxy C.Proxy) bool { return proxy != nil && proxy.Type() >= C.Shadowsocks }

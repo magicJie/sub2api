@@ -320,3 +320,144 @@ func TestConfigurationCutoverClosesExistingConnections(t *testing.T) {
 		t.Fatal("old group connection was not closed promptly")
 	}
 }
+
+func echoListener(t *testing.T) net.Listener {
+	t.Helper()
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() { defer conn.Close(); _, _ = io.Copy(conn, conn) }()
+		}
+	}()
+	return ln
+}
+
+func TestStuckDialDoesNotBlockOtherGroupDials(t *testing.T) {
+	health := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	defer health.Close()
+	stuck, fast := echoListener(t), echoListener(t)
+	stuckPort := uint16(stuck.Addr().(*net.TCPAddr).Port)
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	defer close(release)
+	// The selected node holds its upstream handshake for one target, like a slow
+	// node handshake, while health checks and other targets proceed normally.
+	slow, err := proxychain.NewSOCKSBridge(func(ctx context.Context, host string, port uint16) (net.Conn, error) {
+		if port == stuckPort {
+			entered <- struct{}{}
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		return (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(host, fmt.Sprint(port)))
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer slow.Close()
+	backup := localMember(t)
+	m := &Manager{}
+	defer m.Close()
+	if err := m.Replace(context.Background(), []hopgroup.Group{baseGroup(health.URL, slow.Endpoint(), backup.Endpoint())}); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, m, 1, func(s hopgroup.GroupStatus) bool {
+		return len(s.Nodes) == 2 && s.Nodes[0].Alive && s.Nodes[1].Alive && strings.HasSuffix(s.Selected, "manual-1")
+	})
+	endpoint, _ := m.Endpoint(1)
+	dialer, err := xproxy.SOCKS5("tcp", net.JoinHostPort(endpoint.Host, fmt.Sprint(endpoint.Port)), &xproxy.Auth{User: endpoint.Username, Password: endpoint.Password}, xproxy.Direct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stuckDone := make(chan error, 1)
+	go func() {
+		conn, err := dialer.Dial("tcp", stuck.Addr().String())
+		if err == nil {
+			_ = conn.Close()
+		}
+		stuckDone <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("stuck dial never reached the slow node")
+	}
+	const concurrent = 8
+	start := time.Now()
+	errs := make(chan error, concurrent)
+	for range concurrent {
+		go func() {
+			conn, err := dialer.Dial("tcp", fast.Addr().String())
+			if err == nil {
+				_, err = conn.Write([]byte("ping"))
+				var reply [4]byte
+				if err == nil {
+					_, err = io.ReadFull(conn, reply[:])
+				}
+				_ = conn.Close()
+			}
+			errs <- err
+		}()
+	}
+	for range concurrent {
+		if err := <-errs; err != nil {
+			t.Fatalf("dial behind a stuck handshake failed: %v", err)
+		}
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("concurrent dials waited %v behind a stuck handshake", elapsed)
+	}
+	select {
+	case err := <-stuckDone:
+		t.Fatalf("stuck dial finished early: %v", err)
+	default:
+	}
+	release <- struct{}{}
+	if err := <-stuckDone; err != nil {
+		t.Fatalf("released dial failed: %v", err)
+	}
+}
+
+func TestAllDeadGroupDialFailsClosed(t *testing.T) {
+	for _, strategy := range []string{"fallback", "url-test"} {
+		t.Run(strategy, func(t *testing.T) {
+			var requests atomic.Int32
+			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1); w.WriteHeader(204) }))
+			defer target.Close()
+			group := baseGroup(target.URL, deadMember(t), deadMember(t))
+			group.Strategy = strategy
+			m := &Manager{}
+			defer m.Close()
+			if err := m.Replace(context.Background(), []hopgroup.Group{group}); err != nil {
+				t.Fatal(err)
+			}
+			waitStatus(t, m, 1, func(s hopgroup.GroupStatus) bool {
+				return len(s.Nodes) == 2 && !s.Nodes[0].Alive && !s.Nodes[1].Alive
+			})
+			before := requests.Load()
+			m.mu.Lock()
+			entry := m.groups[1]
+			m.mu.Unlock()
+			host, rawPort, _ := net.SplitHostPort(strings.TrimPrefix(target.URL, "http://"))
+			var port uint16
+			_, _ = fmt.Sscan(rawPort, &port)
+			if conn, err := entry.dial(context.Background(), host, port); err == nil {
+				_ = conn.Close()
+				t.Fatal("all-dead group returned a connection")
+			}
+			if requests.Load() != before {
+				t.Fatal("all-dead group dialed the target directly")
+			}
+		})
+	}
+}
