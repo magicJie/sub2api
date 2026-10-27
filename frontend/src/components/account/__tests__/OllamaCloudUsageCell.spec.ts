@@ -80,6 +80,16 @@ describe('OllamaCloudUsageCell', () => {
     refreshOllamaCloudUsage.mockReset()
   })
 
+  it('shows the subscription expiry badge, including the unset hint', () => {
+    const unset = mount(OllamaCloudUsageCell, { props: { account: account() } })
+    expect(unset.get('[data-testid="account-expiry-badge"]').attributes('data-level')).toBe('unset')
+
+    const expiring = mount(OllamaCloudUsageCell, {
+      props: { account: { ...account(), expires_at: Math.floor(Date.now() / 1000) + 2 * 86400 } }
+    })
+    expect(expiring.get('[data-testid="account-expiry-badge"]').attributes('data-level')).toBe('soon')
+  })
+
   it('renders native 5h and 7d windows with the configured-account query action', () => {
     const wrapper = mount(OllamaCloudUsageCell, { props: { account: account() } })
     const cell = wrapper.get('[data-testid="ollama-cloud-usage-cell"]')

@@ -4,6 +4,8 @@
     class="min-w-0 max-w-full space-y-1"
     data-testid="ollama-cloud-usage-cell"
   >
+    <!-- 订阅到期日（复用账号 expires_at，管理员手工填写） -->
+    <AccountExpiryBadge v-if="isOllamaCloudAccount(account)" :expires-at="account.expires_at" />
     <UsageProgressBar
       v-if="snapshot?.data?.five_hour"
       label="5h"
@@ -73,7 +75,8 @@ import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import type { Account, OllamaCloudUsageState } from '@/types'
 import UsageProgressBar from './UsageProgressBar.vue'
-import { formatOllamaResetText } from '@/utils/ollamaUsage'
+import AccountExpiryBadge from './AccountExpiryBadge.vue'
+import { formatOllamaResetText, isOllamaCloudAccount } from '@/utils/ollamaUsage'
 
 const props = defineProps<{ account: Account }>()
 const emit = defineEmits<{ updated: [state: OllamaCloudUsageState] }>()

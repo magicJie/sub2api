@@ -807,6 +807,8 @@ export interface OpsAdvancedSettings {
   display_alert_events: boolean
   auto_refresh_enabled: boolean
   auto_refresh_interval_seconds: number
+  /** 账号到期前多少天写运维告警（fork），0 关闭；旧后端不返回 */
+  account_expiry_reminder_days?: number
 }
 
 export interface OpsDataRetentionSettings {

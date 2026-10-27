@@ -757,6 +757,8 @@ export default {
         dashboardCards: '仪表盘卡片',
         displayAlertEvents: '展示告警事件',
         displayAlertEventsHint: '控制运维监控仪表盘中告警事件卡片是否显示，默认开启。',
+        accountExpiryReminderDays: '账号到期提醒（天）',
+        accountExpiryReminderDaysHint: '账号到期前多少天写一条运维告警（所有平台，每个到期日只提醒一次），0 表示关闭，默认 3。',
         displayOpenAITokenStats: '展示 Token 请求统计',
         displayOpenAITokenStatsHint: '按模型统计所有平台的 Token 请求，支持平台和分组筛选，默认关闭。',
         autoRefreshCountdown: '自动刷新：{seconds}s',
@@ -767,7 +769,8 @@ export default {
           ttftP99MaxRange: 'TTFT P99最大值必须大于等于0',
           requestErrorRateMaxRange: '请求错误率最大值必须在0-100之间',
           upstreamErrorRateMaxRange: '上游错误率最大值必须在0-100之间',
-          openaiQuotaAutoPauseRange: 'OpenAI 配额自动暂停阈值必须在 0-100 之间'
+          openaiQuotaAutoPauseRange: 'OpenAI 配额自动暂停阈值必须在 0-100 之间',
+          accountExpiryReminderDaysRange: '账号到期提醒天数必须是 0-90 的整数'
         }
       },
       concurrency: {

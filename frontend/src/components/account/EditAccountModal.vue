@@ -1882,6 +1882,27 @@
           <button type="button" class="btn btn-secondary btn-sm" @click="form.expires_at = getAccountExpiryTimestamp(12)">
             {{ t('payment.oneYear') }}
           </button>
+          <!-- 续费顺延：从当前到期日往后加，到期日已过期时从现在算 -->
+          <template v-if="form.expires_at">
+            <button
+              type="button"
+              class="btn btn-secondary btn-sm"
+              data-testid="account-expiry-extend-month"
+              :title="t('admin.accounts.expiryBadge.extendHint')"
+              @click="form.expires_at = extendAccountExpiry(form.expires_at, 1)"
+            >
+              {{ t('admin.accounts.expiryBadge.extendMonth') }}
+            </button>
+            <button
+              type="button"
+              class="btn btn-secondary btn-sm"
+              data-testid="account-expiry-extend-year"
+              :title="t('admin.accounts.expiryBadge.extendHint')"
+              @click="form.expires_at = extendAccountExpiry(form.expires_at, 12)"
+            >
+              {{ t('admin.accounts.expiryBadge.extendYear') }}
+            </button>
+          </template>
         </div>
         <p class="input-hint">
           {{ t('admin.accounts.expiresAtHint') }}
@@ -3345,7 +3366,7 @@ import {
 import { extractApiErrorMessage, extractI18nErrorMessage } from '@/utils/apiError'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
 import { supportsAccountQuota } from '@/utils/accountQuota'
-import { getAccountExpiryTimestamp } from '@/components/account/accountExpiry'
+import { extendAccountExpiry, getAccountExpiryTimestamp } from '@/components/account/accountExpiry'
 import { allSelectedGroupsEnableLongContextPricing } from '@/components/account/longContextBilling'
 import { VERTEX_LOCATION_OPTIONS } from '@/constants/account'
 import {

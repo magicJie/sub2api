@@ -1,3 +1,5 @@
+import type { Account } from '@/types'
+
 /** Keep rounded upstream refill hints relative instead of inventing a date. */
 export function formatOllamaResetText(
   text: string | undefined,
@@ -12,4 +14,12 @@ export function formatOllamaResetText(
   const unit = match[2].toLowerCase().replace(/s$/, '') as Intl.RelativeTimeFormatUnit
   const relative = new Intl.RelativeTimeFormat(locale, { numeric: 'always' }).format(amount, unit)
   return t('admin.accounts.ollamaCloud.approximateReset', { time: relative })
+}
+
+/**
+ * 判断账号是否为 Ollama Cloud 账号。目前由后端按 base_url（ollama.com）识别后下发
+ * `ollama_cloud_usage.eligible`（service.IsOllamaCloudUsageAccount）；独立 ollama 平台上线后只改这里。
+ */
+export function isOllamaCloudAccount(account: Pick<Account, 'ollama_cloud_usage'> | null | undefined): boolean {
+  return account?.ollama_cloud_usage?.eligible === true
 }

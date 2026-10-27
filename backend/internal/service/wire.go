@@ -401,8 +401,12 @@ func ProvideUsageCleanupService(repo UsageCleanupRepository, timingWheel *Timing
 }
 
 // ProvideAccountExpiryService creates and starts AccountExpiryService.
-func ProvideAccountExpiryService(accountRepo AccountRepository) *AccountExpiryService {
+func ProvideAccountExpiryService(accountRepo AccountRepository, opsService *OpsService) *AccountExpiryService {
 	svc := NewAccountExpiryService(accountRepo, time.Minute)
+	// 账号到期提醒（fork）：账号仓储实现了提醒表读写时才启用。
+	if reminderRepo, ok := accountRepo.(AccountExpiryReminderRepository); ok && opsService != nil {
+		svc.reminder = NewAccountExpiryReminder(reminderRepo, opsService)
+	}
 	svc.Start()
 	return svc
 }

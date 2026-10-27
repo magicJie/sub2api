@@ -179,6 +179,11 @@ const validation = computed(() => {
     if (default_threshold_5h < 0 || default_threshold_5h > 1 || default_threshold_7d < 0 || default_threshold_7d > 1) {
       errors.push(t('admin.ops.settings.validation.openaiQuotaAutoPauseRange'))
     }
+
+    const reminderDays = advancedSettings.value.account_expiry_reminder_days
+    if (reminderDays != null && (!Number.isInteger(reminderDays) || reminderDays < 0 || reminderDays > 90)) {
+      errors.push(t('admin.ops.settings.validation.accountExpiryReminderDaysRange'))
+    }
   }
 
   // 验证指标阈值
@@ -310,6 +315,20 @@ async function saveAllSettings() {
           <div v-if="emailConfig.alert.enabled">
             <label class="input-label">{{ t('admin.ops.settings.minSeverity') }}</label>
             <Select v-model="emailConfig.alert.min_severity" :options="severityOptions" />
+          </div>
+
+          <!-- 账号到期提醒（fork）：到期前 N 天写运维告警，0 关闭 -->
+          <div v-if="advancedSettings">
+            <label class="input-label">{{ t('admin.ops.settings.accountExpiryReminderDays') }}</label>
+            <input
+              v-model.number="advancedSettings.account_expiry_reminder_days"
+              type="number"
+              min="0"
+              max="90"
+              class="input"
+              data-testid="ops-account-expiry-reminder-days"
+            />
+            <p class="mt-1 text-xs text-gray-500">{{ t('admin.ops.settings.accountExpiryReminderDaysHint') }}</p>
           </div>
         </div>
       </div>
