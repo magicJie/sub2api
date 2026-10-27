@@ -81,7 +81,8 @@
 
 实现要点（迁移 252，`internal/service/proxy_egress_health.go`）：
 
-- 每 2 分钟巡检有账号在用的 egress 代理（Redis 选主，单实例执行）。连续 3 次失败才处置，避免抖动误伤；故障层级变化时重新计数、重新处置。
+- 巡检有账号在用的 egress 代理（Redis 选主，单实例执行），连续失败达到阈值才处置，避免抖动误伤；故障层级变化时重新计数、重新处置。
+- 巡检配置存于 settings `proxy_egress_health_config`：开关、间隔（30–3600 秒，默认 120）、失败阈值（1–20，默认 3）。在代理池页故障列表上方修改，下一轮生效；配置损坏时回退默认值。
 - 判层：链路无法解析或首跳组没有健康节点 → transport；否则经该代理探测失败 → egress。
 - 暂停用账号的 `schedulable=false`，处置记录在 `proxy_egress_incident_accounts`。原本就不可调度的账号只记 `alert_only`，恢复时不会被误打开。
 - 告警写入运维告警（`ops_alert_events`，egress P1、transport P2），走现有告警页面与邮件；运维监控关闭时只写日志。

@@ -188,7 +188,7 @@ func healthFixture(t *testing.T) (*ProxyEgressHealthService, *healthPoolRepo, *h
 	prev := activeProxyPoolService.Swap(pool)
 	t.Cleanup(func() { activeProxyPoolService.Store(prev) })
 	prober := &fakeEgressProber{down: map[string]bool{bad.URL(): true}}
-	svc := NewProxyEgressHealthService(pool, poolRepo, nil, prober, nil, nil, time.Minute)
+	svc := NewProxyEgressHealthService(pool, poolRepo, nil, prober, nil, nil, nil, time.Minute)
 	return svc, poolRepo, accRepo, prober
 }
 
@@ -198,7 +198,7 @@ func TestProxyEgressHealth_ThresholdAndPolicyActions(t *testing.T) {
 	bad := repo.members[0].Proxy
 
 	// 未到阈值：只记故障，不动账号。
-	for i := 0; i < proxyEgressFailThreshold-1; i++ {
+	for i := 0; i < ProxyEgressDefaultFailThreshold-1; i++ {
 		require.NoError(t, svc.CheckProxy(ctx, &bad))
 	}
 	require.Empty(t, repo.records)
@@ -249,7 +249,7 @@ func TestProxyEgressHealth_TransportFailureDoesNotTouchAccounts(t *testing.T) {
 		hopGroups: map[int64]ProxyHopGroup{gid: {ID: gid, Name: "g", Status: StatusActive}}, loaded: true})
 	t.Cleanup(func() { proxyChainState.Store(prevSnap) })
 
-	for i := 0; i < proxyEgressFailThreshold; i++ {
+	for i := 0; i < ProxyEgressDefaultFailThreshold; i++ {
 		require.NoError(t, svc.CheckProxy(ctx, &p))
 	}
 	require.Equal(t, ProxyIncidentLayerTransport, repo.incidents[p.ID].Layer)
@@ -334,3 +334,75 @@ func TestProxyEgressHealth_CheckAllResolvesDeletedProxy(t *testing.T) {
 	require.NoError(t, svc.CheckAll(context.Background()))
 	require.NotContains(t, repo.incidents, int64(99), "已删除代理的故障自动关闭")
 }
+
+type memSettingRepo struct {
+	SettingRepository
+	values map[string]string
+}
+
+func (r *memSettingRepo) GetValue(_ context.Context, key string) (string, error) {
+	v, ok := r.values[key]
+	if !ok {
+		return "", ErrSettingNotFound
+	}
+	return v, nil
+}
+
+func (r *memSettingRepo) Set(_ context.Context, key, value string) error {
+	r.values[key] = value
+	return nil
+}
+
+func TestProxyEgressHealthConfig(t *testing.T) {
+	svc, repo, accRepo, _ := healthFixture(t)
+	ctx := context.Background()
+	settings := &memSettingRepo{values: map[string]string{}}
+	svc.settings = settings
+	activeProxyEgressHealthService.Store("svc", svc)
+	t.Cleanup(func() { activeProxyEgressHealthService.Delete("svc") })
+
+	cfg, err := svc.pool.GetEgressHealthConfig(ctx)
+	require.NoError(t, err)
+	require.Equal(t, DefaultProxyEgressHealthConfig(), cfg, "未设置时用默认值")
+
+	_, err = svc.pool.UpdateEgressHealthConfig(ctx, ProxyEgressHealthConfig{Enabled: true, IntervalSeconds: 10, FailThreshold: 3})
+	require.ErrorIs(t, err, ErrProxyEgressConfigInvalid)
+	_, err = svc.pool.UpdateEgressHealthConfig(ctx, ProxyEgressHealthConfig{Enabled: true, IntervalSeconds: 60, FailThreshold: 0})
+	require.ErrorIs(t, err, ErrProxyEgressConfigInvalid)
+
+	// 阈值改为 1：第一次失败即处置。
+	_, err = svc.pool.UpdateEgressHealthConfig(ctx, ProxyEgressHealthConfig{Enabled: true, IntervalSeconds: 60, FailThreshold: 1})
+	require.NoError(t, err)
+	bad := repo.members[0].Proxy
+	require.NoError(t, svc.CheckProxy(ctx, &bad))
+	require.False(t, accRepo.accounts[11].Schedulable)
+
+	// 损坏的配置回退默认值，不让巡检停掉。
+	settings.values[SettingKeyProxyEgressHealth] = `{"interval_seconds":1}`
+	require.Equal(t, DefaultProxyEgressHealthConfig(), svc.config(ctx))
+}
+
+func TestProxyEgressHealthRunOnceRespectsConfig(t *testing.T) {
+	svc, _, _, _ := healthFixture(t)
+	settings := &memSettingRepo{values: map[string]string{}}
+	svc.settings = settings
+	now := time.Unix(1_000_000, 0)
+	svc.now = func() time.Time { return now }
+	svc.proxyRepo = &healthProxyRepo{}
+
+	settings.values[SettingKeyProxyEgressHealth] = `{"enabled":false,"interval_seconds":60,"fail_threshold":3}`
+	svc.runOnce()
+	require.True(t, svc.lastRun.IsZero(), "关闭时不巡检")
+
+	settings.values[SettingKeyProxyEgressHealth] = `{"enabled":true,"interval_seconds":60,"fail_threshold":3}`
+	svc.runOnce()
+	require.Equal(t, now, svc.lastRun)
+	first := now
+	now = now.Add(30 * time.Second)
+	svc.runOnce()
+	require.Equal(t, first, svc.lastRun, "未到间隔不巡检")
+	now = now.Add(31 * time.Second)
+	svc.runOnce()
+	require.Equal(t, now, svc.lastRun)
+}
+

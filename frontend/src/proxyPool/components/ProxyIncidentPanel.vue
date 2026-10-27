@@ -1,10 +1,12 @@
 <template>
-  <!-- 代理池（fork）：落地 IP 故障列表与一键处置。巡检每 2 分钟一次，连续 3 次失败才处置账号。 -->
+  <!-- 代理池（fork）：落地 IP 故障列表与一键处置。巡检间隔与失败阈值可配置。 -->
   <div class="space-y-3">
     <div class="flex flex-wrap items-center justify-between gap-2">
       <div class="min-w-0">
         <h3 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('admin.proxyPools.incidents') }}</h3>
-        <p class="text-xs text-gray-500 dark:text-dark-300">{{ t('admin.proxyPools.incidentsHint') }}</p>
+        <p class="text-xs text-gray-500 dark:text-dark-300">
+          {{ t('admin.proxyPools.incidentsHint', { interval: config.interval_seconds, threshold: config.fail_threshold }) }}
+        </p>
       </div>
       <div class="flex items-center gap-3">
         <label class="flex items-center gap-1.5 text-xs text-gray-600 dark:text-dark-300">
@@ -16,6 +18,28 @@
         </button>
       </div>
     </div>
+
+    <form
+      class="flex flex-wrap items-end gap-3 rounded-lg border border-gray-200 p-3 dark:border-dark-600"
+      @submit.prevent="saveConfig"
+    >
+      <label class="flex items-center gap-1.5 text-sm">
+        <input v-model="configForm.enabled" type="checkbox" class="rounded" />
+        {{ t('admin.proxyPools.healthEnabled') }}
+      </label>
+      <div>
+        <label class="input-label" for="egress-interval">{{ t('admin.proxyPools.healthInterval') }}</label>
+        <input id="egress-interval" v-model.number="configForm.interval_seconds" type="number" min="30" max="3600" class="input w-28" />
+      </div>
+      <div>
+        <label class="input-label" for="egress-threshold">{{ t('admin.proxyPools.healthThreshold') }}</label>
+        <input id="egress-threshold" v-model.number="configForm.fail_threshold" type="number" min="1" max="20" class="input w-24" />
+      </div>
+      <p class="input-hint flex-1">
+        {{ t('admin.proxyPools.healthConfigHint', { minutes: detectMinutes }) }}
+      </p>
+      <button type="submit" class="btn btn-secondary btn-sm" :disabled="savingConfig || !configDirty">{{ t('common.save') }}</button>
+    </form>
 
     <div v-if="visible.length === 0" class="rounded-lg border border-gray-200 py-6 text-center text-sm text-gray-500 dark:border-dark-600">
       {{ loading ? t('common.loading') : t('admin.proxyPools.noIncidents') }}
@@ -124,7 +148,11 @@ import { useAppStore } from '@/stores/app'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { formatDateTime } from '@/utils/format'
 import { extractI18nErrorMessage } from '@/utils/apiError'
-import proxyPoolAPI, { type ProxyEgressIncident, type ProxyEgressIncidentAccount } from '../api'
+import proxyPoolAPI, {
+  type ProxyEgressHealthConfig,
+  type ProxyEgressIncident,
+  type ProxyEgressIncidentAccount
+} from '../api'
 import ReplaceProxyDialog from './ReplaceProxyDialog.vue'
 
 const props = withDefaults(defineProps<{ active?: boolean }>(), { active: true })
@@ -139,6 +167,46 @@ const showResolved = ref(false)
 const busyKey = ref('')
 const confirmMigrate = ref<ProxyEgressIncident | null>(null)
 const replace = reactive({ open: false, accountId: null as number | null, accountName: '' })
+
+const config = ref<ProxyEgressHealthConfig>({ enabled: true, interval_seconds: 120, fail_threshold: 3 })
+const configForm = reactive<ProxyEgressHealthConfig>({ ...config.value })
+const savingConfig = ref(false)
+const configDirty = computed(
+  () =>
+    configForm.enabled !== config.value.enabled ||
+    configForm.interval_seconds !== config.value.interval_seconds ||
+    configForm.fail_threshold !== config.value.fail_threshold
+)
+// 从 IP 挂掉到处置账号的大致时长
+const detectMinutes = computed(() =>
+  Math.max(1, Math.round(((Number(configForm.interval_seconds) || 0) * (Number(configForm.fail_threshold) || 0)) / 60))
+)
+
+const loadConfig = async () => {
+  try {
+    config.value = await proxyPoolAPI.getEgressHealthConfig()
+    Object.assign(configForm, config.value)
+  } catch {
+    // 巡检服务不可用时保留默认展示
+  }
+}
+
+const saveConfig = async () => {
+  savingConfig.value = true
+  try {
+    config.value = await proxyPoolAPI.updateEgressHealthConfig({
+      enabled: configForm.enabled,
+      interval_seconds: Math.floor(Number(configForm.interval_seconds)),
+      fail_threshold: Math.floor(Number(configForm.fail_threshold))
+    })
+    Object.assign(configForm, config.value)
+    appStore.showSuccess(t('admin.proxyPools.healthConfigSaved'))
+  } catch (error) {
+    appStore.showError(errorText(error))
+  } finally {
+    savingConfig.value = false
+  }
+}
 
 const visible = computed(() => incidents.value.filter((i) => showResolved.value || i.status === 'open'))
 
@@ -176,7 +244,7 @@ const load = async () => {
 watch(
   () => props.active,
   (active) => {
-    if (active) void load()
+    if (active) void Promise.all([load(), loadConfig()])
   },
   { immediate: true }
 )

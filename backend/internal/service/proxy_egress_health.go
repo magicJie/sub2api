@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -21,7 +22,7 @@ import (
 //   - egress：传输层健康，但经该落地代理不通。按平台策略处置账号：
 //     sticky 或 on_egress_failure=pause → 暂停调度并告警；churn + reassign → 自动换池内其他 IP。
 //
-// 连续失败达到阈值才处置，避免网络抖动误伤；探测恢复后故障自动关闭，但暂停的账号不自动恢复，
+// 巡检间隔与失败阈值可在管理端配置（ProxyEgressHealthConfig）；连续失败达到阈值才处置，避免网络抖动误伤；探测恢复后故障自动关闭，但暂停的账号不自动恢复，
 // 需要人工「恢复」或「换 IP」（长期账号换 IP 是风控信号，必须人来定）。
 
 const (
@@ -35,12 +36,60 @@ const (
 	ProxyIncidentActionReassigned = "reassigned"
 	ProxyIncidentActionAlertOnly  = "alert_only"
 
-	proxyEgressFailThreshold = 3
-	proxyEgressCheckInterval = 2 * time.Minute
+	// 巡检配置默认值与取值范围（管理端可改，存于 settings，下一轮生效）。
+	ProxyEgressDefaultIntervalSeconds = 120
+	ProxyEgressDefaultFailThreshold   = 3
+	proxyEgressMinIntervalSeconds     = 30
+	proxyEgressMaxIntervalSeconds     = 3600
+	proxyEgressMaxFailThreshold       = 20
+	// SettingKeyProxyEgressHealth 是巡检配置（JSON）的 settings 键。
+	SettingKeyProxyEgressHealth = "proxy_egress_health_config"
+
+	proxyEgressTick          = 15 * time.Second // 调度粒度：每 tick 读一次配置，到点才巡检
 	proxyEgressProbeTimeout  = 20 * time.Second
 	proxyEgressLeaderLockKey = "proxy:egress:health:leader"
 	proxyEgressLeaderLockTTL = 10 * time.Minute
 )
+
+// ProxyEgressHealthConfig 是巡检配置：Enabled 关闭后不巡检、不处置（已有故障保持原状）。
+type ProxyEgressHealthConfig struct {
+	Enabled         bool `json:"enabled"`
+	IntervalSeconds int  `json:"interval_seconds"`
+	FailThreshold   int  `json:"fail_threshold"`
+}
+
+func DefaultProxyEgressHealthConfig() ProxyEgressHealthConfig {
+	return ProxyEgressHealthConfig{Enabled: true, IntervalSeconds: ProxyEgressDefaultIntervalSeconds, FailThreshold: ProxyEgressDefaultFailThreshold}
+}
+
+var ErrProxyEgressConfigInvalid = infraerrors.BadRequest("PROXY_EGRESS_CONFIG_INVALID",
+	"interval_seconds must be 30-3600 and fail_threshold must be 1-20")
+
+func validateProxyEgressHealthConfig(c ProxyEgressHealthConfig) error {
+	if c.IntervalSeconds < proxyEgressMinIntervalSeconds || c.IntervalSeconds > proxyEgressMaxIntervalSeconds ||
+		c.FailThreshold < 1 || c.FailThreshold > proxyEgressMaxFailThreshold {
+		return ErrProxyEgressConfigInvalid
+	}
+	return nil
+}
+
+// loadProxyEgressHealthConfig 读取巡检配置；未设置或损坏时用默认值（损坏的值不会让巡检停掉）。
+func loadProxyEgressHealthConfig(ctx context.Context, repo SettingRepository) ProxyEgressHealthConfig {
+	cfg := DefaultProxyEgressHealthConfig()
+	if repo == nil {
+		return cfg
+	}
+	raw, err := repo.GetValue(ctx, SettingKeyProxyEgressHealth)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return cfg
+	}
+	var stored ProxyEgressHealthConfig
+	if err := json.Unmarshal([]byte(raw), &stored); err != nil || validateProxyEgressHealthConfig(stored) != nil {
+		slog.Warn("proxy_egress_health_config_invalid", "value", raw)
+		return cfg
+	}
+	return stored
+}
 
 var (
 	ErrProxyIncidentNotPaused = infraerrors.BadRequest("PROXY_INCIDENT_ACCOUNT_NOT_PAUSED", "account is not paused by a landing IP failure")
@@ -108,9 +157,11 @@ type ProxyEgressHealthService struct {
 	prober    ProxyExitInfoProber
 	alerts    proxyEgressAlertSink
 	lockCache LeaderLockCache
+	settings  SettingRepository
 	owner     string
-	interval  time.Duration
+	tick      time.Duration
 	now       func() time.Time
+	lastRun   time.Time
 
 	stopCh   chan struct{}
 	stopOnce sync.Once
@@ -118,10 +169,10 @@ type ProxyEgressHealthService struct {
 }
 
 func NewProxyEgressHealthService(pool *ProxyPoolService, incidents ProxyEgressIncidentRepository, proxyRepo ProxyRepository,
-	prober ProxyExitInfoProber, alerts proxyEgressAlertSink, lockCache LeaderLockCache, interval time.Duration) *ProxyEgressHealthService {
+	prober ProxyExitInfoProber, alerts proxyEgressAlertSink, lockCache LeaderLockCache, settings SettingRepository, tick time.Duration) *ProxyEgressHealthService {
 	return &ProxyEgressHealthService{
 		pool: pool, incidents: incidents, proxyRepo: proxyRepo, prober: prober, alerts: alerts, lockCache: lockCache,
-		owner: fmt.Sprintf("proxy-egress-%d", time.Now().UnixNano()), interval: interval, now: time.Now,
+		settings: settings, owner: fmt.Sprintf("proxy-egress-%d", time.Now().UnixNano()), tick: tick, now: time.Now,
 		stopCh: make(chan struct{}),
 	}
 }
@@ -130,27 +181,28 @@ var activeProxyEgressHealthService sync.Map // 单例："svc" -> *ProxyEgressHea
 
 // ProvideProxyEgressHealthService 创建并启动落地 IP 巡检。
 func ProvideProxyEgressHealthService(pool *ProxyPoolService, poolRepo ProxyPoolRepository, proxyRepo ProxyRepository,
-	prober ProxyExitInfoProber, opsService *OpsService, lockCache LeaderLockCache, latencyCache ProxyLatencyCache) *ProxyEgressHealthService {
+	prober ProxyExitInfoProber, opsService *OpsService, lockCache LeaderLockCache, latencyCache ProxyLatencyCache,
+	settingRepo SettingRepository) *ProxyEgressHealthService {
 	pool.latencyCache = latencyCache
 	incidents, _ := poolRepo.(ProxyEgressIncidentRepository)
 	var alerts proxyEgressAlertSink
 	if opsService != nil {
 		alerts = opsService
 	}
-	svc := NewProxyEgressHealthService(pool, incidents, proxyRepo, prober, alerts, lockCache, proxyEgressCheckInterval)
+	svc := NewProxyEgressHealthService(pool, incidents, proxyRepo, prober, alerts, lockCache, settingRepo, proxyEgressTick)
 	activeProxyEgressHealthService.Store("svc", svc)
 	svc.Start()
 	return svc
 }
 
 func (s *ProxyEgressHealthService) Start() {
-	if s == nil || s.incidents == nil || s.prober == nil || s.interval <= 0 {
+	if s == nil || s.incidents == nil || s.prober == nil || s.tick <= 0 {
 		return
 	}
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		ticker := time.NewTicker(s.interval)
+		ticker := time.NewTicker(s.tick)
 		defer ticker.Stop()
 		for {
 			select {
@@ -171,8 +223,20 @@ func (s *ProxyEgressHealthService) Stop() {
 	s.wg.Wait()
 }
 
+func (s *ProxyEgressHealthService) config(ctx context.Context) ProxyEgressHealthConfig {
+	return loadProxyEgressHealthConfig(ctx, s.settings)
+}
+
+// runOnce 每个 tick 调用一次：读配置，关闭或未到间隔则跳过。
 func (s *ProxyEgressHealthService) runOnce() {
-	ctx, cancel := context.WithTimeout(context.Background(), s.interval)
+	cfg := s.config(context.Background())
+	interval := time.Duration(cfg.IntervalSeconds) * time.Second
+	now := s.now()
+	if !cfg.Enabled || now.Sub(s.lastRun) < interval {
+		return
+	}
+	s.lastRun = now
+	ctx, cancel := context.WithTimeout(context.Background(), interval)
 	defer cancel()
 	if s.lockCache != nil {
 		ok, err := s.lockCache.TryAcquireLeaderLock(ctx, proxyEgressLeaderLockKey, s.owner, proxyEgressLeaderLockTTL)
@@ -233,7 +297,7 @@ func (s *ProxyEgressHealthService) CheckProxy(ctx context.Context, p *Proxy) err
 	if err != nil {
 		return err
 	}
-	if incident.HandledAt != nil || incident.FailCount < proxyEgressFailThreshold {
+	if incident.HandledAt != nil || incident.FailCount < s.config(ctx).FailThreshold {
 		return nil
 	}
 	return s.handleIncident(ctx, p, incident)
@@ -666,4 +730,32 @@ func (s *ProxyPoolService) CheckProxyHealth(ctx context.Context, proxyID int64) 
 		return nil, err
 	}
 	return health.incidents.GetOpenIncident(ctx, proxyID)
+}
+
+// GetEgressHealthConfig 返回当前巡检配置（未设置时为默认值）。
+func (s *ProxyPoolService) GetEgressHealthConfig(ctx context.Context) (ProxyEgressHealthConfig, error) {
+	v, ok := activeProxyEgressHealthService.Load("svc")
+	if !ok {
+		return ProxyEgressHealthConfig{}, ErrProxyHealthUnavailable
+	}
+	return v.(*ProxyEgressHealthService).config(ctx), nil
+}
+
+// UpdateEgressHealthConfig 保存巡检配置，下一个调度周期生效（无需重启）。
+func (s *ProxyPoolService) UpdateEgressHealthConfig(ctx context.Context, cfg ProxyEgressHealthConfig) (ProxyEgressHealthConfig, error) {
+	if err := validateProxyEgressHealthConfig(cfg); err != nil {
+		return cfg, err
+	}
+	v, ok := activeProxyEgressHealthService.Load("svc")
+	if !ok || v.(*ProxyEgressHealthService).settings == nil {
+		return cfg, ErrProxyHealthUnavailable
+	}
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		return cfg, err
+	}
+	if err := v.(*ProxyEgressHealthService).settings.Set(ctx, SettingKeyProxyEgressHealth, string(raw)); err != nil {
+		return cfg, err
+	}
+	return cfg, nil
 }
