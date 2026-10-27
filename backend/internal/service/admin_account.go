@@ -533,6 +533,9 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 		return nil, err
 	}
 	defer releaseProxyPool()
+	if err := checkAccountProxyRole(ctx, s.proxyRepo, input.ProxyID); err != nil { // 代理池（fork）
+		return nil, err
+	}
 	account, err := buildAccountForCreate(input, accountExtra)
 	if err != nil {
 		return nil, err
@@ -774,6 +777,11 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if input.ProxyID != nil && !account.IsCredentialShadow() {
 		if err := checkAccountProxyPoolLock(ctx, account, input.ProxyID); err != nil { // 代理池（fork）
 			return nil, err
+		}
+		if proxyIDChanged(account.ProxyID, input.ProxyID) {
+			if err := checkAccountProxyRole(ctx, s.proxyRepo, input.ProxyID); err != nil { // 代理池（fork）
+				return nil, err
+			}
 		}
 		// 0 表示清除代理（前端发送 0 而不是 null 来表达清除意图）
 		if *input.ProxyID == 0 {
@@ -1066,6 +1074,9 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 			}
 		}
 		if err := checkAccountsProxyPoolLock(ctx, cachedTargets, input.ProxyID); err != nil { // 代理池（fork）
+			return nil, err
+		}
+		if err := checkAccountProxyRole(ctx, s.proxyRepo, input.ProxyID); err != nil { // 代理池（fork）
 			return nil, err
 		}
 	}

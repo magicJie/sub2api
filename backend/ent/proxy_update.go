@@ -354,6 +354,20 @@ func (_u *ProxyUpdate) ClearPoolID() *ProxyUpdate {
 	return _u
 }
 
+// SetRole sets the "role" field.
+func (_u *ProxyUpdate) SetRole(v string) *ProxyUpdate {
+	_u.mutation.SetRole(v)
+	return _u
+}
+
+// SetNillableRole sets the "role" field if the given value is not nil.
+func (_u *ProxyUpdate) SetNillableRole(v *string) *ProxyUpdate {
+	if v != nil {
+		_u.SetRole(*v)
+	}
+	return _u
+}
+
 // AddAccountIDs adds the "accounts" edge to the Account entity by IDs.
 func (_u *ProxyUpdate) AddAccountIDs(ids ...int64) *ProxyUpdate {
 	_u.mutation.AddAccountIDs(ids...)
@@ -526,6 +540,11 @@ func (_u *ProxyUpdate) check() error {
 			return &ValidationError{Name: "upstream_mode", err: fmt.Errorf(`ent: validator failed for field "Proxy.upstream_mode": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.Role(); ok {
+		if err := proxy.RoleValidator(v); err != nil {
+			return &ValidationError{Name: "role", err: fmt.Errorf(`ent: validator failed for field "Proxy.role": %w`, err)}
+		}
+	}
 	return nil
 }
 
@@ -630,6 +649,9 @@ func (_u *ProxyUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.PoolIDCleared() {
 		_spec.ClearField(proxy.FieldPoolID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.Role(); ok {
+		_spec.SetField(proxy.FieldRole, field.TypeString, value)
 	}
 	if _u.mutation.AccountsCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -1095,6 +1117,20 @@ func (_u *ProxyUpdateOne) ClearPoolID() *ProxyUpdateOne {
 	return _u
 }
 
+// SetRole sets the "role" field.
+func (_u *ProxyUpdateOne) SetRole(v string) *ProxyUpdateOne {
+	_u.mutation.SetRole(v)
+	return _u
+}
+
+// SetNillableRole sets the "role" field if the given value is not nil.
+func (_u *ProxyUpdateOne) SetNillableRole(v *string) *ProxyUpdateOne {
+	if v != nil {
+		_u.SetRole(*v)
+	}
+	return _u
+}
+
 // AddAccountIDs adds the "accounts" edge to the Account entity by IDs.
 func (_u *ProxyUpdateOne) AddAccountIDs(ids ...int64) *ProxyUpdateOne {
 	_u.mutation.AddAccountIDs(ids...)
@@ -1280,6 +1316,11 @@ func (_u *ProxyUpdateOne) check() error {
 			return &ValidationError{Name: "upstream_mode", err: fmt.Errorf(`ent: validator failed for field "Proxy.upstream_mode": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.Role(); ok {
+		if err := proxy.RoleValidator(v); err != nil {
+			return &ValidationError{Name: "role", err: fmt.Errorf(`ent: validator failed for field "Proxy.role": %w`, err)}
+		}
+	}
 	return nil
 }
 
@@ -1401,6 +1442,9 @@ func (_u *ProxyUpdateOne) sqlSave(ctx context.Context) (_node *Proxy, err error)
 	}
 	if _u.mutation.PoolIDCleared() {
 		_spec.ClearField(proxy.FieldPoolID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.Role(); ok {
+		_spec.SetField(proxy.FieldRole, field.TypeString, value)
 	}
 	if _u.mutation.AccountsCleared() {
 		edge := &sqlgraph.EdgeSpec{

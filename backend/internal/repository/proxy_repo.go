@@ -64,6 +64,7 @@ func (r *proxyRepository) Create(ctx context.Context, proxyIn *service.Proxy) er
 		builder.SetOptions(proxyIn.Options)
 	}
 	builder.SetNillablePoolID(proxyIn.PoolID) // 代理池（fork）
+	builder.SetRole(service.NormalizeProxyRole(proxyIn.Role))
 
 	created, err := builder.Save(ctx)
 	if err == nil {
@@ -204,6 +205,7 @@ func updateProxyAndInvalidateProbeSnapshots(ctx context.Context, client *dbent.C
 	} else {
 		builder.ClearPoolID()
 	}
+	builder.SetRole(service.NormalizeProxyRole(proxyIn.Role))
 
 	updated, err := builder.Save(ctx)
 	if dbent.IsNotFound(err) {
@@ -633,11 +635,12 @@ func proxyEntityToService(m *dbent.Proxy) *service.Proxy {
 		BackupProxyID:  m.BackupProxyID,
 		ExpiryWarnDays: m.ExpiryWarnDays,
 		// 链式代理（fork）
-		UpstreamMode:    m.UpstreamMode,
-		UpstreamProxyID: m.UpstreamProxyID,
+		UpstreamMode:       m.UpstreamMode,
+		UpstreamProxyID:    m.UpstreamProxyID,
 		UpstreamHopGroupID: m.UpstreamHopGroupID,
-		Options:         m.Options,
-		PoolID:          m.PoolID, // 代理池（fork）
+		Options:            m.Options,
+		PoolID:             m.PoolID, // 代理池（fork）
+		Role:               m.Role,
 	}
 	if m.Username != nil {
 		out.Username = *m.Username

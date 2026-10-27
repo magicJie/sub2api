@@ -137,6 +137,13 @@
               >
                 {{ t('admin.proxies.defaultUpstreamBadge') }}
               </span>
+              <span
+                v-if="row.role === 'transport'"
+                class="badge badge-gray whitespace-nowrap text-xs"
+                :title="t('admin.proxyPools.roleTransportHint')"
+              >
+                {{ t('admin.proxyPools.roleTransport') }}
+              </span>
             </div>
           </template>
 
@@ -624,6 +631,11 @@
           <Select v-model="createForm.backup_proxy_id" :options="backupProxyOptions()" />
         </div>
         <div>
+          <label class="input-label">{{ t('admin.proxyPools.role') }}</label>
+          <Select v-model="createForm.role" :options="proxyRoleOptions" />
+          <p v-if="createForm.role === 'transport'" class="input-hint mt-1">{{ t('admin.proxyPools.roleTransportHint') }}</p>
+        </div>
+        <div v-if="createForm.role !== 'transport'">
           <label class="input-label">{{ t('admin.proxyPools.pool') }}</label>
           <Select v-model="createForm.pool_id" :options="proxyPoolOptions" />
         </div>
@@ -923,6 +935,11 @@
           <Select v-model="editForm.backup_proxy_id" :options="backupProxyOptions(editingProxy?.id)" />
         </div>
         <div>
+          <label class="input-label">{{ t('admin.proxyPools.role') }}</label>
+          <Select v-model="editForm.role" :options="proxyRoleOptions" />
+          <p v-if="editForm.role === 'transport'" class="input-hint mt-1">{{ t('admin.proxyPools.roleTransportHint') }}</p>
+        </div>
+        <div v-if="editForm.role !== 'transport'">
           <label class="input-label">{{ t('admin.proxyPools.pool') }}</label>
           <Select v-model="editForm.pool_id" :options="proxyPoolOptions" />
         </div>
@@ -1182,7 +1199,8 @@ import type {
   ProxyAccountSummary,
   ProxyProtocol,
   ProxyQualityCheckResult,
-  ProxyUpstreamMode
+  ProxyUpstreamMode,
+  ProxyRole
 } from '@/types'
 import type { BatchCreateProxyItem } from '@/api/admin/proxies'
 import type { Column } from '@/components/common/types'
@@ -1397,6 +1415,7 @@ const createForm = reactive({
   upstream_hop_group_id: null as number | null, // 链式代理（fork）
   options: {} as ProxyOptions,
   pool_id: null as number | null, // 代理池（fork）：null 为默认池
+  role: 'egress' as ProxyRole, // 代理池（fork）：transport 不进代理池
 })
 
 const editForm = reactive({
@@ -1416,6 +1435,7 @@ const editForm = reactive({
   upstream_hop_group_id: null as number | null, // 链式代理（fork）
   options: {} as ProxyOptions,
   pool_id: null as number | null, // 代理池（fork）：null 为默认池
+  role: 'egress' as ProxyRole, // 代理池（fork）：transport 不进代理池
 })
 
 const allProxiesForBackup = ref<Proxy[]>([])
@@ -1439,6 +1459,10 @@ const showChainSettings = ref(false)
 // 代理池（fork）
 const showProxyPools = ref(false)
 const { poolOptions: proxyPoolOptions, loadPools: loadProxyPools } = useProxyPoolOptions()
+const proxyRoleOptions = computed(() => [
+  { value: 'egress', label: t('admin.proxyPools.roleEgress') },
+  { value: 'transport', label: t('admin.proxyPools.roleTransport') }
+])
 const handleProxyPoolsChanged = () => {
   void loadProxyPools()
   loadProxies()
@@ -1676,6 +1700,7 @@ const closeCreateModal = () => {
   createUpstreamTouched.value = false
   createForm.options = {}
   createForm.pool_id = null // 代理池（fork）
+  createForm.role = 'egress'
   createShareLink.value = ''
   createPasswordVisible.value = false
   batchInput.value = ''
@@ -1839,7 +1864,8 @@ const handleCreateProxy = async () => {
       fallback_mode: createForm.fallback_mode,
       backup_proxy_id: createForm.fallback_mode === 'proxy' ? createForm.backup_proxy_id : null,
       expiry_warn_days: createForm.expiry_warn_days,
-      pool_id: createForm.pool_id, // 代理池（fork）
+      pool_id: createForm.role === 'transport' ? null : createForm.pool_id, // 代理池（fork）
+      role: createForm.role,
     })
     appStore.showSuccess(t('admin.proxies.proxyCreated'))
     closeCreateModal()
@@ -1870,6 +1896,7 @@ const handleEdit = (proxy: Proxy) => {
   editForm.upstream_hop_group_id = proxy.upstream_hop_group_id ?? null // 链式代理（fork）
   editForm.options = { ...(proxy.options || {}) }
   editForm.pool_id = proxy.pool_id ?? null // 代理池（fork）
+  editForm.role = proxy.role === 'transport' ? 'transport' : 'egress'
   void loadProxyPools()
   editShareLink.value = ''
   editPasswordVisible.value = false
@@ -1931,7 +1958,8 @@ const handleUpdateProxy = async () => {
       fallback_mode: editForm.fallback_mode,
       backup_proxy_id: editForm.fallback_mode === 'proxy' ? editForm.backup_proxy_id : null,
       expiry_warn_days: editForm.expiry_warn_days,
-      pool_id: editForm.pool_id, // 代理池（fork）
+      pool_id: editForm.role === 'transport' ? null : editForm.pool_id, // 代理池（fork）
+      role: editForm.role,
     }
 
     // Only include password if user actually modified the field

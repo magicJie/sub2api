@@ -1746,6 +1746,12 @@ func init() {
 	proxy.DefaultUpstreamMode = proxyDescUpstreamMode.Default.(string)
 	// proxy.UpstreamModeValidator is a validator for the "upstream_mode" field. It is called by the builders before save.
 	proxy.UpstreamModeValidator = proxyDescUpstreamMode.Validators[0].(func(string) error)
+	// proxyDescRole is the schema descriptor for role field.
+	proxyDescRole := proxyFields[16].Descriptor()
+	// proxy.DefaultRole holds the default value on creation for the role field.
+	proxy.DefaultRole = proxyDescRole.Default.(string)
+	// proxy.RoleValidator is a validator for the "role" field. It is called by the builders before save.
+	proxy.RoleValidator = proxyDescRole.Validators[0].(func(string) error)
 	proxyhopgroupMixin := schema.ProxyHopGroup{}.Mixin()
 	proxyhopgroupMixinFields0 := proxyhopgroupMixin[0].Fields()
 	_ = proxyhopgroupMixinFields0

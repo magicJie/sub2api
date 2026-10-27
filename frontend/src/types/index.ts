@@ -956,6 +956,7 @@ export type ProxyProtocol =
   | 'trojan'
 /** 前置代理模式：direct=直连；default=跟随全局默认前置代理；proxy=使用 upstream_proxy_id 指定的代理 */
 export type ProxyUpstreamMode = 'direct' | 'default' | 'proxy' | 'hop_group' // 链式代理（fork）
+export type ProxyRole = 'egress' | 'transport' // 代理池（fork）
 
 /** 链路中的一跳（先拨号的在前，不含代理自身） */
 export interface ProxyChainHop {
@@ -1010,6 +1011,8 @@ export interface Proxy {
   chain_error?: string
   /** 代理池（fork）：所属代理池，null 为默认池 */
   pool_id?: number | null
+  /** 代理池（fork）：egress 为静态落地 IP；transport 只做传输（前置/机场/动态代理），不进代理池、不绑账号 */
+  role?: ProxyRole
   created_at: string
   updated_at: string
 }
@@ -1717,6 +1720,7 @@ export interface CreateProxyRequest {
   upstream_hop_group_id?: number | null // 链式代理（fork）
   options?: Record<string, string>
   pool_id?: number | null // 代理池（fork）
+  role?: ProxyRole // 代理池（fork）
 }
 
 export interface UpdateProxyRequest {
@@ -1736,6 +1740,7 @@ export interface UpdateProxyRequest {
   upstream_hop_group_id?: number | null // 链式代理（fork）
   options?: Record<string, string>
   pool_id?: number | null // 代理池（fork）
+  role?: ProxyRole // 代理池（fork）
 }
 
 export interface AdminDataPayload {

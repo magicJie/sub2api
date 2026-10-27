@@ -247,6 +247,7 @@ func (h *ProxyHandler) ImportData(c *gin.Context) {
 			ExpiryWarnDays: item.ExpiryWarnDays,
 
 			ProxyChainInput: item.DataProxyChain.toInput(chainRefs), // 链式代理（fork）
+			Role:            item.Role,                              // 代理池（fork）
 		})
 		if err != nil {
 			result.ProxyFailed++

@@ -90,6 +90,12 @@ func (s *adminServiceImpl) CreateProxy(ctx context.Context, input *CreateProxyIn
 		return nil, err
 	}
 	proxy.PoolID = poolID
+	if err := applyProxyRole(proxy, input.Role, true); err != nil { // 代理池（fork）
+		return nil, err
+	}
+	if err := checkProxyRoleConstraints(ctx, s.proxyRepo, proxy, nil); err != nil { // 代理池（fork）
+		return nil, err
+	}
 	if err := applyProxyChainCreate(ctx, s.proxyRepo, s.proxyChainSettingRepo(), proxy, &input.ProxyChainInput); err != nil { // 链式代理（fork）
 		return nil, err
 	}
@@ -114,6 +120,7 @@ func (s *adminServiceImpl) UpdateProxy(ctx context.Context, id int64, input *Upd
 	if err != nil {
 		return nil, err
 	}
+	prev := *proxy // 代理池（fork）：角色约束需要编辑前的状态
 
 	// Merge only supplied fields, then validate the resulting fallback configuration.
 	mode := proxy.FallbackMode
@@ -164,6 +171,12 @@ func (s *adminServiceImpl) UpdateProxy(ctx context.Context, id int64, input *Upd
 		if proxy.PoolID, err = normalizeProxyPoolRef(ctx, input.PoolID); err != nil {
 			return nil, err
 		}
+	}
+	if err := applyProxyRole(proxy, input.Role, input.PoolIDSet); err != nil { // 代理池（fork）
+		return nil, err
+	}
+	if err := checkProxyRoleConstraints(ctx, s.proxyRepo, proxy, &prev); err != nil { // 代理池（fork）
+		return nil, err
 	}
 	if err := applyProxyChainUpdate(ctx, s.proxyRepo, s.proxyChainSettingRepo(), proxy, &input.ProxyChainUpdateInput); err != nil { // 链式代理（fork）
 		return nil, err
