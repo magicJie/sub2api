@@ -756,6 +756,8 @@ export default {
         dashboardCards: 'Dashboard Cards',
         displayAlertEvents: 'Display alert events',
         displayAlertEventsHint: 'Show or hide the recent alert events card on the ops dashboard. Enabled by default.',
+        accountExpiryReminderDays: 'Account expiry reminder (days)',
+        accountExpiryReminderDaysHint: 'Raise one ops alert this many days before an account expires (all platforms, once per expiry date). 0 disables it; default 3.',
         displayOpenAITokenStats: 'Display token request stats',
         displayOpenAITokenStatsHint: 'Show token request stats by model across all platforms, with platform and group filters. Hidden by default.',
         autoRefreshCountdown: 'Auto refresh: {seconds}s',
@@ -766,7 +768,8 @@ export default {
           ttftP99MaxRange: 'TTFT P99 maximum must be a number ≥ 0',
           requestErrorRateMaxRange: 'Request error rate maximum must be between 0 and 100',
           upstreamErrorRateMaxRange: 'Upstream error rate maximum must be between 0 and 100',
-          openaiQuotaAutoPauseRange: 'OpenAI quota auto-pause threshold must be between 0 and 100'
+          openaiQuotaAutoPauseRange: 'OpenAI quota auto-pause threshold must be between 0 and 100',
+          accountExpiryReminderDaysRange: 'Account expiry reminder days must be an integer between 0 and 90'
         }
       },
       concurrency: {

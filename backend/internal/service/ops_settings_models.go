@@ -110,6 +110,8 @@ type OpsAdvancedSettings struct {
 	DisplayAlertEvents              bool `json:"display_alert_events"`
 	AutoRefreshEnabled              bool `json:"auto_refresh_enabled"`
 	AutoRefreshIntervalSec          int  `json:"auto_refresh_interval_seconds"`
+	// AccountExpiryReminderDays：账号到期前多少天写运维告警（fork），0 关闭，默认 3。
+	AccountExpiryReminderDays int `json:"account_expiry_reminder_days"`
 }
 
 type OpsOpenAIAccountQuotaAutoPauseSettings struct {

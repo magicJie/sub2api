@@ -10,6 +10,7 @@ import (
 // AccountExpiryService periodically pauses expired accounts when auto-pause is enabled.
 type AccountExpiryService struct {
 	accountRepo AccountRepository
+	reminder    *AccountExpiryReminder // 到期前提醒（fork），可为空
 	interval    time.Duration
 	stopCh      chan struct{}
 	stopOnce    sync.Once
@@ -63,9 +64,13 @@ func (s *AccountExpiryService) runOnce() {
 	updated, err := s.accountRepo.AutoPauseExpiredAccounts(ctx, time.Now())
 	if err != nil {
 		log.Printf("[AccountExpiry] Auto pause expired accounts failed: %v", err)
-		return
 	}
 	if updated > 0 {
 		log.Printf("[AccountExpiry] Auto paused %d expired accounts", updated)
+	}
+	if s.reminder != nil {
+		if _, err := s.reminder.RunOnce(ctx); err != nil {
+			log.Printf("[AccountExpiry] Expiry reminder failed: %v", err)
+		}
 	}
 }

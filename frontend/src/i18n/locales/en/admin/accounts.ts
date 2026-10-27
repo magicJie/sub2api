@@ -294,6 +294,17 @@ export default {
         hint: 'Displayed as "group / base score / sticky bonus". The base score is computed within the current filtered candidate set and includes priority, load, queue depth, error rate, first-token latency, reset window, quota headroom, billing rate, and related factors. The sticky bonus applies only when sticky weighting is enabled for previous_response_id or session_hash. Higher scores are preferred.'
       },
       usageWindowsHint: '"5h / 7d" are the upstream account\'s official rolling usage windows (e.g. OpenAI ChatGPT, Claude). They are imposed by the upstream provider on the account itself — not configured by sub2api, and unrelated to the models you map. Usage resets automatically once each window rolls over, and the limit cannot be lifted from within sub2api.',
+      expiryBadge: {
+        unset: 'No expiry date set',
+        expiresOn: 'Expires {date}',
+        daysLeft: '{days}d left',
+        lessThanOneDay: '< 1 day left',
+        expiredToday: 'Expired',
+        expiredDaysAgo: 'Expired {days}d ago',
+        extendMonth: '+1 month',
+        extendYear: '+1 year',
+        extendHint: 'Extends from the current expiry date; starts from now when empty or already expired.'
+      },
       ollamaCloud: {
         approximateReset: '{time} (approx.)',
         staleData: 'Showing previous data.',
