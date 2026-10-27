@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,8 +20,8 @@ import (
 //   - proxy_account_bindings 由 accounts 上的触发器（迁移 248）在 proxy_id 变化 / 账号删除时维护，
 //     因此所有改代理的路径（手动选择、过期回退、CRS 同步……）都会被记录。
 //   - 从池中分配的绑定标记 locked=true；锁定期间管理端不允许修改账号代理，需先解绑（解除锁定）。
-//   - 平台上限按“历史累计”计数：一个代理被某平台的多少个不同账号用过（含已解绑、已删除）。
-//     达到上限即视为该平台已退役，不再分配给该平台的新账号。
+//   - 分配规则由平台 IP 策略决定（proxy_ip_policy.go）：没有策略的平台不能从池分配；
+//     计数按落地 IP 合并，“历史累计”含已解绑、已删除的账号，达到上限即对该平台永久退役。
 
 const (
 	ProxyBindingSourceManual = "manual"
@@ -35,32 +34,33 @@ const (
 )
 
 var (
-	ErrProxyPoolNotFound        = infraerrors.NotFound("PROXY_POOL_NOT_FOUND", "proxy pool not found")
-	ErrProxyPoolNameExists      = infraerrors.Conflict("PROXY_POOL_NAME_EXISTS", "proxy pool name already exists")
-	ErrProxyPoolDefaultDelete   = infraerrors.BadRequest("PROXY_POOL_DEFAULT_UNDELETABLE", "default proxy pool cannot be deleted")
-	ErrProxyPoolNoAvailable     = infraerrors.Conflict("PROXY_POOL_NO_AVAILABLE_PROXY", "no available proxy in pool for this platform (all retired, inactive or expired)")
-	ErrProxyPoolProxyNotInPool  = infraerrors.BadRequest("PROXY_POOL_PROXY_UNAVAILABLE", "proxy is not an available member of the proxy pool for this platform")
-	ErrProxyPoolUnavailable     = infraerrors.ServiceUnavailable("PROXY_POOL_UNAVAILABLE", "proxy pool service is not available")
-	ErrAccountProxyLocked       = infraerrors.Conflict("ACCOUNT_PROXY_LOCKED", "account proxy is locked by proxy pool binding; unbind it first")
-	ErrProxyPoolShadowAccount   = infraerrors.BadRequest("PROXY_POOL_SHADOW_ACCOUNT", "shadow account inherits proxy from its parent account")
-	ErrProxyPoolLimitInvalid    = infraerrors.BadRequest("PROXY_POOL_LIMIT_INVALID", "platform limit must be >= 1")
-	ErrProxyPoolNameRequired    = infraerrors.BadRequest("PROXY_POOL_NAME_REQUIRED", "proxy pool name is required")
-	ErrProxyPoolBindingNotFound = infraerrors.NotFound("PROXY_POOL_BINDING_NOT_FOUND", "account has no active proxy binding")
-	ErrProxyRoleInvalid         = infraerrors.BadRequest("PROXY_ROLE_INVALID", "proxy role must be egress or transport")
-	ErrProxyPoolTransportProxy  = infraerrors.BadRequest("PROXY_POOL_TRANSPORT_PROXY", "transport proxy cannot join a proxy pool")
-	ErrProxyRoleInUse           = infraerrors.Conflict("PROXY_ROLE_IN_USE", "proxy is used by accounts; move them to another proxy before marking it transport")
-	ErrAccountTransportProxy    = infraerrors.BadRequest("ACCOUNT_TRANSPORT_PROXY", "transport proxy cannot be bound to accounts; choose an egress proxy")
-	ErrProxyEgressHostExists    = infraerrors.Conflict("PROXY_EGRESS_HOST_EXISTS", "an egress proxy with the same landing IP already exists")
+	ErrProxyPoolNotFound           = infraerrors.NotFound("PROXY_POOL_NOT_FOUND", "proxy pool not found")
+	ErrProxyPoolNameExists         = infraerrors.Conflict("PROXY_POOL_NAME_EXISTS", "proxy pool name already exists")
+	ErrProxyPoolDefaultDelete      = infraerrors.BadRequest("PROXY_POOL_DEFAULT_UNDELETABLE", "default proxy pool cannot be deleted")
+	ErrProxyPoolNoAvailable        = infraerrors.Conflict("PROXY_POOL_NO_AVAILABLE_PROXY", "no available proxy in pool for this platform (all retired, inactive or expired)")
+	ErrProxyPoolProxyNotInPool     = infraerrors.BadRequest("PROXY_POOL_PROXY_UNAVAILABLE", "proxy is not an available member of the proxy pool for this platform")
+	ErrProxyPoolUnavailable        = infraerrors.ServiceUnavailable("PROXY_POOL_UNAVAILABLE", "proxy pool service is not available")
+	ErrAccountProxyLocked          = infraerrors.Conflict("ACCOUNT_PROXY_LOCKED", "account proxy is locked by proxy pool binding; unbind it first")
+	ErrProxyPoolShadowAccount      = infraerrors.BadRequest("PROXY_POOL_SHADOW_ACCOUNT", "shadow account inherits proxy from its parent account")
+	ErrProxyPoolLimitInvalid       = infraerrors.BadRequest("PROXY_POOL_LIMIT_INVALID", "platform limit must be >= 1")
+	ErrProxyPoolNameRequired       = infraerrors.BadRequest("PROXY_POOL_NAME_REQUIRED", "proxy pool name is required")
+	ErrProxyPoolBindingNotFound    = infraerrors.NotFound("PROXY_POOL_BINDING_NOT_FOUND", "account has no active proxy binding")
+	ErrProxyPoolReferencedByPolicy = infraerrors.Conflict("PROXY_POOL_REFERENCED_BY_POLICY", "proxy pool is referenced by a platform IP policy; remove it from the policy first")
+	ErrProxyRoleInvalid            = infraerrors.BadRequest("PROXY_ROLE_INVALID", "proxy role must be egress or transport")
+	ErrProxyPoolTransportProxy     = infraerrors.BadRequest("PROXY_POOL_TRANSPORT_PROXY", "transport proxy cannot join a proxy pool")
+	ErrProxyRoleInUse              = infraerrors.Conflict("PROXY_ROLE_IN_USE", "proxy is used by accounts; move them to another proxy before marking it transport")
+	ErrAccountTransportProxy       = infraerrors.BadRequest("ACCOUNT_TRANSPORT_PROXY", "transport proxy cannot be bound to accounts; choose an egress proxy")
+	ErrProxyEgressHostExists       = infraerrors.Conflict("PROXY_EGRESS_HOST_EXISTS", "an egress proxy with the same landing IP already exists")
 )
 
+// ProxyPool 只是落地 IP 的库存分组；平台规则见 ProxyIPPolicy。
 type ProxyPool struct {
-	ID             int64
-	Name           string
-	Description    string
-	PlatformLimits map[string]int
-	IsDefault      bool
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID          int64
+	Name        string
+	Description string
+	IsDefault   bool
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 
 	ProxyCount int64 // 仅列表填充
 }
@@ -110,6 +110,10 @@ type ProxyPoolRepository interface {
 	ListLockedAccountIDs(ctx context.Context, accountIDs []int64) ([]int64, error)
 	// EgressHostTaken 报告是否已有其他未删除的 egress 代理使用同一落地 IP（host，忽略大小写）。
 	EgressHostTaken(ctx context.Context, host string, excludeProxyID int64) (bool, error)
+
+	ListPolicies(ctx context.Context) ([]ProxyIPPolicy, error)
+	UpsertPolicy(ctx context.Context, policy *ProxyIPPolicy) error
+	DeletePolicy(ctx context.Context, platform string) error
 }
 
 type ProxyPoolService struct {
@@ -138,18 +142,6 @@ func normalizeProxyPoolInput(pool *ProxyPool) error {
 	if pool.Name == "" {
 		return ErrProxyPoolNameRequired
 	}
-	limits := make(map[string]int, len(pool.PlatformLimits))
-	for platform, limit := range pool.PlatformLimits {
-		platform = strings.TrimSpace(platform)
-		if platform == "" {
-			continue
-		}
-		if limit < 1 {
-			return ErrProxyPoolLimitInvalid
-		}
-		limits[platform] = limit
-	}
-	pool.PlatformLimits = limits
 	return nil
 }
 
@@ -168,7 +160,7 @@ func (s *ProxyPoolService) CreatePool(ctx context.Context, pool *ProxyPool) (*Pr
 	return pool, nil
 }
 
-func (s *ProxyPoolService) UpdatePool(ctx context.Context, id int64, name, description *string, limits map[string]int) (*ProxyPool, error) {
+func (s *ProxyPoolService) UpdatePool(ctx context.Context, id int64, name, description *string) (*ProxyPool, error) {
 	pool, err := s.repo.GetPool(ctx, id)
 	if err != nil {
 		return nil, err
@@ -178,9 +170,6 @@ func (s *ProxyPoolService) UpdatePool(ctx context.Context, id int64, name, descr
 	}
 	if description != nil {
 		pool.Description = *description
-	}
-	if limits != nil {
-		pool.PlatformLimits = limits
 	}
 	if err := normalizeProxyPoolInput(pool); err != nil {
 		return nil, err
@@ -199,6 +188,16 @@ func (s *ProxyPoolService) DeletePool(ctx context.Context, id int64) error {
 	if pool.IsDefault {
 		return ErrProxyPoolDefaultDelete
 	}
+	// 被平台策略引用的池不能删：直接从 pool_ids 里去掉可能让列表变空，变成“全部池”而放宽限制。
+	policies, err := s.repo.ListPolicies(ctx)
+	if err != nil {
+		return err
+	}
+	for i := range policies {
+		if len(policies[i].PoolIDs) > 0 && policies[i].AllowsPool(id) {
+			return ErrProxyPoolReferencedByPolicy
+		}
+	}
 	return s.repo.DeletePool(ctx, id)
 }
 
@@ -210,17 +209,21 @@ func (s *ProxyPoolService) AssignProxies(ctx context.Context, poolID int64, prox
 	return s.repo.AssignProxies(ctx, pool, proxyIDs)
 }
 
-// ListMembers 返回池内代理及计数，供管理页展示退役状态。
-func (s *ProxyPoolService) ListMembers(ctx context.Context, poolID int64) (*ProxyPool, []ProxyPoolMember, error) {
+// ListMembers 返回池内代理、计数与当前平台策略，供管理页展示退役状态。
+func (s *ProxyPoolService) ListMembers(ctx context.Context, poolID int64) (*ProxyPool, []ProxyPoolMember, []ProxyIPPolicy, error) {
 	pool, err := s.repo.GetPool(ctx, poolID)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	members, err := s.repo.ListMembers(ctx, pool, 0)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return pool, members, nil
+	policies, err := s.repo.ListPolicies(ctx)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return pool, members, policies, nil
 }
 
 func (s *ProxyPoolService) ListBindingsByProxy(ctx context.Context, proxyID int64) ([]ProxyAccountBinding, error) {
@@ -240,31 +243,21 @@ func (s *ProxyPoolService) PreviewProxy(ctx context.Context, poolID int64, platf
 	return s.pickProxy(ctx, pool, platform, 0, nil, false)
 }
 
-// ProxyPoolRetiredPlatforms 返回该成员已达上限（退役）的平台。
-func ProxyPoolRetiredPlatforms(pool *ProxyPool, m *ProxyPoolMember) []string {
-	out := make([]string, 0)
-	for platform, limit := range pool.PlatformLimits {
-		if m.HistoryCounts[platform] >= int64(limit) {
-			out = append(out, platform)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-func proxyPoolMemberAvailable(pool *ProxyPool, m *ProxyPoolMember, platform string, now time.Time) bool {
-	if !m.Proxy.IsActive() || m.Proxy.IsExpired(now) {
-		return false
-	}
-	if limit, ok := pool.PlatformLimits[platform]; ok && m.HistoryCounts[platform] >= int64(limit) {
-		return false
-	}
-	return true
-}
-
-// pickProxy 在池内可用代理中选该平台历史计数最少的（同数取 id 小的）。
+// pickProxy 按平台策略在池内可用落地 IP 中挑选（排序见 sortProxyPoolCandidates）。
+// 平台没有策略或策略不允许该池时拒绝。
 // preferredID 非空时：strict=true 要求必须是该代理，否则在其可用时优先选它。
 func (s *ProxyPoolService) pickProxy(ctx context.Context, pool *ProxyPool, platform string, excludeAccountID int64, preferredID *int64, strict bool) (*Proxy, error) {
+	policies, err := s.repo.ListPolicies(ctx)
+	if err != nil {
+		return nil, err
+	}
+	policy, err := policyFor(policies, platform)
+	if err != nil {
+		return nil, err
+	}
+	if !policy.AllowsPool(pool.ID) {
+		return nil, ErrProxyIPPolicyPoolDenied
+	}
 	members, err := s.repo.ListMembers(ctx, pool, excludeAccountID)
 	if err != nil {
 		return nil, err
@@ -272,7 +265,7 @@ func (s *ProxyPoolService) pickProxy(ctx context.Context, pool *ProxyPool, platf
 	now := time.Now()
 	candidates := make([]ProxyPoolMember, 0, len(members))
 	for i := range members {
-		if proxyPoolMemberAvailable(pool, &members[i], platform, now) {
+		if proxyPoolMemberAvailable(policy, &members[i], now) {
 			candidates = append(candidates, members[i])
 		}
 	}
@@ -290,13 +283,7 @@ func (s *ProxyPoolService) pickProxy(ctx context.Context, pool *ProxyPool, platf
 	if len(candidates) == 0 {
 		return nil, ErrProxyPoolNoAvailable
 	}
-	sort.SliceStable(candidates, func(i, j int) bool {
-		ci, cj := candidates[i].HistoryCounts[platform], candidates[j].HistoryCounts[platform]
-		if ci != cj {
-			return ci < cj
-		}
-		return candidates[i].Proxy.ID < candidates[j].Proxy.ID
-	})
+	sortProxyPoolCandidates(policies, policy, candidates)
 	p := candidates[0].Proxy
 	return &p, nil
 }

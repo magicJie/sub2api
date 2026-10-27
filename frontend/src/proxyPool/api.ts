@@ -10,8 +10,6 @@ export interface ProxyPool {
   id: number
   name: string
   description: string
-  /** 平台 -> 每个代理允许绑定的历史账号数上限；未配置的平台不限 */
-  platform_limits: Record<string, number>
   is_default: boolean
   proxy_count: number
   created_at: string
@@ -54,7 +52,46 @@ export interface ProxyBindingsResult {
 export interface ProxyPoolUpsert {
   name?: string
   description?: string
-  platform_limits?: Record<string, number>
+}
+
+/** 平台 IP 策略：churn 消耗型（按历史账号数退役）/ sticky 长期型（账号终身固定一个落地 IP） */
+export type ProxyIPPolicyMode = 'churn' | 'sticky'
+
+export interface ProxyIPPolicy {
+  id: number
+  platform: string
+  mode: ProxyIPPolicyMode
+  /** 可取 IP 的代理池，空数组为全部代理池 */
+  pool_ids: number[]
+  /** 每个落地 IP 对该平台的历史累计账号上限，null 不限 */
+  max_lifetime_accounts: number | null
+  /** 每个落地 IP 对该平台同时在用的账号上限，null 不限 */
+  max_active_accounts: number | null
+  on_egress_failure: 'pause' | 'reassign'
+  created_at: string
+  updated_at: string
+}
+
+export type ProxyIPPolicyUpsert = Pick<
+  ProxyIPPolicy,
+  'mode' | 'pool_ids' | 'max_lifetime_accounts' | 'max_active_accounts' | 'on_egress_failure'
+>
+
+export async function listPolicies(): Promise<ProxyIPPolicy[]> {
+  const { data } = await apiClient.get<ProxyIPPolicy[]>('/admin/proxy-ip-policies')
+  return Array.isArray(data) ? data : []
+}
+
+export async function upsertPolicy(platform: string, payload: ProxyIPPolicyUpsert): Promise<ProxyIPPolicy> {
+  const { data } = await apiClient.put<ProxyIPPolicy>(
+    `/admin/proxy-ip-policies/${encodeURIComponent(platform)}`,
+    payload
+  )
+  return data
+}
+
+export async function deletePolicy(platform: string): Promise<void> {
+  await apiClient.delete(`/admin/proxy-ip-policies/${encodeURIComponent(platform)}`)
 }
 
 export async function listPools(): Promise<ProxyPool[]> {
@@ -119,6 +156,9 @@ export async function unbindAccountProxy(accountId: number): Promise<void> {
 }
 
 export const proxyPoolAPI = {
+  listPolicies,
+  upsertPolicy,
+  deletePolicy,
   listPools,
   createPool,
   updatePool,

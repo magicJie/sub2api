@@ -54,6 +54,7 @@
 
 未配置策略的平台：暂停使用代理池，不能从池中分配（创建账号选池、分配到池都拒绝，并提示先配策略）。
 升级迁移会为现有每个平台生成策略（见第 7 节），保证升级后原有用法不受影响。
+被策略 `pool_ids` 引用的代理池不能删除：直接移除可能让列表变空、变成“全部池”而放宽限制。
 
 ### 3.3 proxy_account_bindings（扩展）
 
@@ -98,8 +99,8 @@
 原则：升级后不改变任何账号当前的代理与调度状态，原来能用的继续能用。
 
 - 代理 `role`：被用作前置/首跳组成员/默认前置且无账号直接使用 → transport；其余（包括有账号在用的）→ egress。有账号在用的代理一律不改成 transport，也不移出池。
-- `proxy_pools.platform_limits` 中每个平台 → `platform_ip_policies`（`mode=churn`，`max_lifetime_accounts` = 原值，`pool_ids` = 该池）。
-- 现有账号涉及、但没有 `platform_limits` 的平台 → 生成策略：kiro 为 churn 不限上限，其余为 sticky（`max_active_accounts` 不限，保持原有共用关系）。之后由人工收紧。
+- `proxy_pools.platform_limits` 中每个平台 → `platform_ip_policies`（`mode=churn`，`max_lifetime_accounts` 取各池中的最小值，`pool_ids` 为空即全部池，不放宽任何原有限制）。`platform_limits` 列保留供回滚，应用不再读写。
+- 现有未删除账号或绑定记录涉及、但没有 `platform_limits` 的平台 → 生成策略：kiro 为 churn 不限上限，其余为 sticky（`max_active_accounts` 不限，保持原有共用关系）。之后由人工收紧。
 - 已有绑定、锁定状态原样保留；存量重复登记的同一落地 IP 只标出，不自动合并。
 - 迁移带回滚快照：testenv 先演练，生产升级前用同一 SQL 的只读预览确认影响范围。
 

@@ -17,6 +17,12 @@ func registerProxyPoolRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		pools.POST("/:id/proxies", h.Admin.ProxyPool.AssignProxies)
 		pools.GET("/:id/preview", h.Admin.ProxyPool.PreviewProxy)
 	}
+	policies := admin.Group("/proxy-ip-policies")
+	{
+		policies.GET("", h.Admin.ProxyPool.ListPolicies)
+		policies.PUT("/:platform", h.Admin.ProxyPool.UpsertPolicy)
+		policies.DELETE("/:platform", h.Admin.ProxyPool.DeletePolicy)
+	}
 	admin.GET("/proxies/:id/bindings", h.Admin.ProxyPool.ProxyBindings)
 	accounts := admin.Group("/accounts")
 	{
