@@ -127,6 +127,18 @@
                         </span>
                         <span class="flex-1 text-left">{{ t('admin.errorPassthrough.title') }}</span>
                       </button>
+                      <!-- Kiro（fork）：全部 Kiro 账号排进后台额度刷新队列 -->
+                      <button
+                        class="account-tools-menu-item"
+                        data-testid="kiro-refresh-all-usage"
+                        :disabled="kiroRefreshAllPending"
+                        @click="handleKiroRefreshAllUsage"
+                      >
+                        <span class="account-tools-menu-icon bg-orange-50 text-orange-600 dark:bg-orange-900/30 dark:text-orange-300">
+                          <Icon name="refresh" size="sm" :class="kiroRefreshAllPending ? 'animate-spin' : ''" />
+                        </span>
+                        <span class="flex-1 text-left">{{ t('admin.accounts.kiroRefreshAllUsage') }}</span>
+                      </button>
                       <button class="account-tools-menu-item" @click="openTLSFingerprintProfiles">
                         <span class="account-tools-menu-icon bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200">
                           <Icon name="lock" size="sm" />
@@ -834,7 +846,8 @@ const flushQueuedUsageBatch = async () => {
       nextUsage[key] = usage
       nextErrors[key] = errorMap[key] ?? null
       nextLoading[key] = false
-      if (usage) {
+      // Kiro（fork）：排队中的空快照不缓存，下次加载重新读取后台刷新结果。
+      if (usage && !usage.kiro_usage_pending) {
         usageBatchCache.set(accountID, { data: usage, ts: now })
       } else {
         usageBatchCache.delete(accountID)
@@ -1583,6 +1596,22 @@ const openExportDataDialogFromMenu = () => {
 const openErrorPassthrough = () => {
   closeAccountToolsDropdown()
   showErrorPassthrough.value = true
+}
+
+// Kiro（fork）：只把 Kiro 账号排进后台刷新队列并立即返回，额度由后台按并发上限慢慢刷新。
+const kiroRefreshAllPending = ref(false)
+const handleKiroRefreshAllUsage = async () => {
+  closeAccountToolsDropdown()
+  if (kiroRefreshAllPending.value) return
+  kiroRefreshAllPending.value = true
+  try {
+    const { queued } = await adminAPI.kiro.refreshAllUsage()
+    appStore.showSuccess(t('admin.accounts.kiroRefreshAllQueued', { count: queued }))
+  } catch (error: any) {
+    appStore.showError(error?.message || t('admin.accounts.kiroRefreshAllFailed'))
+  } finally {
+    kiroRefreshAllPending.value = false
+  }
 }
 
 const openTLSFingerprintProfiles = () => {

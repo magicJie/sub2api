@@ -10,12 +10,17 @@ import (
 // KiroOAuthHandler 处理 Kiro 账号的 OAuth 授权相关管理接口。
 type KiroOAuthHandler struct {
 	kiroOAuthService *service.KiroOAuthService
+	kiroUsageRefresh *service.KiroUsageRefreshService
 }
 
 // NewKiroOAuthHandler 依赖 service.KiroRuntimeBinding，保证 wire 会把 Kiro 运行时依赖
 // 注入到上游服务（见 service/kiro_wire.go）。
-func NewKiroOAuthHandler(kiroOAuthService *service.KiroOAuthService, _ service.KiroRuntimeBinding) *KiroOAuthHandler {
-	return &KiroOAuthHandler{kiroOAuthService: kiroOAuthService}
+func NewKiroOAuthHandler(
+	kiroOAuthService *service.KiroOAuthService,
+	_ service.KiroRuntimeBinding,
+	kiroUsageRefresh *service.KiroUsageRefreshService,
+) *KiroOAuthHandler {
+	return &KiroOAuthHandler{kiroOAuthService: kiroOAuthService, kiroUsageRefresh: kiroUsageRefresh}
 }
 
 type KiroGenerateAuthURLRequest struct {

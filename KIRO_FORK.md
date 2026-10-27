@@ -40,7 +40,13 @@
     Builder ID 账号列不出 profile 时使用 Kiro 客户端的固定 profileArn。
 - 多账号调度（借鉴 yetone/magpie，MIT）：`service/kiro_pace_scheduling.go`，挂在 `gateway_scheduling.go` Layer 2（优先级之后、负载率之前）与 Layer 1.5 粘性检查。
   按已用比例分档（<90 / 90–98 / ≥98），正常档按 `pace = (100−used%)/max(距重置小时,1)` 优先，10% 内视为同档；粘住的账号 ≥98% 且有替补时放开粘性。
-  用量来自进程内快照，超过 5 分钟后台刷新。`SUB2API_KIRO_PACE_SCHEDULING=off` 关闭。
+  用量来自进程内快照（由下面的额度后台刷新器从落库快照恢复）。`SUB2API_KIRO_PACE_SCHEDULING=off` 关闭。
+- 额度后台刷新：`service/kiro_usage_refresher.go`、`kiro_usage_snapshot.go`、`repository/account_repo_kiro_usage.go`。
+  只在 leader 实例拉 `getUsageLimits`（全局并发默认 2；默认 15 分钟，已用 ≥90% 或近 30 分钟有请求的号 5 分钟；按账号确定性抖动 ±10%；
+  失败指数退避，上限 1 小时），结果只写 `extra.kiro_usage_snapshot`（不改 `updated_at`、不发调度 outbox）。
+  所有实例每分钟从快照恢复调度数据。账号页与批量 usage 接口只读快照，没有快照时返回 `kiro_usage_pending` 并唤醒刷新器；
+  单号 `force=true` 仍同步刷新。管理接口：`GET/PUT /api/v1/admin/kiro/usage-refresh/settings`（settings 表键 `kiro_usage_refresh_settings`，默认开）、
+  `POST /api/v1/admin/kiro/usage-refresh/refresh-all`（只排队、立即返回）。凭据身份字段（不含 access_token）变化或删除账号时快照作废。
 - 同步上游模型：`service/kiro_upstream_models.go`，账号编辑页“从上游同步模型”。OAuth 调管理面 `List-Available-Models`（带 profileArn），
   直连 API Key 调控制面 `KiroControlPlaneBearerService.ListAvailableModels`；已知 Claude 模型换成目录里的短横线 ID 及 `-thinking` 变体，
   其余 `claude-*` / `gpt-*` 点号 ID 原样保留，`MapModel` 不能直通的（`auto`、`deepseek-3.2` 等）丢弃。上游挂钩在 `upstream_models.go` 的 `fetchUpstreamModelList`。
@@ -60,7 +66,8 @@
 | `service/account.go` | 模型映射、请求模型归一化、`KiroAccountRuntime` 嵌入 |
 | `service/account_usage_service.go` | Kiro 用量查询分支、缓存字段、`KiroUsageInfo` 嵌入 |
 | `service/account_test_service.go` | Kiro 连通性测试分支 |
-| `service/admin_account.go` | 更新凭据时保留 Kiro 身份/设备字段（`kiroPreserveCredentialFields`） |
+| `service/admin_account.go` | 更新凭据时保留 Kiro 身份/设备字段（`kiroPreserveCredentialFields`）；`kiro_usage_snapshot` 受管键剥离与身份变化失效 |
+| `service/account_service.go` | `kiro_usage_snapshot` 受管键保留、身份变化失效、删除时清进程内快照 |
 | `service/gateway_service.go` | Kiro 依赖字段 |
 | `service/ops_upstream_context.go` | `KiroOpsDiagnostics` 嵌入 |
 | `service/wire.go` | `KiroProviderSet`；TokenRefreshService 注册 Kiro 刷新器 |

@@ -307,7 +307,8 @@ type AccountUsageService struct {
 	tlsFPProfileService     *TLSFingerprintProfileService
 	agentIdentityTaskMu     sync.Mutex
 	agentIdentityWS         agentIdentityWSConnectionInvalidator
-	kiroCooldownStore       KiroCooldownStore // Kiro（fork），见 kiro_wire.go
+	kiroCooldownStore       KiroCooldownStore        // Kiro（fork），见 kiro_wire.go
+	kiroUsageRefresher      *KiroUsageRefreshService // Kiro（fork），见 kiro_usage_refresher.go
 }
 
 // NewAccountUsageService 创建AccountUsageService实例
@@ -571,7 +572,7 @@ func (s *AccountUsageService) GetUsageBatch(ctx context.Context, accountIDs []in
 			if supportsAnthropicPassiveUsage(account) {
 				usage, usageErr = s.getPassiveUsageForAccount(gctx, account)
 			} else {
-				usage, usageErr = s.getUsageForAccount(gctx, account, force)
+				usage, usageErr = s.getUsageForAccount(gctx, account, s.kiroBatchForce(account, force)) // Kiro（fork）：批量只读快照
 			}
 
 			mu.Lock()

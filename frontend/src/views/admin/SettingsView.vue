@@ -4826,6 +4826,90 @@
             </div>
           </div>
 
+          <!-- Kiro（fork）额度后台刷新 -->
+          <div class="card" data-testid="kiro-usage-refresh-settings">
+            <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+                {{ t("admin.settings.kiroUsageRefresh.title") }}
+              </h2>
+              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                {{ t("admin.settings.kiroUsageRefresh.description") }}
+              </p>
+            </div>
+            <div class="space-y-5 p-6">
+              <div v-if="kiroUsageRefreshLoading" class="flex items-center gap-2 text-gray-500">
+                <div class="h-4 w-4 animate-spin rounded-full border-b-2 border-primary-600"></div>
+                {{ t("common.loading") }}
+              </div>
+              <template v-else>
+                <div class="flex items-center justify-between gap-4">
+                  <div>
+                    <label class="font-medium text-gray-900 dark:text-white">
+                      {{ t("admin.settings.kiroUsageRefresh.enabled") }}
+                    </label>
+                    <p class="text-sm text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.kiroUsageRefresh.enabledHint") }}
+                    </p>
+                  </div>
+                  <Toggle
+                    v-model="kiroUsageRefreshForm.enabled"
+                    :aria-label="t('admin.settings.kiroUsageRefresh.enabled')"
+                    data-testid="kiro-usage-refresh-enabled"
+                  />
+                </div>
+                <div v-if="kiroUsageRefreshForm.enabled" class="space-y-4 border-t border-gray-100 pt-4 dark:border-dark-700">
+                  <div>
+                    <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300" for="kiro-usage-refresh-interval">
+                      {{ t("admin.settings.kiroUsageRefresh.intervalMinutes") }}
+                    </label>
+                    <input
+                      id="kiro-usage-refresh-interval"
+                      v-model.number="kiroUsageRefreshForm.interval_minutes"
+                      type="number"
+                      min="5"
+                      max="1440"
+                      class="input w-32"
+                      data-testid="kiro-usage-refresh-interval"
+                      @keydown.enter.prevent="saveKiroUsageRefreshSettings"
+                    />
+                    <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.kiroUsageRefresh.intervalHint") }}
+                    </p>
+                  </div>
+                  <div>
+                    <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300" for="kiro-usage-refresh-concurrency">
+                      {{ t("admin.settings.kiroUsageRefresh.concurrency") }}
+                    </label>
+                    <input
+                      id="kiro-usage-refresh-concurrency"
+                      v-model.number="kiroUsageRefreshForm.concurrency"
+                      type="number"
+                      min="1"
+                      max="8"
+                      class="input w-32"
+                      data-testid="kiro-usage-refresh-concurrency"
+                      @keydown.enter.prevent="saveKiroUsageRefreshSettings"
+                    />
+                    <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.kiroUsageRefresh.concurrencyHint") }}
+                    </p>
+                  </div>
+                </div>
+                <div class="flex justify-end border-t border-gray-100 pt-4 dark:border-dark-700">
+                  <button
+                    type="button"
+                    class="btn btn-primary btn-sm"
+                    :disabled="kiroUsageRefreshSaving"
+                    data-testid="kiro-usage-refresh-save"
+                    @click="saveKiroUsageRefreshSettings"
+                  >
+                    {{ kiroUsageRefreshSaving ? t("common.saving") : t("common.save") }}
+                  </button>
+                </div>
+              </template>
+            </div>
+          </div>
+
           <!-- Ollama Cloud Usage Settings -->
           <div class="card" data-testid="ollama-cloud-usage-global-settings">
             <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
@@ -9193,6 +9277,15 @@ const upstreamBillingProbeForm = reactive({
   interval_minutes: 30,
 });
 
+// Kiro（fork）额度后台刷新
+const kiroUsageRefreshLoading = ref(true);
+const kiroUsageRefreshSaving = ref(false);
+const kiroUsageRefreshForm = reactive({
+  enabled: true,
+  interval_minutes: 15,
+  concurrency: 2,
+});
+
 const ollamaCloudUsageLoading = ref(true);
 const ollamaCloudUsageSaving = ref(false);
 const ollamaCloudUsageForm = reactive({
@@ -12110,6 +12203,32 @@ async function saveUpstreamBillingProbeSettings() {
   }
 }
 
+async function loadKiroUsageRefreshSettings() {
+  kiroUsageRefreshLoading.value = true;
+  try {
+    Object.assign(kiroUsageRefreshForm, await adminAPI.kiro.getUsageRefreshSettings());
+  } catch (_error: unknown) {
+    // Keep the defaults when this optional setting cannot be loaded.
+  } finally {
+    kiroUsageRefreshLoading.value = false;
+  }
+}
+
+async function saveKiroUsageRefreshSettings() {
+  kiroUsageRefreshSaving.value = true;
+  try {
+    const updated = await adminAPI.kiro.updateUsageRefreshSettings({ ...kiroUsageRefreshForm });
+    Object.assign(kiroUsageRefreshForm, updated);
+    appStore.showSuccess(t("admin.settings.kiroUsageRefresh.saved"));
+  } catch (error: unknown) {
+    appStore.showError(
+      extractApiErrorMessage(error, t("admin.settings.kiroUsageRefresh.saveFailed")),
+    );
+  } finally {
+    kiroUsageRefreshSaving.value = false;
+  }
+}
+
 async function loadOllamaCloudUsageSettings() {
   ollamaCloudUsageLoading.value = true;
   try {
@@ -12921,6 +13040,7 @@ onMounted(() => {
   loadSubscriptionGroups();
   loadAdminApiKey();
   loadUpstreamBillingProbeSettings();
+  loadKiroUsageRefreshSettings();
   loadOllamaCloudUsageSettings();
   loadOpenCodeGoUsageSettings();
   loadOverloadCooldownSettings();

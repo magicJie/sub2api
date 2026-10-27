@@ -7,6 +7,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -65,6 +66,10 @@ type KiroUsageInfo struct {
 	KiroRuntimeState     string              `json:"kiro_runtime_state,omitempty"`
 	KiroRuntimeReason    string              `json:"kiro_runtime_reason,omitempty"`
 	KiroRuntimeResetAt   *time.Time          `json:"kiro_runtime_reset_at,omitempty"`
+	// KiroUsagePending 表示还没有落库快照（或已排进"全部刷新"队列），后台刷新器稍后会补上。
+	KiroUsagePending bool `json:"kiro_usage_pending,omitempty"`
+	// KiroUsageLastAttemptAt 是后台最近一次尝试拉取的时间（成功或失败）；UpdatedAt 是最近一次成功。
+	KiroUsageLastAttemptAt *time.Time `json:"kiro_usage_last_attempt_at,omitempty"`
 }
 
 // KiroOpsDiagnostics 是嵌入 OpsUpstreamErrorEvent 的模型诊断字段。
@@ -142,7 +147,26 @@ func normalizeKiroClaude5Mappings(mapping map[string]string) {
 }
 
 // getKiroUsageForAccount 是 AccountUsageService.getUsageForAccount 的 Kiro 分支。
+//
+// 后台刷新开启时（见 kiro_usage_refresher.go）：不带 force 只读落库快照、不打上游；
+// 带 force（单号手动刷新）同步拉一次并落库。关闭时保持按需拉取的旧行为。
 func (s *AccountUsageService) getKiroUsageForAccount(ctx context.Context, account *Account, forceProbe bool) (*UsageInfo, error) {
+	if s.kiroUsageSnapshotMode() && account != nil && account.Type == AccountTypeOAuth {
+		if !forceProbe {
+			usage := s.readKiroUsageSnapshot(ctx, account)
+			s.attachKiroCreditWindowStats(ctx, account, usage, time.Now())
+			return usage, nil
+		}
+		usage, _, err := s.refreshKiroUsageSnapshot(ctx, account)
+		if err != nil && usage == nil {
+			return nil, err
+		}
+		if err != nil && !errors.Is(err, ErrKiroUsageSnapshotStale) {
+			slog.Warn("kiro_usage_snapshot_persist_failed", "account_id", account.ID, "error", err)
+		}
+		s.attachKiroCreditWindowStats(ctx, account, usage, time.Now())
+		return usage, nil
+	}
 	usage, err := s.getKiroUsage(ctx, account, "active", forceProbe)
 	if err == nil {
 		s.tryClearRecoverableAccountError(ctx, account)
@@ -325,6 +349,7 @@ func (s *AccountTestService) SetKiroTokenProvider(provider *KiroTokenProvider) {
 var KiroProviderSet = wire.NewSet(
 	NewKiroOAuthService,
 	ProvideKiroTokenProvider,
+	ProvideKiroUsageRefreshService,
 	ProvideKiroCooldownStore,
 	ProvideKiroContinuationStore,
 	ProvideKiroRuntimeBinding,

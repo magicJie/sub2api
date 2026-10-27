@@ -87,10 +87,38 @@ export async function importToken(payload: {
   return data
 }
 
+/** Kiro 额度后台刷新设置（后端 service/kiro_usage_refresher.go）。 */
+export interface KiroUsageRefreshSettings {
+  enabled: boolean
+  interval_minutes: number
+  concurrency: number
+}
+
+export async function getUsageRefreshSettings(): Promise<KiroUsageRefreshSettings> {
+  const { data } = await apiClient.get<KiroUsageRefreshSettings>('/admin/kiro/usage-refresh/settings')
+  return data
+}
+
+export async function updateUsageRefreshSettings(
+  settings: KiroUsageRefreshSettings
+): Promise<KiroUsageRefreshSettings> {
+  const { data } = await apiClient.put<KiroUsageRefreshSettings>('/admin/kiro/usage-refresh/settings', settings)
+  return data
+}
+
+/** 把所有 Kiro 账号排进后台刷新队列，立即返回排队数量，不等待上游。 */
+export async function refreshAllUsage(): Promise<{ queued: number }> {
+  const { data } = await apiClient.post<{ queued: number }>('/admin/kiro/usage-refresh/refresh-all')
+  return data
+}
+
 export default {
   generateAuthUrl,
   generateIDCAuthUrl,
   exchangeCode,
   refreshToken,
-  importToken
+  importToken,
+  getUsageRefreshSettings,
+  updateUsageRefreshSettings,
+  refreshAllUsage
 }

@@ -467,6 +467,18 @@ export default {
         saved: 'Upstream rate auto detection settings saved',
         saveFailed: 'Failed to save upstream rate auto detection settings'
       },
+      kiroUsageRefresh: {
+        title: 'Kiro quota background refresh',
+        description: 'Fetches Kiro account quotas in the background and stores them. The accounts page and scheduler read this snapshot instead of calling upstream on page load. Runs on the leader instance only.',
+        enabled: 'Enable background refresh',
+        enabledHint: 'When disabled, quotas are fetched from upstream on demand when the accounts page opens.',
+        intervalMinutes: 'Base refresh interval (minutes)',
+        intervalHint: '5–1440 minutes. Accounts at ≥90% usage or with requests in the last 30 minutes refresh every 5 minutes; failures back off exponentially up to 1 hour.',
+        concurrency: 'Concurrency',
+        concurrencyHint: '1–8. Maximum number of accounts fetched from upstream at the same time.',
+        saved: 'Kiro quota refresh settings saved',
+        saveFailed: 'Failed to save Kiro quota refresh settings'
+      },
       ollamaCloudUsage: {
         title: 'Ollama Cloud Usage Refresh',
         description: 'Refresh official Ollama settings-page usage driven by model requests for individually opted-in accounts. Disabled by default. Idle accounts are not polled.',

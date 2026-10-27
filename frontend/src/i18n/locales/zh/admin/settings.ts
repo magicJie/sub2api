@@ -460,6 +460,18 @@ export default {
         saved: '上游倍率自动探测设置已保存',
         saveFailed: '保存上游倍率自动探测设置失败'
       },
+      kiroUsageRefresh: {
+        title: 'Kiro 额度后台刷新',
+        description: '后台定时拉取 Kiro 账号额度并落库，账号页与调度只读这份快照，不在打开页面时请求上游。只在 leader 实例运行。',
+        enabled: '启用后台刷新',
+        enabledHint: '关闭后回到打开账号页时按需拉取上游的旧行为。',
+        intervalMinutes: '基础刷新间隔（分钟）',
+        intervalHint: '范围 5–1440 分钟。已用 ≥90% 或近 30 分钟有请求的账号缩短到 5 分钟；失败按指数退避，最长 1 小时。',
+        concurrency: '并发数',
+        concurrencyHint: '范围 1–8。同时请求上游的账号数上限。',
+        saved: 'Kiro 额度后台刷新设置已保存',
+        saveFailed: '保存 Kiro 额度后台刷新设置失败'
+      },
       ollamaCloudUsage: {
         title: 'Ollama Cloud 用量刷新',
         description: '在模型请求驱动下刷新账号在 Ollama 官方设置页展示的用量；默认关闭。无新请求时不会自动抓取。',

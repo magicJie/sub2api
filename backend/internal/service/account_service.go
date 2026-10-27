@@ -332,6 +332,7 @@ func (s *AccountService) Update(ctx context.Context, id int64, req UpdateAccount
 		account.Notes = normalizeAccountNotes(req.Notes)
 	}
 
+	previousKiroUsageIdentity := kiroUsageIdentity(account) // Kiro（fork）
 	if req.Credentials != nil {
 		account.Credentials = SanitizeStoredCredentials(account.Platform, *req.Credentials)
 	}
@@ -344,6 +345,10 @@ func (s *AccountService) Update(ctx context.Context, id int64, req UpdateAccount
 		delete(extra, OllamaCloudUsageSessionExtraKey)
 		delete(extra, OllamaCloudUsageAutoRefreshExtraKey)
 		delete(extra, OllamaCloudUsageSnapshotExtraKey)
+		delete(extra, KiroUsageSnapshotExtraKey) // Kiro（fork）：系统托管，沿用库里的值
+		if snapshot, ok := account.Extra[KiroUsageSnapshotExtraKey]; ok {
+			extra[KiroUsageSnapshotExtraKey] = snapshot
+		}
 		account.Extra = prepareCodexFingerprintExtraForUpdate(account, extra)
 	} else {
 		account.Extra = prepareCodexFingerprintExtraForUpdate(account, account.Extra)
@@ -377,6 +382,8 @@ func (s *AccountService) Update(ctx context.Context, id int64, req UpdateAccount
 			return nil, err
 		}
 	}
+
+	kiroInvalidateUsageSnapshotOnIdentityChange(account, previousKiroUsageIdentity) // Kiro（fork）
 
 	// 执行更新
 	if err := s.accountRepo.Update(ctx, account); err != nil {
@@ -426,6 +433,7 @@ func (s *AccountService) Delete(ctx context.Context, id int64) error {
 	if err := s.accountRepo.Delete(ctx, id); err != nil {
 		return fmt.Errorf("delete account: %w", err)
 	}
+	forgetKiroUsageSnapshot(id) // Kiro（fork）
 
 	return nil
 }

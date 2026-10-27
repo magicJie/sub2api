@@ -258,6 +258,14 @@
         <div v-if="kiroOverageLabel" class="text-[10px] text-amber-600 dark:text-amber-400">
           {{ kiroOverageLabel }}
         </div>
+        <div
+          v-if="kiroUsageStatusLabel"
+          data-test="kiro-usage-updated"
+          class="text-[10px] text-gray-400 dark:text-gray-500"
+          :title="usageInfo.updated_at ? formatDateTimeToMinute(usageInfo.updated_at) : undefined"
+        >
+          {{ kiroUsageStatusLabel }}
+        </div>
         <button
           type="button"
           class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
@@ -790,7 +798,7 @@ import { adminAPI } from '@/api/admin'
 import type { Account, AccountUsageInfo, GeminiCredentials, WindowStats } from '@/types'
 import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { enqueueUsageRequest } from '@/utils/usageLoadQueue'
-import { formatCompactNumber, formatDateTimeToMinute } from '@/utils/format'
+import { formatCompactNumber, formatDateTimeToMinute, formatRelativeTime } from '@/utils/format'
 import { isOfficialGeminiBaseUrl } from '@/utils/geminiExplicitCache'
 import { supportsAccountQuota } from '@/utils/accountQuota'
 import UsageProgressBar from './UsageProgressBar.vue'
@@ -1123,6 +1131,20 @@ const kiroBonusRemaining = computed(() => {
   return typeof days === 'number' && days > 0
     ? ` (${t('admin.accounts.usageWindow.kiroDaysRemaining', { days })})`
     : ''
+})
+
+// 额度来自后台刷新器落库的快照：显示"更新于 N 分钟前"，没有快照时显示排队中。
+const kiroUsageStatusLabel = computed(() => {
+  const usage = usageInfo.value
+  if (!usage) return ''
+  const parts: string[] = []
+  if (usage.updated_at) {
+    parts.push(t('admin.accounts.usageWindow.kiroUpdatedAgo', { time: formatRelativeTime(usage.updated_at) }))
+  }
+  if (usage.kiro_usage_pending) {
+    parts.push(t('admin.accounts.usageWindow.kiroUsagePending'))
+  }
+  return parts.join(' · ')
 })
 
 const kiroOverageLabel = computed(() => {

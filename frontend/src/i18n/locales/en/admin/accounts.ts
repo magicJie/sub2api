@@ -20,6 +20,9 @@ export default {
       moreActions: 'More Actions',
       dataActions: 'Data',
       toolActions: 'Tools',
+      kiroRefreshAllUsage: 'Refresh all Kiro quotas',
+      kiroRefreshAllQueued: 'Queued {count} Kiro accounts for background refresh',
+      kiroRefreshAllFailed: 'Failed to queue Kiro quota refresh',
       viewColumns: 'Columns',
       selectedCount: '{count} selected',
       dataExportConfirmMessage: 'The exported data contains sensitive account and proxy information. Store it securely.',
@@ -1751,7 +1754,9 @@ export default {
         kiroNearlyExhausted: 'Nearly exhausted',
         kiroUpstreamRejected: 'Rejected by upstream, resets {time}',
         kiroDaysRemaining: '{days}d left',
-        kiroOverage: 'Overage {used}, charge {charge}'
+        kiroOverage: 'Overage {used}, charge {charge}',
+        kiroUpdatedAgo: 'Updated {time}',
+        kiroUsagePending: 'Queued for refresh'
       },
       openaiReferral: {
         available: 'Invites left',
