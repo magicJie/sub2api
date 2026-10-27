@@ -24,6 +24,8 @@ func registerProxyPoolRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		policies.DELETE("/:platform", h.Admin.ProxyPool.DeletePolicy)
 	}
 	admin.GET("/proxy-incidents", h.Admin.ProxyPool.ListIncidents)
+	admin.GET("/proxy-incidents/config", h.Admin.ProxyPool.GetEgressHealthConfig)
+	admin.PUT("/proxy-incidents/config", h.Admin.ProxyPool.UpdateEgressHealthConfig)
 	admin.GET("/proxies/:id/bindings", h.Admin.ProxyPool.ProxyBindings)
 	admin.POST("/proxies/:id/migrate-accounts", h.Admin.ProxyPool.MigrateProxyAccounts)
 	admin.POST("/proxies/:id/health-check", h.Admin.ProxyPool.CheckProxyHealth)

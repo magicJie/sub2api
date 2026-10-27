@@ -234,7 +234,26 @@ export async function checkProxyHealth(proxyId: number): Promise<{ id: number; l
   return data ?? null
 }
 
+/** 落地 IP 巡检配置：关闭后不巡检、不处置；修改在下一个调度周期生效 */
+export interface ProxyEgressHealthConfig {
+  enabled: boolean
+  interval_seconds: number
+  fail_threshold: number
+}
+
+export async function getEgressHealthConfig(): Promise<ProxyEgressHealthConfig> {
+  const { data } = await apiClient.get<ProxyEgressHealthConfig>('/admin/proxy-incidents/config')
+  return data
+}
+
+export async function updateEgressHealthConfig(cfg: ProxyEgressHealthConfig): Promise<ProxyEgressHealthConfig> {
+  const { data } = await apiClient.put<ProxyEgressHealthConfig>('/admin/proxy-incidents/config', cfg)
+  return data
+}
+
 export const proxyPoolAPI = {
+  getEgressHealthConfig,
+  updateEgressHealthConfig,
   listIncidents,
   getReplaceCandidates,
   replaceAccountProxy,

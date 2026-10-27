@@ -551,3 +551,29 @@ func (h *ProxyPoolHandler) CheckProxyHealth(c *gin.Context) {
 	}
 	response.Success(c, gin.H{"id": in.ID, "layer": in.Layer, "fail_count": in.FailCount, "last_error": in.LastError, "handled": in.HandledAt != nil})
 }
+
+// GetEgressHealthConfig GET /api/v1/admin/proxy-incidents/config
+func (h *ProxyPoolHandler) GetEgressHealthConfig(c *gin.Context) {
+	cfg, err := h.poolService.GetEgressHealthConfig(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, cfg)
+}
+
+// UpdateEgressHealthConfig PUT /api/v1/admin/proxy-incidents/config
+// {"enabled":true,"interval_seconds":120,"fail_threshold":3}，下一个调度周期生效。
+func (h *ProxyPoolHandler) UpdateEgressHealthConfig(c *gin.Context) {
+	var req service.ProxyEgressHealthConfig
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	cfg, err := h.poolService.UpdateEgressHealthConfig(c.Request.Context(), req)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, cfg)
+}
