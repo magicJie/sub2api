@@ -177,13 +177,18 @@ const barWidth = computed(() => {
   return `${Math.min(Math.max(props.utilization, 0), 100)}%`
 })
 
-// Display percentage (cap at 999% for readability)
+// Display percentage (cap at 999% for readability).
+// 未满 100 时向下取一位小数且最多 99.9%，避免 99.77% 被四舍五入成看似用尽的 100%。
 const displayPercent = computed(() => {
-  const percent = Math.round(
-    props.remainingCapacity
-      ? Math.min(Math.max(props.utilization, 0), 100)
-      : props.utilization
-  )
+  const value = props.remainingCapacity
+    ? Math.min(Math.max(props.utilization, 0), 100)
+    : props.utilization
+  if (value < 100) {
+    // 加极小量抵消浮点误差（如 57.3 * 10 = 572.9999…），不影响 99.95 → 99.9。
+    const floored = Math.min(Math.floor(Math.max(value, 0) * 10 + 1e-9) / 10, 99.9)
+    return `${floored}%`
+  }
+  const percent = Math.round(value)
   return percent > 999 ? '>999%' : `${percent}%`
 })
 

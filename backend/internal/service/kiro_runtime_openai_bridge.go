@@ -124,6 +124,15 @@ func (s *GatewayService) bridgeKiroAsAnthropic(
 	if err != nil {
 		var failoverErr *UpstreamFailoverError
 		if errors.As(err, &failoverErr) {
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				Platform:           account.Platform,
+				AccountID:          account.ID,
+				AccountName:        account.Name,
+				UpstreamStatusCode: failoverErr.StatusCode,
+				Kind:               "failover",
+				Message:            sanitizeUpstreamErrorMessage(err.Error()),
+				Detail:             s.kiroUpstreamErrorDetail(failoverErr.ResponseBody),
+			})
 			return nil, failoverErr
 		}
 		return nil, &kiroHTTPErrorAsBridgeError{&kiroHTTPErrorOutcome{

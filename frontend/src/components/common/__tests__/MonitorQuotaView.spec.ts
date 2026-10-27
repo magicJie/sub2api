@@ -53,8 +53,8 @@ describe('MonitorQuotaView', () => {
     expect(text).toContain('monitorCommon.quota.labels.pro/monitorCommon.quota.windows.7d')
     // 未知 label 原样透出（前向兼容）
     expect(text).toContain('unknown-token/monitorCommon.quota.windows.weekly')
-    // 百分比取整
-    expect(text).toContain('42%')
+    // 百分比未满 100 时向下取一位小数（UsageProgressBar 统一规则）
+    expect(text).toContain('42.4%')
     expect(text).toContain('80%')
     expect(text).toContain('95%')
 

@@ -556,7 +556,9 @@ export default {
         estimatedTotalCostTooltip: '根据当前窗口费用和使用率估算达到 100% 使用率时的总费用',
         kiroCredit: '额度',
         kiroBonus: 'Bonus',
-        kiroUsed: '{used} / {limit}',
+        kiroRemaining: '剩 {remaining} / {limit}',
+        kiroNearlyExhausted: '即将耗尽',
+        kiroUpstreamRejected: '已被上游拒绝，{time} 恢复',
         kiroDaysRemaining: '剩余 {days} 天',
         kiroOverage: '超额 {used}，费用 {charge}'
       },
