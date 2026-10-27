@@ -31,7 +31,12 @@ func (s *ProxyPoolSuite) SetupTest() {
 func TestProxyPoolSuite(t *testing.T) { suite.Run(t, new(ProxyPoolSuite)) }
 
 func (s *ProxyPoolSuite) mkProxy(name string, poolID *int64) int64 {
-	p := &service.Proxy{Name: name, Protocol: "http", Host: "127.0.0.1", Port: 8080,
+	return s.mkProxyHost(name, "pool-test-"+name+".invalid", poolID)
+}
+
+// mkProxyHost 指定落地 IP（host）：计数按 host 合并，测试默认给每个代理不同的 host。
+func (s *ProxyPoolSuite) mkProxyHost(name, host string, poolID *int64) int64 {
+	p := &service.Proxy{Name: name, Protocol: "http", Host: host, Port: 8080,
 		Status: service.StatusActive, FallbackMode: service.FallbackModeNone, ExpiryWarnDays: 7, PoolID: poolID}
 	s.Require().NoError(s.proxy.Create(s.ctx, p))
 	return p.ID
@@ -133,7 +138,7 @@ func (s *ProxyPoolSuite) TestTriggerRecordsHistoryAcrossChangesAndDelete() {
 }
 
 func (s *ProxyPoolSuite) TestLockSurvivesSystemReassignAndUnlock() {
-	pool := &service.ProxyPool{Name: "kiro-pool", PlatformLimits: map[string]int{"kiro": 5}}
+	pool := &service.ProxyPool{Name: "kiro-pool"}
 	s.Require().NoError(s.pools.CreatePool(s.ctx, pool))
 	p1 := s.mkProxy("lp1", &pool.ID)
 	p2 := s.mkProxy("lp2", &pool.ID)
@@ -192,4 +197,49 @@ func (s *ProxyPoolSuite) TestAssignAndDeletePoolMovesProxiesToDefault() {
 
 	// 重名放最后：唯一约束错误会让 Postgres 事务进入 aborted 状态。
 	s.Require().ErrorIs(s.pools.CreatePool(s.ctx, &service.ProxyPool{Name: "default"}), service.ErrProxyPoolNameExists)
+}
+
+func (s *ProxyPoolSuite) TestHistoryMergedBySameLandingHost() {
+	def := s.defaultPool()
+	p1 := s.mkProxyHost("h1", "203.0.113.7", nil)
+	_ = s.mkAccount("kiro", &p1)
+	// 删除后用同一落地 IP 重新登记：历史计数延续，绕不过平台上限。
+	s.exec(`UPDATE accounts SET deleted_at=NOW() WHERE proxy_id=$1`, p1)
+	s.exec(`UPDATE proxies SET deleted_at=NOW() WHERE id=$1`, p1)
+	p2 := s.mkProxyHost("h2", "203.0.113.7", nil)
+	_ = s.mkAccount("kiro", &p2)
+	m := s.member(def, p2)
+	s.Require().Equal(int64(2), m.HistoryCounts["kiro"])
+	s.Require().Equal(int64(1), m.ActiveCounts["kiro"])
+}
+
+func (s *ProxyPoolSuite) TestPolicyCRUD() {
+	pool := &service.ProxyPool{Name: "policy-pool"}
+	s.Require().NoError(s.pools.CreatePool(s.ctx, pool))
+	lifetime := 5
+	p := &service.ProxyIPPolicy{Platform: "test-churn", Mode: service.ProxyIPPolicyModeChurn, PoolIDs: []int64{pool.ID},
+		MaxLifetimeAccounts: &lifetime, OnEgressFailure: service.ProxyIPFailureReassign}
+	s.Require().NoError(s.pools.UpsertPolicy(s.ctx, p))
+	s.Require().NotZero(p.ID)
+
+	one := 1
+	p.Mode, p.MaxLifetimeAccounts, p.MaxActiveAccounts, p.PoolIDs = service.ProxyIPPolicyModeSticky, nil, &one, nil
+	s.Require().NoError(s.pools.UpsertPolicy(s.ctx, p))
+
+	policies, err := s.pools.ListPolicies(s.ctx)
+	s.Require().NoError(err)
+	var got *service.ProxyIPPolicy
+	for i := range policies {
+		if policies[i].Platform == "test-churn" {
+			got = &policies[i]
+		}
+	}
+	s.Require().NotNil(got)
+	s.Require().Equal(service.ProxyIPPolicyModeSticky, got.Mode)
+	s.Require().Nil(got.MaxLifetimeAccounts)
+	s.Require().Equal(1, *got.MaxActiveAccounts)
+	s.Require().Empty(got.PoolIDs)
+
+	s.Require().NoError(s.pools.DeletePolicy(s.ctx, "test-churn"))
+	s.Require().ErrorIs(s.pools.DeletePolicy(s.ctx, "test-churn"), service.ErrProxyIPPolicyNotFound)
 }

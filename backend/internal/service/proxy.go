@@ -35,8 +35,8 @@ type Proxy struct {
 	UpstreamHopGroupID *int64
 	Options            map[string]string
 
-	PoolID  *int64 // 代理池（fork）：所属代理池，nil 为默认池，见 proxy_pool.go。
-	Role    string // 代理池（fork）：egress | transport，transport 不进代理池、不绑账号，见 proxy_pool.go。
+	PoolID *int64 // 代理池（fork）：所属代理池，nil 为默认池，见 proxy_pool.go。
+	Role   string // 代理池（fork）：egress | transport，transport 不进代理池、不绑账号，见 proxy_pool.go。
 }
 
 func (p *Proxy) IsActive() bool {

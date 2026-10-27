@@ -23,29 +23,16 @@ func NewProxyPoolRepository(client *dbent.Client, sqlDB *sql.DB) service.ProxyPo
 	return &proxyPoolRepository{client: client, sql: sqlDB}
 }
 
-const proxyPoolColumns = `p.id, p.name, p.description, p.platform_limits, p.is_default, p.created_at, p.updated_at`
+// proxy_pools.platform_limits 自迁移 251 起由 platform_ip_policies 取代，只保留供回滚，不再读写。
+const proxyPoolColumns = `p.id, p.name, p.description, p.is_default, p.created_at, p.updated_at`
 
 func scanProxyPool(scan func(dest ...any) error, extra ...any) (*service.ProxyPool, error) {
 	var pool service.ProxyPool
-	var limits []byte
-	dest := append([]any{&pool.ID, &pool.Name, &pool.Description, &limits, &pool.IsDefault, &pool.CreatedAt, &pool.UpdatedAt}, extra...)
+	dest := append([]any{&pool.ID, &pool.Name, &pool.Description, &pool.IsDefault, &pool.CreatedAt, &pool.UpdatedAt}, extra...)
 	if err := scan(dest...); err != nil {
 		return nil, err
 	}
-	pool.PlatformLimits = map[string]int{}
-	if len(limits) > 0 {
-		if err := json.Unmarshal(limits, &pool.PlatformLimits); err != nil {
-			return nil, err
-		}
-	}
 	return &pool, nil
-}
-
-func marshalPlatformLimits(limits map[string]int) ([]byte, error) {
-	if limits == nil {
-		limits = map[string]int{}
-	}
-	return json.Marshal(limits)
 }
 
 func (r *proxyPoolRepository) ListPools(ctx context.Context) ([]service.ProxyPool, error) {
@@ -89,14 +76,10 @@ func (r *proxyPoolRepository) GetPool(ctx context.Context, id int64) (*service.P
 }
 
 func (r *proxyPoolRepository) CreatePool(ctx context.Context, pool *service.ProxyPool) error {
-	limits, err := marshalPlatformLimits(pool.PlatformLimits)
-	if err != nil {
-		return err
-	}
 	rows, err := r.sql.QueryContext(ctx, `
-		INSERT INTO proxy_pools (name, description, platform_limits)
-		VALUES ($1, $2, $3)
-		RETURNING id, created_at, updated_at`, pool.Name, pool.Description, limits)
+		INSERT INTO proxy_pools (name, description)
+		VALUES ($1, $2)
+		RETURNING id, created_at, updated_at`, pool.Name, pool.Description)
 	if err != nil {
 		return translatePersistenceError(err, nil, service.ErrProxyPoolNameExists)
 	}
@@ -108,13 +91,9 @@ func (r *proxyPoolRepository) CreatePool(ctx context.Context, pool *service.Prox
 }
 
 func (r *proxyPoolRepository) UpdatePool(ctx context.Context, pool *service.ProxyPool) error {
-	limits, err := marshalPlatformLimits(pool.PlatformLimits)
-	if err != nil {
-		return err
-	}
 	res, err := r.sql.ExecContext(ctx, `
-		UPDATE proxy_pools SET name = $2, description = $3, platform_limits = $4, updated_at = NOW()
-		WHERE id = $1`, pool.ID, pool.Name, pool.Description, limits)
+		UPDATE proxy_pools SET name = $2, description = $3, updated_at = NOW()
+		WHERE id = $1`, pool.ID, pool.Name, pool.Description)
 	if err != nil {
 		return translatePersistenceError(err, nil, service.ErrProxyPoolNameExists)
 	}
@@ -337,4 +316,82 @@ func (r *proxyPoolRepository) EgressHostTaken(ctx context.Context, host string, 
 	}
 	defer func() { _ = rows.Close() }()
 	return rows.Next(), rows.Err()
+}
+
+// ---------------------------------------------------------------------------
+// 平台 IP 策略（迁移 251）
+// ---------------------------------------------------------------------------
+
+func (r *proxyPoolRepository) ListPolicies(ctx context.Context) ([]service.ProxyIPPolicy, error) {
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT id, platform, mode, pool_ids, max_lifetime_accounts, max_active_accounts, on_egress_failure, created_at, updated_at
+		FROM platform_ip_policies ORDER BY platform`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]service.ProxyIPPolicy, 0)
+	for rows.Next() {
+		var p service.ProxyIPPolicy
+		var poolIDs []byte
+		var lifetime, active sql.NullInt64
+		if err := rows.Scan(&p.ID, &p.Platform, &p.Mode, &poolIDs, &lifetime, &active, &p.OnEgressFailure, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			return nil, err
+		}
+		p.PoolIDs = []int64{}
+		if len(poolIDs) > 0 {
+			if err := json.Unmarshal(poolIDs, &p.PoolIDs); err != nil {
+				return nil, err
+			}
+		}
+		if lifetime.Valid {
+			v := int(lifetime.Int64)
+			p.MaxLifetimeAccounts = &v
+		}
+		if active.Valid {
+			v := int(active.Int64)
+			p.MaxActiveAccounts = &v
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (r *proxyPoolRepository) UpsertPolicy(ctx context.Context, p *service.ProxyIPPolicy) error {
+	ids := p.PoolIDs
+	if ids == nil {
+		ids = []int64{}
+	}
+	poolIDs, err := json.Marshal(ids)
+	if err != nil {
+		return err
+	}
+	rows, err := r.sql.QueryContext(ctx, `
+		INSERT INTO platform_ip_policies (platform, mode, pool_ids, max_lifetime_accounts, max_active_accounts, on_egress_failure)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (platform) DO UPDATE SET
+			mode = EXCLUDED.mode, pool_ids = EXCLUDED.pool_ids,
+			max_lifetime_accounts = EXCLUDED.max_lifetime_accounts, max_active_accounts = EXCLUDED.max_active_accounts,
+			on_egress_failure = EXCLUDED.on_egress_failure, updated_at = NOW()
+		RETURNING id, created_at, updated_at`,
+		p.Platform, p.Mode, poolIDs, p.MaxLifetimeAccounts, p.MaxActiveAccounts, p.OnEgressFailure)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		return rows.Err()
+	}
+	return rows.Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
+}
+
+func (r *proxyPoolRepository) DeletePolicy(ctx context.Context, platform string) error {
+	res, err := r.sql.ExecContext(ctx, `DELETE FROM platform_ip_policies WHERE platform = $1`, platform)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return service.ErrProxyIPPolicyNotFound
+	}
+	return nil
 }

@@ -12,11 +12,12 @@ import (
 )
 
 type proxyPoolRepoStub struct {
-	pools   map[int64]*ProxyPool
-	members []ProxyPoolMember
-	locked  map[int64]bool
-	lockErr error
-	lockLog []int64
+	pools    map[int64]*ProxyPool
+	policies []ProxyIPPolicy
+	members  []ProxyPoolMember
+	locked   map[int64]bool
+	lockErr  error
+	lockLog  []int64
 }
 
 func (r *proxyPoolRepoStub) ListPools(context.Context) ([]ProxyPool, error) { return nil, nil }
@@ -45,6 +46,14 @@ func (r *proxyPoolRepoStub) LockBinding(_ context.Context, accountID, _ int64) e
 	return r.lockErr
 }
 func (r *proxyPoolRepoStub) UnlockBinding(context.Context, int64) error { return nil }
+func (r *proxyPoolRepoStub) ListPolicies(context.Context) ([]ProxyIPPolicy, error) {
+	return r.policies, nil
+}
+func (r *proxyPoolRepoStub) UpsertPolicy(_ context.Context, p *ProxyIPPolicy) error {
+	r.policies = append(r.policies, *p)
+	return nil
+}
+func (r *proxyPoolRepoStub) DeletePolicy(context.Context, string) error { return nil }
 func (r *proxyPoolRepoStub) EgressHostTaken(_ context.Context, host string, exclude int64) (bool, error) {
 	for _, m := range r.members {
 		if m.Proxy.ID != exclude && NormalizeProxyRole(m.Proxy.Role) == ProxyRoleEgress && m.Proxy.Host == host {
@@ -74,6 +83,10 @@ func poolMember(id int64, status string, counts map[string]int64) ProxyPoolMembe
 	}
 }
 
+func churnPolicy(platform string, lifetime int) ProxyIPPolicy {
+	return ProxyIPPolicy{Platform: platform, Mode: ProxyIPPolicyModeChurn, MaxLifetimeAccounts: intPtr(lifetime)}
+}
+
 func withProxyPoolService(t *testing.T, repo *proxyPoolRepoStub) *ProxyPoolService {
 	t.Helper()
 	svc := NewProxyPoolService(repo, nil)
@@ -83,12 +96,13 @@ func withProxyPoolService(t *testing.T, repo *proxyPoolRepoStub) *ProxyPoolServi
 }
 
 func TestProxyPoolPick_LeastUsedSkipsRetiredAndInactive(t *testing.T) {
-	pool := &ProxyPool{ID: 1, PlatformLimits: map[string]int{"kiro": 5}}
+	pool := &ProxyPool{ID: 1}
 	past := time.Now().Add(-time.Hour)
 	expired := poolMember(4, StatusActive, nil)
 	expired.Proxy.ExpiresAt = &past
 	repo := &proxyPoolRepoStub{
-		pools: map[int64]*ProxyPool{1: pool},
+		pools:    map[int64]*ProxyPool{1: pool},
+		policies: []ProxyIPPolicy{churnPolicy("kiro", 5), {Platform: "openai", Mode: ProxyIPPolicyModeChurn}},
 		members: []ProxyPoolMember{
 			poolMember(1, StatusActive, map[string]int64{"kiro": 5}),              // 已退役
 			poolMember(2, StatusActive, map[string]int64{"kiro": 3, "openai": 0}), // 可用
@@ -103,17 +117,18 @@ func TestProxyPoolPick_LeastUsedSkipsRetiredAndInactive(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(5), p.ID)
 
-	// openai 未配置上限：不受限，按 openai 计数最少选（2 的计数 0）。
+	// openai 策略不限上限：按 openai 计数最少选。
 	p, err = svc.pickProxy(context.Background(), pool, "openai", 0, nil, false)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), p.ID, "id 1 has openai count 0 and smallest id")
 }
 
 func TestProxyPoolPick_AllRetired(t *testing.T) {
-	pool := &ProxyPool{ID: 1, PlatformLimits: map[string]int{"kiro": 1}}
+	pool := &ProxyPool{ID: 1}
 	repo := &proxyPoolRepoStub{
-		pools:   map[int64]*ProxyPool{1: pool},
-		members: []ProxyPoolMember{poolMember(1, StatusActive, map[string]int64{"kiro": 1})},
+		pools:    map[int64]*ProxyPool{1: pool},
+		policies: []ProxyIPPolicy{churnPolicy("kiro", 1)},
+		members:  []ProxyPoolMember{poolMember(1, StatusActive, map[string]int64{"kiro": 1})},
 	}
 	svc := withProxyPoolService(t, repo)
 	_, err := svc.pickProxy(context.Background(), pool, "kiro", 0, nil, false)
@@ -121,9 +136,10 @@ func TestProxyPoolPick_AllRetired(t *testing.T) {
 }
 
 func TestProxyPoolPick_StrictPreferred(t *testing.T) {
-	pool := &ProxyPool{ID: 1, PlatformLimits: map[string]int{"kiro": 2}}
+	pool := &ProxyPool{ID: 1}
 	repo := &proxyPoolRepoStub{
-		pools: map[int64]*ProxyPool{1: pool},
+		pools:    map[int64]*ProxyPool{1: pool},
+		policies: []ProxyIPPolicy{churnPolicy("kiro", 2)},
 		members: []ProxyPoolMember{
 			poolMember(1, StatusActive, map[string]int64{"kiro": 0}),
 			poolMember(2, StatusActive, map[string]int64{"kiro": 1}),
@@ -149,10 +165,11 @@ func TestProxyPoolPick_StrictPreferred(t *testing.T) {
 }
 
 func TestBeginProxyPoolAccountCreate(t *testing.T) {
-	pool := &ProxyPool{ID: 7, PlatformLimits: map[string]int{"kiro": 5}}
+	pool := &ProxyPool{ID: 7}
 	repo := &proxyPoolRepoStub{
-		pools:   map[int64]*ProxyPool{7: pool},
-		members: []ProxyPoolMember{poolMember(11, StatusActive, nil)},
+		pools:    map[int64]*ProxyPool{7: pool},
+		policies: []ProxyIPPolicy{churnPolicy("kiro", 5)},
+		members:  []ProxyPoolMember{poolMember(11, StatusActive, nil)},
 	}
 	withProxyPoolService(t, repo)
 
@@ -214,19 +231,16 @@ func TestCheckAccountProxyPoolLock(t *testing.T) {
 }
 
 func TestNormalizeProxyPoolInput(t *testing.T) {
-	p := &ProxyPool{Name: "  kiro-us ", PlatformLimits: map[string]int{" kiro ": 5, "": 3}}
+	p := &ProxyPool{Name: "  kiro-us "}
 	require.NoError(t, normalizeProxyPoolInput(p))
 	require.Equal(t, "kiro-us", p.Name)
-	require.Equal(t, map[string]int{"kiro": 5}, p.PlatformLimits)
-
 	require.ErrorIs(t, normalizeProxyPoolInput(&ProxyPool{Name: " "}), ErrProxyPoolNameRequired)
-	require.ErrorIs(t, normalizeProxyPoolInput(&ProxyPool{Name: "x", PlatformLimits: map[string]int{"kiro": 0}}), ErrProxyPoolLimitInvalid)
 }
 
 func TestProxyPoolRetiredPlatforms(t *testing.T) {
-	pool := &ProxyPool{PlatformLimits: map[string]int{"kiro": 5, "openai": 2}}
-	m := poolMember(1, StatusActive, map[string]int64{"kiro": 5, "openai": 1})
-	require.Equal(t, []string{"kiro"}, ProxyPoolRetiredPlatforms(pool, &m))
+	policies := []ProxyIPPolicy{churnPolicy("kiro", 5), churnPolicy("openai", 2), {Platform: "ollama", Mode: ProxyIPPolicyModeSticky}}
+	m := poolMember(1, StatusActive, map[string]int64{"kiro": 5, "openai": 1, "ollama": 9})
+	require.Equal(t, []string{"kiro"}, ProxyPoolRetiredPlatforms(policies, &m))
 }
 
 func TestApplyProxyRole(t *testing.T) {

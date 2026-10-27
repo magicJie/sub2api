@@ -1,5 +1,6 @@
 <template>
-  <div>
+  <div class="space-y-6">
+    <PlatformIPPolicyPanel :policies="policies" :pools="pools" @changed="onPoliciesChanged" />
     <div class="flex min-h-[420px] flex-col gap-4 md:flex-row">
       <!-- 左：代理池列表 -->
       <div class="w-full shrink-0 space-y-2 md:w-60">
@@ -25,7 +26,7 @@
             <span v-if="pool.is_default" class="badge badge-primary shrink-0">{{ t('admin.proxyPools.defaultPool') }}</span>
           </div>
           <div class="mt-0.5 text-xs text-gray-500 dark:text-dark-300">
-            {{ t('admin.proxyPools.proxyCount') }} {{ pool.proxy_count }} · {{ formatLimits(pool.platform_limits) }}
+            {{ t('admin.proxyPools.proxyCount') }} {{ pool.proxy_count }}
           </div>
         </button>
       </div>
@@ -154,23 +155,6 @@
           <label class="input-label">{{ t('admin.proxyPools.description') }}</label>
           <input v-model="poolForm.description" type="text" class="input" />
         </div>
-        <div>
-          <label class="input-label">{{ t('admin.proxyPools.platformLimits') }}</label>
-          <p class="input-hint mb-2">{{ t('admin.proxyPools.platformLimitsHint') }}</p>
-          <div v-for="(row, idx) in poolForm.limits" :key="idx" class="mb-2 flex items-center gap-2">
-            <div class="flex-1">
-              <Select v-model="row.platform" :options="platformOptions" />
-            </div>
-            <input v-model.number="row.limit" type="number" min="1" class="input w-24" :placeholder="t('admin.proxyPools.limit')" />
-            <button type="button" class="btn btn-secondary btn-sm" @click="poolForm.limits.splice(idx, 1)">
-              <Icon name="trash" size="sm" />
-            </button>
-          </div>
-          <button type="button" class="btn btn-secondary btn-sm" @click="poolForm.limits.push({ platform: 'kiro', limit: 5 })">
-            <Icon name="plus" size="sm" class="mr-1" />
-            {{ t('admin.proxyPools.addLimit') }}
-          </button>
-        </div>
       </form>
       <template #footer>
         <div class="flex justify-end gap-3">
@@ -255,12 +239,11 @@ import { adminAPI } from '@/api/admin'
 import type { Proxy } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
-import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
-import { CONCRETE_PLATFORM_OPTIONS } from '@/constants/platforms'
+import PlatformIPPolicyPanel from './PlatformIPPolicyPanel.vue'
 import { formatDateTime } from '@/utils/format'
 import { extractI18nErrorMessage } from '@/utils/apiError'
-import proxyPoolAPI, { type ProxyBindingsResult, type ProxyPool, type ProxyPoolMember } from '../api'
+import proxyPoolAPI, { type ProxyBindingsResult, type ProxyIPPolicy, type ProxyPool, type ProxyPoolMember } from '../api'
 
 const props = withDefaults(defineProps<{ active?: boolean }>(), { active: true })
 const emit = defineEmits<{ changed: [] }>()
@@ -269,6 +252,7 @@ const { t } = useI18n()
 const appStore = useAppStore()
 
 const pools = ref<ProxyPool[]>([])
+const policies = ref<ProxyIPPolicy[]>([])
 const loadingPools = ref(false)
 const selectedPoolId = ref<number | null>(null)
 const members = ref<ProxyPoolMember[]>([])
@@ -284,8 +268,7 @@ const poolForm = reactive({
   open: false,
   id: 0,
   name: '',
-  description: '',
-  limits: [] as { platform: string; limit: number }[]
+  description: ''
 })
 
 const bindings = reactive({
@@ -295,7 +278,6 @@ const bindings = reactive({
   data: null as ProxyBindingsResult | null
 })
 
-const platformOptions = computed(() => CONCRETE_PLATFORM_OPTIONS.map((o) => ({ value: o.value, label: o.label })))
 const selectedPool = computed(() => pools.value.find((p) => p.id === selectedPoolId.value) ?? null)
 const defaultPoolId = computed(() => pools.value.find((p) => p.is_default)?.id ?? null)
 const memberIds = computed(() => new Set(members.value.map((m) => m.proxy.id)))
@@ -308,24 +290,23 @@ const showError = (error: unknown, fallback: string) => {
   appStore.showError(extractI18nErrorMessage(error, t, 'admin.proxyPools.errors', fallback))
 }
 
-const formatLimits = (limits: Record<string, number>) => {
-  const entries = Object.entries(limits ?? {})
-  if (entries.length === 0) return t('admin.proxyPools.noLimits')
-  return entries.map(([p, n]) => `${p}≤${n}`).join(' ')
-}
-
 const poolName = (poolId?: number | null) => {
   const id = poolId ?? defaultPoolId.value
   return pools.value.find((p) => p.id === id)?.name ?? ''
 }
 
+// 只展示能从当前池取 IP 的平台策略与有历史记录的平台
+const poolPolicies = computed(() =>
+  policies.value.filter((p) => p.pool_ids.length === 0 || (selectedPoolId.value !== null && p.pool_ids.includes(selectedPoolId.value)))
+)
+
 const limitSuffix = (platform: string) => {
-  const limit = selectedPool.value?.platform_limits?.[platform]
+  const limit = policies.value.find((p) => p.platform === platform)?.max_lifetime_accounts
   return limit ? `/${limit}` : ''
 }
 
 const memberPlatforms = (m: ProxyPoolMember) => {
-  const set = new Set([...Object.keys(m.history_counts ?? {}), ...Object.keys(selectedPool.value?.platform_limits ?? {})])
+  const set = new Set([...Object.keys(m.history_counts ?? {}), ...poolPolicies.value.map((p) => p.platform)])
   return [...set].sort()
 }
 
@@ -379,8 +360,21 @@ const selectPool = (id: number) => {
   assignSelection.value = []
 }
 
+const loadPolicies = async () => {
+  try {
+    policies.value = await proxyPoolAPI.listPolicies()
+  } catch (error) {
+    showError(error, t('admin.proxyPools.loadFailed'))
+  }
+}
+
+const onPoliciesChanged = async () => {
+  await Promise.all([loadPolicies(), loadMembers()])
+  emit('changed')
+}
+
 const reload = async () => {
-  await Promise.all([loadPools(), loadAllProxies()])
+  await Promise.all([loadPools(), loadAllProxies(), loadPolicies()])
   await loadMembers()
 }
 
@@ -397,16 +391,11 @@ const openPoolForm = (pool: ProxyPool | null) => {
   poolForm.id = pool?.id ?? 0
   poolForm.name = pool?.name ?? ''
   poolForm.description = pool?.description ?? ''
-  poolForm.limits = Object.entries(pool?.platform_limits ?? {}).map(([platform, limit]) => ({ platform, limit }))
   poolForm.open = true
 }
 
 const handleSavePool = async () => {
-  const limits: Record<string, number> = {}
-  for (const row of poolForm.limits) {
-    if (row.platform && row.limit >= 1) limits[row.platform] = Math.floor(row.limit)
-  }
-  const payload = { name: poolForm.name.trim(), description: poolForm.description.trim(), platform_limits: limits }
+  const payload = { name: poolForm.name.trim(), description: poolForm.description.trim() }
   savingPool.value = true
   try {
     const saved = poolForm.id

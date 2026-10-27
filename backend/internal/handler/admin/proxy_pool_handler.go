@@ -22,24 +22,43 @@ func NewProxyPoolHandler(poolService *service.ProxyPoolService) *ProxyPoolHandle
 }
 
 type ProxyPoolDTO struct {
-	ID             int64          `json:"id"`
-	Name           string         `json:"name"`
-	Description    string         `json:"description"`
-	PlatformLimits map[string]int `json:"platform_limits"`
-	IsDefault      bool           `json:"is_default"`
-	ProxyCount     int64          `json:"proxy_count"`
-	CreatedAt      time.Time      `json:"created_at"`
-	UpdatedAt      time.Time      `json:"updated_at"`
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	IsDefault   bool      `json:"is_default"`
+	ProxyCount  int64     `json:"proxy_count"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 func proxyPoolDTO(p *service.ProxyPool) ProxyPoolDTO {
-	limits := p.PlatformLimits
-	if limits == nil {
-		limits = map[string]int{}
-	}
 	return ProxyPoolDTO{
-		ID: p.ID, Name: p.Name, Description: p.Description, PlatformLimits: limits,
+		ID: p.ID, Name: p.Name, Description: p.Description,
 		IsDefault: p.IsDefault, ProxyCount: p.ProxyCount, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
+	}
+}
+
+type ProxyIPPolicyDTO struct {
+	ID                  int64     `json:"id"`
+	Platform            string    `json:"platform"`
+	Mode                string    `json:"mode"`
+	PoolIDs             []int64   `json:"pool_ids"`
+	MaxLifetimeAccounts *int      `json:"max_lifetime_accounts"`
+	MaxActiveAccounts   *int      `json:"max_active_accounts"`
+	OnEgressFailure     string    `json:"on_egress_failure"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+}
+
+func proxyIPPolicyDTO(p *service.ProxyIPPolicy) ProxyIPPolicyDTO {
+	ids := p.PoolIDs
+	if ids == nil {
+		ids = []int64{}
+	}
+	return ProxyIPPolicyDTO{
+		ID: p.ID, Platform: p.Platform, Mode: p.Mode, PoolIDs: ids,
+		MaxLifetimeAccounts: p.MaxLifetimeAccounts, MaxActiveAccounts: p.MaxActiveAccounts,
+		OnEgressFailure: p.OnEgressFailure, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
 	}
 }
 
@@ -76,9 +95,8 @@ func proxyAccountBindingDTO(b *service.ProxyAccountBinding) ProxyAccountBindingD
 }
 
 type proxyPoolUpsertRequest struct {
-	Name           *string        `json:"name"`
-	Description    *string        `json:"description"`
-	PlatformLimits map[string]int `json:"platform_limits"`
+	Name        *string `json:"name"`
+	Description *string `json:"description"`
 }
 
 func parseProxyPoolIDParam(c *gin.Context, name string) (int64, bool) {
@@ -111,7 +129,7 @@ func (h *ProxyPoolHandler) Create(c *gin.Context) {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
-	pool := &service.ProxyPool{PlatformLimits: req.PlatformLimits}
+	pool := &service.ProxyPool{}
 	if req.Name != nil {
 		pool.Name = *req.Name
 	}
@@ -137,7 +155,7 @@ func (h *ProxyPoolHandler) Update(c *gin.Context) {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
-	updated, err := h.poolService.UpdatePool(c.Request.Context(), id, req.Name, req.Description, req.PlatformLimits)
+	updated, err := h.poolService.UpdatePool(c.Request.Context(), id, req.Name, req.Description)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -164,7 +182,7 @@ func (h *ProxyPoolHandler) Members(c *gin.Context) {
 	if !ok {
 		return
 	}
-	pool, members, err := h.poolService.ListMembers(c.Request.Context(), id)
+	pool, members, policies, err := h.poolService.ListMembers(c.Request.Context(), id)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -176,7 +194,7 @@ func (h *ProxyPoolHandler) Members(c *gin.Context) {
 			Proxy:            *dto.ProxyFromServiceAdmin(&m.Proxy),
 			HistoryCounts:    m.HistoryCounts,
 			ActiveCounts:     m.ActiveCounts,
-			RetiredPlatforms: service.ProxyPoolRetiredPlatforms(pool, m),
+			RetiredPlatforms: service.ProxyPoolRetiredPlatforms(policies, m),
 		})
 	}
 	response.Success(c, gin.H{"pool": proxyPoolDTO(pool), "members": out})
@@ -311,4 +329,54 @@ func (h *ProxyPoolHandler) UnbindAccount(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{"message": "Proxy binding unlocked"})
+}
+
+// ListPolicies GET /api/v1/admin/proxy-ip-policies
+func (h *ProxyPoolHandler) ListPolicies(c *gin.Context) {
+	policies, err := h.poolService.ListPolicies(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	out := make([]ProxyIPPolicyDTO, 0, len(policies))
+	for i := range policies {
+		out = append(out, proxyIPPolicyDTO(&policies[i]))
+	}
+	response.Success(c, out)
+}
+
+type proxyIPPolicyUpsertRequest struct {
+	Mode                string  `json:"mode" binding:"required,oneof=churn sticky"`
+	PoolIDs             []int64 `json:"pool_ids"`
+	MaxLifetimeAccounts *int    `json:"max_lifetime_accounts"`
+	MaxActiveAccounts   *int    `json:"max_active_accounts"`
+	OnEgressFailure     string  `json:"on_egress_failure" binding:"omitempty,oneof=pause reassign"`
+}
+
+// UpsertPolicy PUT /api/v1/admin/proxy-ip-policies/:platform
+func (h *ProxyPoolHandler) UpsertPolicy(c *gin.Context) {
+	var req proxyIPPolicyUpsertRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	p, err := h.poolService.UpsertPolicy(c.Request.Context(), &service.ProxyIPPolicy{
+		Platform: c.Param("platform"), Mode: req.Mode, PoolIDs: req.PoolIDs,
+		MaxLifetimeAccounts: req.MaxLifetimeAccounts, MaxActiveAccounts: req.MaxActiveAccounts,
+		OnEgressFailure: req.OnEgressFailure,
+	})
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, proxyIPPolicyDTO(p))
+}
+
+// DeletePolicy DELETE /api/v1/admin/proxy-ip-policies/:platform
+func (h *ProxyPoolHandler) DeletePolicy(c *gin.Context) {
+	if err := h.poolService.DeletePolicy(c.Request.Context(), c.Param("platform")); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"message": "Platform IP policy deleted"})
 }
