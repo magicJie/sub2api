@@ -89,8 +89,8 @@ func (s *ProxyChainService) validateHopGroup(ctx context.Context, group *ProxyHo
 	if group.Strategy == "" {
 		group.Strategy = "fallback"
 	}
-	if group.Strategy != "fallback" && group.Strategy != "url-test" {
-		return infraerrors.BadRequest("PROXY_HOP_GROUP_INVALID", "strategy must be fallback or url-test")
+	if !hopgroup.ValidStrategy(group.Strategy) {
+		return infraerrors.BadRequest("PROXY_HOP_GROUP_INVALID", "strategy must be fallback, url-test or load-balance")
 	}
 	if group.TestURL == "" {
 		group.TestURL = "https://www.gstatic.com/generate_204"

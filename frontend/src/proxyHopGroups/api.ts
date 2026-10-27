@@ -3,7 +3,12 @@ import { apiClient } from '@/api/client'
 
 export interface HopGroupRuntime {
   selected: string
-  nodes: { name: string; alive: boolean; delay_ms: number }[]
+  nodes: {
+    name: string
+    alive: boolean
+    delay_ms: number
+    active_connections: number
+  }[]
   providers: {
     name: string
     updated_at: string
@@ -14,7 +19,7 @@ export interface HopGroupRuntime {
 export interface HopGroup {
   id: number
   name: string
-  strategy: 'fallback' | 'url-test'
+  strategy: 'fallback' | 'url-test' | 'load-balance'
   test_url: string
   interval_seconds: number
   tolerance_ms: number

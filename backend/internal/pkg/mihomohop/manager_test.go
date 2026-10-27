@@ -428,8 +428,8 @@ func TestStuckDialDoesNotBlockOtherGroupDials(t *testing.T) {
 	}
 }
 
-func TestAllDeadGroupDialFailsClosed(t *testing.T) {
-	for _, strategy := range []string{"fallback", "url-test"} {
+func TestAllDeadHopGroupDialFailsClosed(t *testing.T) {
+	for _, strategy := range []string{"fallback", "url-test", "load-balance"} {
 		t.Run(strategy, func(t *testing.T) {
 			var requests atomic.Int32
 			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1); w.WriteHeader(204) }))
@@ -459,5 +459,152 @@ func TestAllDeadGroupDialFailsClosed(t *testing.T) {
 				t.Fatal("all-dead group dialed the target directly")
 			}
 		})
+	}
+}
+
+// countingMember is a local SOCKS5 node that counts only connections to target,
+// so background health checks through it never skew the distribution.
+func countingMember(t *testing.T, target uint16, hits *atomic.Int32) *proxychain.SOCKSBridge {
+	t.Helper()
+	bridge, err := proxychain.NewSOCKSBridge(func(ctx context.Context, host string, port uint16) (net.Conn, error) {
+		if port == target {
+			hits.Add(1)
+		}
+		return (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(host, fmt.Sprint(port)))
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = bridge.Close() })
+	return bridge
+}
+
+func TestLoadBalanceHopGroupRoundRobinSkipsDeadNodesAndFailsClosed(t *testing.T) {
+	health := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	defer health.Close()
+	var accepted atomic.Int32
+	counted, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer counted.Close()
+	go func() {
+		for {
+			conn, err := counted.Accept()
+			if err != nil {
+				return
+			}
+			accepted.Add(1)
+			go func() { defer conn.Close(); _, _ = io.Copy(conn, conn) }()
+		}
+	}()
+	targetPort := uint16(counted.Addr().(*net.TCPAddr).Port)
+	hits := make([]atomic.Int32, 3)
+	nodes := make([]*proxychain.SOCKSBridge, 3)
+	hops := make([]proxychain.Hop, 3)
+	for i := range nodes {
+		nodes[i] = countingMember(t, targetPort, &hits[i])
+		hops[i] = nodes[i].Endpoint()
+	}
+	group := baseGroup(health.URL, hops...)
+	group.Strategy = "load-balance"
+	m := &Manager{}
+	defer m.Close()
+	if err := m.Replace(context.Background(), []hopgroup.Group{group}); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, m, 1, func(s hopgroup.GroupStatus) bool {
+		return len(s.Nodes) == 3 && s.Nodes[0].Alive && s.Nodes[1].Alive && s.Nodes[2].Alive
+	})
+	endpoint, _ := m.Endpoint(1)
+	dialer, err := xproxy.SOCKS5("tcp", net.JoinHostPort(endpoint.Host, fmt.Sprint(endpoint.Port)), &xproxy.Auth{User: endpoint.Username, Password: endpoint.Password}, xproxy.Direct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roundTrip := func() error {
+		conn, err := dialer.Dial("tcp", counted.Addr().String())
+		if err != nil {
+			return err
+		}
+		defer conn.Close()
+		if _, err := conn.Write([]byte("ping")); err != nil {
+			return err
+		}
+		var reply [4]byte
+		_, err = io.ReadFull(conn, reply[:])
+		return err
+	}
+	snapshot := func() [3]int32 { return [3]int32{hits[0].Load(), hits[1].Load(), hits[2].Load()} }
+
+	// Status must not advance the round-robin cursor nor report a single node.
+	for range 5 {
+		if status, err := m.Status(1); err != nil || status.Selected != "" {
+			t.Fatalf("load-balance status selected %q, %v", status.Selected, err)
+		}
+	}
+	held, err := dialer.Dial("tcp", counted.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, _ := m.Status(1)
+	var open int64
+	for _, node := range status.Nodes {
+		open += node.ActiveConnections
+	}
+	if open != 1 {
+		t.Fatalf("expected one active connection in status, got %+v", status.Nodes)
+	}
+	_ = held.Close()
+
+	before := snapshot()
+	for range 30 {
+		if err := roundTrip(); err != nil {
+			t.Fatalf("load-balance round trip failed: %v", err)
+		}
+	}
+	after := snapshot()
+	for i := range after {
+		if got := after[i] - before[i]; got < 5 {
+			t.Fatalf("node %d received %d of 30 connections: %v -> %v", i+1, got, before, after)
+		}
+	}
+
+	// Stop node 2 and wait for the health check to mark it down.
+	_ = nodes[1].Close()
+	waitStatus(t, m, 1, func(s hopgroup.GroupStatus) bool {
+		return len(s.Nodes) == 3 && s.Nodes[0].Alive && !s.Nodes[1].Alive && s.Nodes[2].Alive
+	})
+	before = snapshot()
+	for range 30 {
+		if err := roundTrip(); err != nil {
+			t.Fatalf("round trip with one dead node failed: %v", err)
+		}
+	}
+	after = snapshot()
+	if after[1] != before[1] {
+		t.Fatalf("dead node received connections: %v -> %v", before, after)
+	}
+	for _, i := range []int{0, 2} {
+		if got := after[i] - before[i]; got < 5 {
+			t.Fatalf("live node %d received %d of 30 connections: %v -> %v", i+1, got, before, after)
+		}
+	}
+
+	// Stop every node: dials fail and the target never sees a connection.
+	_ = nodes[0].Close()
+	_ = nodes[2].Close()
+	waitStatus(t, m, 1, func(s hopgroup.GroupStatus) bool {
+		return len(s.Nodes) == 3 && !s.Nodes[0].Alive && !s.Nodes[1].Alive && !s.Nodes[2].Alive
+	})
+	acceptedBefore := accepted.Load()
+	for range 5 {
+		if conn, err := dialer.Dial("tcp", counted.Addr().String()); err == nil {
+			_ = conn.Close()
+			t.Fatal("all-dead load-balance group returned a connection")
+		}
+	}
+	time.Sleep(100 * time.Millisecond)
+	if accepted.Load() != acceptedBefore {
+		t.Fatal("all-dead load-balance group reached the target")
 	}
 }

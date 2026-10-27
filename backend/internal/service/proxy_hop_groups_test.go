@@ -3,6 +3,7 @@
 package service
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -45,5 +46,27 @@ func TestAuditRedactsSubscriptionURLs(t *testing.T) {
 	}
 	if !strings.Contains(result, "airport") {
 		t.Fatal("audit redaction unexpectedly removed nonsensitive group name")
+	}
+}
+
+type hopGroupValidationProxyRepo struct{ ProxyRepository }
+
+func (hopGroupValidationProxyRepo) ListAllForFallback(context.Context) ([]Proxy, error) {
+	return nil, nil
+}
+
+func TestValidateHopGroupStrategy(t *testing.T) {
+	svc := &ProxyChainService{proxyRepo: hopGroupValidationProxyRepo{}}
+	for _, strategy := range []string{"", "fallback", "url-test", "load-balance"} {
+		group := ProxyHopGroup{Name: "airport", Strategy: strategy, SubscriptionURLs: []string{"https://subscription.invalid/clash"}}
+		if err := svc.validateHopGroup(context.Background(), &group); err != nil {
+			t.Fatalf("strategy %q rejected: %v", strategy, err)
+		}
+	}
+	for _, strategy := range []string{"round-robin", "consistent-hashing", "sticky-sessions", "select", "LOAD-BALANCE"} {
+		group := ProxyHopGroup{Name: "airport", Strategy: strategy, SubscriptionURLs: []string{"https://subscription.invalid/clash"}}
+		if err := svc.validateHopGroup(context.Background(), &group); err == nil {
+			t.Fatalf("strategy %q accepted", strategy)
+		}
 	}
 }
