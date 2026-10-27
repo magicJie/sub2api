@@ -81,6 +81,9 @@ func (Proxy) Fields() []ent.Field {
 		field.Int64("pool_id").
 			Optional().Nillable().
 			Comment("Proxy pool id (proxy_pools, app-level checked). NULL is treated as the default pool."),
+		field.String("role").
+			MaxLen(20).Default("egress").
+			Comment("代理池（fork）：egress（静态落地 IP，可进代理池、绑账号）| transport（前置/机场/动态代理，只做传输）。"),
 	}
 }
 

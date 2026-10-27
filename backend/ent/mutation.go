@@ -37535,6 +37535,7 @@ type ProxyMutation struct {
 	options                  *map[string]string
 	pool_id                  *int64
 	addpool_id               *int64
+	role                     *string
 	clearedFields            map[string]struct{}
 	accounts                 map[int64]struct{}
 	removedaccounts          map[int64]struct{}
@@ -38551,6 +38552,42 @@ func (m *ProxyMutation) ResetPoolID() {
 	delete(m.clearedFields, proxy.FieldPoolID)
 }
 
+// SetRole sets the "role" field.
+func (m *ProxyMutation) SetRole(s string) {
+	m.role = &s
+}
+
+// Role returns the value of the "role" field in the mutation.
+func (m *ProxyMutation) Role() (r string, exists bool) {
+	v := m.role
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRole returns the old "role" field's value of the Proxy entity.
+// If the Proxy object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProxyMutation) OldRole(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRole is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRole requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRole: %w", err)
+	}
+	return oldValue.Role, nil
+}
+
+// ResetRole resets all changes to the "role" field.
+func (m *ProxyMutation) ResetRole() {
+	m.role = nil
+}
+
 // AddAccountIDs adds the "accounts" edge to the Account entity by ids.
 func (m *ProxyMutation) AddAccountIDs(ids ...int64) {
 	if m.accounts == nil {
@@ -38720,7 +38757,7 @@ func (m *ProxyMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ProxyMutation) Fields() []string {
-	fields := make([]string, 0, 19)
+	fields := make([]string, 0, 20)
 	if m.created_at != nil {
 		fields = append(fields, proxy.FieldCreatedAt)
 	}
@@ -38778,6 +38815,9 @@ func (m *ProxyMutation) Fields() []string {
 	if m.pool_id != nil {
 		fields = append(fields, proxy.FieldPoolID)
 	}
+	if m.role != nil {
+		fields = append(fields, proxy.FieldRole)
+	}
 	return fields
 }
 
@@ -38824,6 +38864,8 @@ func (m *ProxyMutation) Field(name string) (ent.Value, bool) {
 		return m.Options()
 	case proxy.FieldPoolID:
 		return m.PoolID()
+	case proxy.FieldRole:
+		return m.Role()
 	}
 	return nil, false
 }
@@ -38871,6 +38913,8 @@ func (m *ProxyMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldOptions(ctx)
 	case proxy.FieldPoolID:
 		return m.OldPoolID(ctx)
+	case proxy.FieldRole:
+		return m.OldRole(ctx)
 	}
 	return nil, fmt.Errorf("unknown Proxy field %s", name)
 }
@@ -39012,6 +39056,13 @@ func (m *ProxyMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetPoolID(v)
+		return nil
+	case proxy.FieldRole:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRole(v)
 		return nil
 	}
 	return fmt.Errorf("unknown Proxy field %s", name)
@@ -39238,6 +39289,9 @@ func (m *ProxyMutation) ResetField(name string) error {
 		return nil
 	case proxy.FieldPoolID:
 		m.ResetPoolID()
+		return nil
+	case proxy.FieldRole:
+		m.ResetRole()
 		return nil
 	}
 	return fmt.Errorf("unknown Proxy field %s", name)

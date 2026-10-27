@@ -38,6 +38,7 @@ type CreateProxyRequest struct {
 	BackupProxyID  *int64 `json:"backup_proxy_id"`
 	ExpiryWarnDays int    `json:"expiry_warn_days" binding:"omitempty,min=0"`
 	PoolID         *int64 `json:"pool_id"` // 代理池（fork）
+	Role           string `json:"role" binding:"omitempty,oneof=egress transport"`
 
 	ProxyChainRequest // 链式代理（fork）
 }
@@ -56,6 +57,7 @@ type UpdateProxyRequest struct {
 	BackupProxyID  dto.NullableInt64Field `json:"backup_proxy_id"`
 	ExpiryWarnDays *int                   `json:"expiry_warn_days" binding:"omitempty,min=0"`
 	PoolID         dto.NullableInt64Field `json:"pool_id"` // 代理池（fork）
+	Role           string                 `json:"role" binding:"omitempty,oneof=egress transport"`
 
 	ProxyChainUpdateRequest // 链式代理（fork）
 }
@@ -168,6 +170,7 @@ func (h *ProxyHandler) Create(c *gin.Context) {
 
 			ProxyChainInput: req.ProxyChainRequest.toInput(), // 链式代理（fork）
 			PoolID:          req.PoolID,                      // 代理池（fork）
+			Role:            strings.TrimSpace(req.Role),
 		})
 		if err != nil {
 			return nil, err
@@ -220,6 +223,7 @@ func (h *ProxyHandler) Update(c *gin.Context) {
 		ProxyChainUpdateInput: req.ProxyChainUpdateRequest.toInput(), // 链式代理（fork）
 		PoolID:                req.PoolID.Value,                      // 代理池（fork）
 		PoolIDSet:             req.PoolID.Set,
+		Role:                  strings.TrimSpace(req.Role),
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)

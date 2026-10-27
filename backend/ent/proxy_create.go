@@ -249,6 +249,20 @@ func (_c *ProxyCreate) SetNillablePoolID(v *int64) *ProxyCreate {
 	return _c
 }
 
+// SetRole sets the "role" field.
+func (_c *ProxyCreate) SetRole(v string) *ProxyCreate {
+	_c.mutation.SetRole(v)
+	return _c
+}
+
+// SetNillableRole sets the "role" field if the given value is not nil.
+func (_c *ProxyCreate) SetNillableRole(v *string) *ProxyCreate {
+	if v != nil {
+		_c.SetRole(*v)
+	}
+	return _c
+}
+
 // AddAccountIDs adds the "accounts" edge to the Account entity by IDs.
 func (_c *ProxyCreate) AddAccountIDs(ids ...int64) *ProxyCreate {
 	_c.mutation.AddAccountIDs(ids...)
@@ -351,6 +365,10 @@ func (_c *ProxyCreate) defaults() error {
 		v := proxy.DefaultUpstreamMode
 		_c.mutation.SetUpstreamMode(v)
 	}
+	if _, ok := _c.mutation.Role(); !ok {
+		v := proxy.DefaultRole
+		_c.mutation.SetRole(v)
+	}
 	return nil
 }
 
@@ -424,6 +442,14 @@ func (_c *ProxyCreate) check() error {
 	if v, ok := _c.mutation.UpstreamMode(); ok {
 		if err := proxy.UpstreamModeValidator(v); err != nil {
 			return &ValidationError{Name: "upstream_mode", err: fmt.Errorf(`ent: validator failed for field "Proxy.upstream_mode": %w`, err)}
+		}
+	}
+	if _, ok := _c.mutation.Role(); !ok {
+		return &ValidationError{Name: "role", err: errors.New(`ent: missing required field "Proxy.role"`)}
+	}
+	if v, ok := _c.mutation.Role(); ok {
+		if err := proxy.RoleValidator(v); err != nil {
+			return &ValidationError{Name: "role", err: fmt.Errorf(`ent: validator failed for field "Proxy.role": %w`, err)}
 		}
 	}
 	return nil
@@ -524,6 +550,10 @@ func (_c *ProxyCreate) createSpec() (*Proxy, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.PoolID(); ok {
 		_spec.SetField(proxy.FieldPoolID, field.TypeInt64, value)
 		_node.PoolID = &value
+	}
+	if value, ok := _c.mutation.Role(); ok {
+		_spec.SetField(proxy.FieldRole, field.TypeString, value)
+		_node.Role = value
 	}
 	if nodes := _c.mutation.AccountsIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -926,6 +956,18 @@ func (u *ProxyUpsert) ClearPoolID() *ProxyUpsert {
 	return u
 }
 
+// SetRole sets the "role" field.
+func (u *ProxyUpsert) SetRole(v string) *ProxyUpsert {
+	u.Set(proxy.FieldRole, v)
+	return u
+}
+
+// UpdateRole sets the "role" field to the value that was provided on create.
+func (u *ProxyUpsert) UpdateRole() *ProxyUpsert {
+	u.SetExcluded(proxy.FieldRole)
+	return u
+}
+
 // UpdateNewValues updates the mutable fields using the new values that were set on create.
 // Using this option is equivalent to using:
 //
@@ -1318,6 +1360,20 @@ func (u *ProxyUpsertOne) UpdatePoolID() *ProxyUpsertOne {
 func (u *ProxyUpsertOne) ClearPoolID() *ProxyUpsertOne {
 	return u.Update(func(s *ProxyUpsert) {
 		s.ClearPoolID()
+	})
+}
+
+// SetRole sets the "role" field.
+func (u *ProxyUpsertOne) SetRole(v string) *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.SetRole(v)
+	})
+}
+
+// UpdateRole sets the "role" field to the value that was provided on create.
+func (u *ProxyUpsertOne) UpdateRole() *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.UpdateRole()
 	})
 }
 
@@ -1879,6 +1935,20 @@ func (u *ProxyUpsertBulk) UpdatePoolID() *ProxyUpsertBulk {
 func (u *ProxyUpsertBulk) ClearPoolID() *ProxyUpsertBulk {
 	return u.Update(func(s *ProxyUpsert) {
 		s.ClearPoolID()
+	})
+}
+
+// SetRole sets the "role" field.
+func (u *ProxyUpsertBulk) SetRole(v string) *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.SetRole(v)
+	})
+}
+
+// UpdateRole sets the "role" field to the value that was provided on create.
+func (u *ProxyUpsertBulk) UpdateRole() *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.UpdateRole()
 	})
 }
 

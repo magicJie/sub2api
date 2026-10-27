@@ -53,6 +53,8 @@ const (
 	FieldOptions = "options"
 	// FieldPoolID holds the string denoting the pool_id field in the database.
 	FieldPoolID = "pool_id"
+	// FieldRole holds the string denoting the role field in the database.
+	FieldRole = "role"
 	// EdgeAccounts holds the string denoting the accounts edge name in mutations.
 	EdgeAccounts = "accounts"
 	// EdgePrimaryProxies holds the string denoting the primary_proxies edge name in mutations.
@@ -100,6 +102,7 @@ var Columns = []string{
 	FieldUpstreamHopGroupID,
 	FieldOptions,
 	FieldPoolID,
+	FieldRole,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -150,6 +153,10 @@ var (
 	DefaultUpstreamMode string
 	// UpstreamModeValidator is a validator for the "upstream_mode" field. It is called by the builders before save.
 	UpstreamModeValidator func(string) error
+	// DefaultRole holds the default value on creation for the "role" field.
+	DefaultRole string
+	// RoleValidator is a validator for the "role" field. It is called by the builders before save.
+	RoleValidator func(string) error
 )
 
 // OrderOption defines the ordering options for the Proxy queries.
@@ -248,6 +255,11 @@ func ByUpstreamHopGroupID(opts ...sql.OrderTermOption) OrderOption {
 // ByPoolID orders the results by the pool_id field.
 func ByPoolID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldPoolID, opts...).ToFunc()
+}
+
+// ByRole orders the results by the role field.
+func ByRole(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldRole, opts...).ToFunc()
 }
 
 // ByAccountsCount orders the results by accounts count.

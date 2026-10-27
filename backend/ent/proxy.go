@@ -56,6 +56,8 @@ type Proxy struct {
 	Options map[string]string `json:"options,omitempty"`
 	// Proxy pool id (proxy_pools, app-level checked). NULL is treated as the default pool.
 	PoolID *int64 `json:"pool_id,omitempty"`
+	// 代理池（fork）：egress（静态落地 IP，可进代理池、绑账号）| transport（前置/机场/动态代理，只做传输）。
+	Role string `json:"role,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the ProxyQuery when eager-loading is set.
 	Edges        ProxyEdges `json:"edges"`
@@ -113,7 +115,7 @@ func (*Proxy) scanValues(columns []string) ([]any, error) {
 			values[i] = new([]byte)
 		case proxy.FieldID, proxy.FieldPort, proxy.FieldBackupProxyID, proxy.FieldExpiryWarnDays, proxy.FieldUpstreamProxyID, proxy.FieldUpstreamHopGroupID, proxy.FieldPoolID:
 			values[i] = new(sql.NullInt64)
-		case proxy.FieldName, proxy.FieldProtocol, proxy.FieldHost, proxy.FieldUsername, proxy.FieldPassword, proxy.FieldStatus, proxy.FieldFallbackMode, proxy.FieldUpstreamMode:
+		case proxy.FieldName, proxy.FieldProtocol, proxy.FieldHost, proxy.FieldUsername, proxy.FieldPassword, proxy.FieldStatus, proxy.FieldFallbackMode, proxy.FieldUpstreamMode, proxy.FieldRole:
 			values[i] = new(sql.NullString)
 		case proxy.FieldCreatedAt, proxy.FieldUpdatedAt, proxy.FieldDeletedAt, proxy.FieldExpiresAt:
 			values[i] = new(sql.NullTime)
@@ -262,6 +264,12 @@ func (_m *Proxy) assignValues(columns []string, values []any) error {
 				_m.PoolID = new(int64)
 				*_m.PoolID = value.Int64
 			}
+		case proxy.FieldRole:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field role", values[i])
+			} else if value.Valid {
+				_m.Role = value.String
+			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
 		}
@@ -385,6 +393,9 @@ func (_m *Proxy) String() string {
 		builder.WriteString("pool_id=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
+	builder.WriteString(", ")
+	builder.WriteString("role=")
+	builder.WriteString(_m.Role)
 	builder.WriteByte(')')
 	return builder.String()
 }

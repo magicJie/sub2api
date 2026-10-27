@@ -376,6 +376,7 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 			ExpiryWarnDays: item.ExpiryWarnDays,
 
 			ProxyChainInput: item.DataProxyChain.toInput(chainRefs), // 链式代理（fork）
+			Role:            item.Role,                              // 代理池（fork）
 		})
 		if createErr != nil {
 			result.ProxyFailed++

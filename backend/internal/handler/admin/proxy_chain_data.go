@@ -17,10 +17,14 @@ type DataProxyChain struct {
 	UpstreamProxyName    string            `json:"upstream_proxy_name,omitempty"`
 	UpstreamHopGroupName string            `json:"upstream_hop_group_name,omitempty"`
 	Options              map[string]string `json:"options,omitempty"`
+	Role                 string            `json:"role,omitempty"` // 代理池（fork）：空为 egress
 }
 
 func dataProxyChainFromService(p *service.Proxy, exported []service.Proxy) DataProxyChain {
 	out := DataProxyChain{Options: p.Options}
+	if service.NormalizeProxyRole(p.Role) == service.ProxyRoleTransport {
+		out.Role = service.ProxyRoleTransport
+	}
 	mode := service.NormalizeUpstreamMode(p.UpstreamMode)
 	if mode != service.UpstreamModeDirect {
 		out.UpstreamMode = mode

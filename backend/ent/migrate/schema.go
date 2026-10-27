@@ -1420,6 +1420,7 @@ var (
 		{Name: "upstream_hop_group_id", Type: field.TypeInt64, Nullable: true},
 		{Name: "options", Type: field.TypeJSON, Nullable: true},
 		{Name: "pool_id", Type: field.TypeInt64, Nullable: true},
+		{Name: "role", Type: field.TypeString, Size: 20, Default: "egress"},
 		{Name: "backup_proxy_id", Type: field.TypeInt64, Nullable: true},
 	}
 	// ProxiesTable holds the schema information for the "proxies" table.
@@ -1430,7 +1431,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "proxies_proxies_backup_proxy",
-				Columns:    []*schema.Column{ProxiesColumns[19]},
+				Columns:    []*schema.Column{ProxiesColumns[20]},
 				RefColumns: []*schema.Column{ProxiesColumns[0]},
 				OnDelete:   schema.SetNull,
 			},
@@ -1454,7 +1455,7 @@ var (
 			{
 				Name:    "proxy_backup_proxy_id",
 				Unique:  false,
-				Columns: []*schema.Column{ProxiesColumns[19]},
+				Columns: []*schema.Column{ProxiesColumns[20]},
 			},
 			{
 				Name:    "proxy_pool_id",
