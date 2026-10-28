@@ -15,6 +15,9 @@ const {
   importCodexSessionMock,
   createOpenAICodexPATMock,
   importKiroTokenMock,
+  saveOllamaSessionMock,
+  setOllamaAutoRefreshMock,
+  refreshOllamaUsageMock,
   authIsSimpleMode,
 } = vi.hoisted(() => ({
   createAccountMock: vi.fn(),
@@ -24,6 +27,9 @@ const {
   importCodexSessionMock: vi.fn(),
   createOpenAICodexPATMock: vi.fn(),
   importKiroTokenMock: vi.fn(),
+  saveOllamaSessionMock: vi.fn(),
+  setOllamaAutoRefreshMock: vi.fn(),
+  refreshOllamaUsageMock: vi.fn(),
   authIsSimpleMode: { value: true },
 }))
 
@@ -47,6 +53,9 @@ vi.mock('@/api/admin', () => ({
   adminAPI: {
     accounts: {
       create: createAccountMock,
+      saveOllamaCloudUsageSession: saveOllamaSessionMock,
+      setOllamaCloudUsageAutoRefresh: setOllamaAutoRefreshMock,
+      refreshOllamaCloudUsage: refreshOllamaUsageMock,
       probeUpstreamBilling: probeUpstreamBillingMock,
       syncUpstreamModels: syncUpstreamModelsMock,
       checkMixedChannelRisk: vi.fn().mockResolvedValue({ has_risk: false }),
@@ -1129,6 +1138,26 @@ describe('CreateAccountModal Ollama Cloud platform', () => {
     })
     expect(payload?.extra?.openai_responses_mode).toBe('force_chat_completions')
     expect(payload?.upstream_billing_probe_enabled).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('saves the Ollama usage session after create and checks it once', async () => {
+    saveOllamaSessionMock.mockReset().mockResolvedValue({ configured: true })
+    setOllamaAutoRefreshMock.mockReset().mockResolvedValue({ configured: true, auto_refresh_enabled: true })
+    refreshOllamaUsageMock.mockReset().mockResolvedValue({ configured: true, snapshot: { status: 'ok' } })
+    const wrapper = mountModal()
+    await wrapper.get('[data-testid="platform-button-ollama"]').trigger('click')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('ollama-cloud-2')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('ollama-secret-key')
+    await wrapper.get('#create-ollama-session').setValue('__Secure-session=abc')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    const created = await createAccountMock.mock.results[0]?.value
+    expect(createAccountMock.mock.calls[0]?.[0]?.credentials?.session).toBeUndefined()
+    expect(saveOllamaSessionMock).toHaveBeenCalledWith(created.id, '__Secure-session=abc')
+    expect(setOllamaAutoRefreshMock).toHaveBeenCalledWith(created.id, true)
+    expect(refreshOllamaUsageMock).toHaveBeenCalledWith(created.id)
     wrapper.unmount()
   })
 

@@ -3706,6 +3706,36 @@
         </div>
       </div>
 
+      <!-- Ollama Cloud 用量会话：账号创建后再加密保存并立即查询一次 -->
+      <section
+        v-if="form.platform === 'ollama'"
+        class="space-y-3 border-t border-gray-200 pt-4 dark:border-dark-600"
+        data-testid="create-ollama-usage-session"
+      >
+        <div>
+          <label class="input-label mb-0" for="create-ollama-session">{{ t('admin.accounts.ollamaCloud.sessionLabel') }}</label>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.ollamaCloud.createSessionHint') }}</p>
+        </div>
+        <textarea
+          id="create-ollama-session"
+          v-model="ollamaUsageSession"
+          rows="3"
+          class="input font-mono text-xs"
+          autocomplete="new-password"
+          data-1p-ignore
+          data-lpignore="true"
+          data-bwignore="true"
+          :placeholder="t('admin.accounts.ollamaCloud.sessionPlaceholder')"
+        />
+        <div v-if="ollamaUsageSession.trim()" class="flex items-center justify-between gap-4">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.ollamaCloud.autoRefresh') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.ollamaCloud.autoRefreshHint') }}</p>
+          </div>
+          <Toggle v-model="ollamaUsageAutoRefresh" data-testid="create-ollama-auto-refresh" />
+        </div>
+      </section>
+
       <!-- OpenAI APIKey Responses API support mode -->
       <div
         v-if="(form.platform === 'openai' || form.platform === 'ollama') && accountCategory === 'apikey'"
@@ -5814,6 +5844,30 @@ const ensureAntigravityMixedChannelConfirmed = async (onConfirm: () => Promise<v
   }
 }
 
+// Ollama Cloud 用量会话只能挂在已存在的账号上（按账号加密落库），所以在创建成功后保存。
+const ollamaUsageSession = ref('')
+const ollamaUsageAutoRefresh = ref(true)
+
+const setupOllamaUsageAfterCreate = async (accountId: number) => {
+  const session = ollamaUsageSession.value.trim()
+  if (form.platform !== 'ollama' || !session) return
+  try {
+    await adminAPI.accounts.saveOllamaCloudUsageSession(accountId, session)
+    if (ollamaUsageAutoRefresh.value) {
+      await adminAPI.accounts.setOllamaCloudUsageAutoRefresh(accountId, true)
+    }
+    const state = await adminAPI.accounts.refreshOllamaCloudUsage(accountId)
+    const snap = state?.snapshot
+    if (snap && snap.status !== 'ok') {
+      appStore.showWarning(t('admin.accounts.ollamaCloud.createCheckFailed', { reason: snap.last_error || snap.status }))
+    } else {
+      appStore.showSuccess(t('admin.accounts.ollamaCloud.createCheckOk'))
+    }
+  } catch (error: any) {
+    appStore.showWarning(error?.response?.data?.message || t('admin.accounts.ollamaCloud.sessionSaveFailed'))
+  }
+}
+
 const submitCreateAccount = async (payload: CreateAccountRequest) => {
   submitting.value = true
   try {
@@ -5848,6 +5902,7 @@ const submitCreateAccount = async (payload: CreateAccountRequest) => {
         appStore.showWarning(t('admin.accounts.upstreamBilling.probeFailed'))
       }
     }
+    await setupOllamaUsageAfterCreate(account.id)
     appStore.showSuccess(t('admin.accounts.accountCreated'))
     emit('created')
     handleClose()
@@ -5870,6 +5925,8 @@ const submitCreateAccount = async (payload: CreateAccountRequest) => {
 
 // Methods
 const resetForm = () => {
+  ollamaUsageSession.value = ''
+  ollamaUsageAutoRefresh.value = true
   step.value = 1
   form.name = ''
   form.notes = ''

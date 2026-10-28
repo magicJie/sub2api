@@ -307,6 +307,9 @@ export default {
         extendHint: 'Extends from the current expiry date; starts from now when empty or already expired.'
       },
       ollamaCloud: {
+        createSessionHint: 'Optional. Saved encrypted after the account is created, then usage is queried once to check the session.',
+        createCheckOk: 'Ollama usage session is valid; usage fetched',
+        createCheckFailed: 'Ollama usage query failed ({reason}); check the session in Edit',
         cellNotConfigured: 'Usage session not set. Add an ollama.com session in Edit to query usage.',
         approximateReset: '{time} (approx.)',
         staleData: 'Showing previous data.',

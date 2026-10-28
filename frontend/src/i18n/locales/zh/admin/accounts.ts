@@ -147,6 +147,9 @@ export default {
         extendHint: '从当前到期日顺延；到期日为空或已过期时从现在算。'
       },
       ollamaCloud: {
+        createSessionHint: '选填。账号创建后会加密保存并立即查询一次用量，用来检查会话是否有效。',
+        createCheckOk: 'Ollama 用量会话有效，已查询到用量',
+        createCheckFailed: 'Ollama 用量查询失败（{reason}），请在编辑账号中检查会话',
         cellNotConfigured: '未配置用量会话，在编辑账号中填写 ollama.com 会话后可查询',
         approximateReset: '约{time}',
         staleData: '显示的是上次数据。',
