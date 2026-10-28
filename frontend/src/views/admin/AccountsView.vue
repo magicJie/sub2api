@@ -1726,6 +1726,10 @@ function grok45ResponsesPlanIsHeavy(snapshot: Record<string, any> | undefined): 
 // from grok-4.5 Responses (or a carried 4.5 hint).
 function getAccountPlanType(row: any): string | undefined {
   if (!row) return undefined
+  if (row.platform === 'kiro') {
+    // 来自后台额度快照的套餐名（如 KIRO PRO MAX）
+    return firstNonBlankString(row.kiro_subscription_name) || undefined
+  }
   if (row.platform === 'grok') {
     const extra = (row.extra || {}) as Record<string, any>
     const billing = extra.grok_billing_snapshot as Record<string, any> | undefined

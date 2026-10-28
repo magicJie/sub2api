@@ -118,6 +118,11 @@ const normalizedPlanType = computed(() => normalizePlanType(props.planType))
 
 const planLabel = computed(() => {
   if (!normalizedPlanType.value) return ''
+  // Kiro 套餐名来自上游 subscriptionTitle（如 "KIRO PRO MAX"），去掉平台前缀后按词首大写显示。
+  if (props.platform === 'kiro') {
+    const words = (props.planType || '').trim().replace(/^kiro\s+/i, '').split(/\s+/).filter(Boolean)
+    return words.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')
+  }
   // ChatGPT 档位命名（Pro 100 / Pro 200 / Pro 500、Business / Business Premium）只适用于
   // OpenAI：Antigravity 与 Grok 各自的 pro/team 沿用下面的通用标签。
   if (props.platform === 'openai') {

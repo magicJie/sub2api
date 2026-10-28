@@ -212,9 +212,6 @@
         {{ error }}
       </div>
       <div v-else-if="usageInfo" class="space-y-1">
-        <div v-if="kiroSubscriptionLabel" class="truncate text-[10px] font-medium text-gray-700 dark:text-gray-300" :title="kiroSubscriptionLabel">
-          {{ kiroSubscriptionLabel }}
-        </div>
         <div v-if="usageInfo.error" class="truncate text-xs text-amber-600 dark:text-amber-400 max-w-[200px]" :title="usageInfo.error">
           {{ usageInfo.error }}
         </div>
@@ -1096,7 +1093,6 @@ const aiCreditsDisplay = computed(() => {
   return total.toFixed(0)
 })
 
-const kiroSubscriptionLabel = computed(() => usageInfo.value?.kiro_subscription_name?.trim() ?? '')
 
 type KiroCredit = NonNullable<AccountUsageInfo['kiro_credit']>
 

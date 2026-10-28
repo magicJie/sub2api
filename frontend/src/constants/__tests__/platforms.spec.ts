@@ -24,12 +24,12 @@ const concretePlatforms = [
   'zhipu',
   'deepseek',
   'minimax',
+  'ollama',
   'opencode_go',
   'typesafe',
   'command_code',
   'cline',
-  'kiro', // Kiro（fork）
-  'ollama'
+  'kiro' // Kiro（fork）
 ]
 
 describe('platform option catalogs', () => {
@@ -62,11 +62,11 @@ describe('platform catalog with a newly registered platform', () => {
     expect(listPlatformIds()).toEqual(concretePlatforms)
     expect(compositePrecedencePlatformIds()).toEqual([
       'anthropic', 'gemini', 'openai', 'antigravity', 'grok',
-      'kimi', 'zhipu', 'deepseek', 'minimax', 'opencode_go', 'typesafe', 'command_code', 'cline', 'kiro', 'ollama'
+      'kimi', 'zhipu', 'deepseek', 'minimax', 'ollama', 'opencode_go', 'typesafe', 'command_code', 'cline', 'kiro'
     ])
     expect(CONCRETE_PLATFORM_OPTIONS.map((option) => option.label)).toEqual([
       'Anthropic', 'OpenAI', 'Gemini', 'Antigravity', 'Grok',
-      'Kimi', 'Zhipu GLM', 'DeepSeek', 'MiniMax', 'OpenCode', 'TypeSafe / Jev', 'Command Code', 'Cline', 'Kiro', 'Ollama Cloud'
+      'Kimi', 'Zhipu GLM', 'DeepSeek', 'MiniMax', 'Ollama Cloud', 'OpenCode', 'TypeSafe / Jev', 'Command Code', 'Cline', 'Kiro'
     ])
     expect(platformLabel('zhipu')).toBe('Zhipu GLM')
     expect(platformLabel('composite')).toBe('Composite')

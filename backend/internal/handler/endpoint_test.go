@@ -199,6 +199,20 @@ func TestGetUpstreamEndpointUsesOpenAIRuntimeOverride(t *testing.T) {
 	require.Equal(t, EndpointChatCompletions, GetUpstreamEndpoint(c, service.PlatformOpenAI))
 }
 
+// Ollama 三种入口默认都走上游 Chat Completions；错误路径没有 ForwardResult 时
+// 也必须读运行时端点，而不是按入站路径推导。
+func TestGetUpstreamEndpointUsesOllamaRuntimeOverride(t *testing.T) {
+	for _, inbound := range []string{EndpointResponses, EndpointMessages} {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, inbound, nil)
+		c.Set(ctxKeyInboundEndpoint, inbound)
+
+		service.SetActualOpenAIUpstreamEndpoint(c, EndpointChatCompletions)
+		require.Equal(t, EndpointChatCompletions, GetUpstreamEndpoint(c, service.PlatformOllama), inbound)
+	}
+}
+
 func TestResolveOpenAIUpstreamEndpointPrefersForwardResult(t *testing.T) {
 	tests := []struct {
 		name            string
