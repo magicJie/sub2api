@@ -18,9 +18,23 @@
 ```
 账号 ──绑定──▶ 落地代理 egress（host = 静态落地 IP，业务池库存）
                  │ 前置链路（upstream_mode）
-              传输层：mihomo 首跳组（机场订阅 + 自部署节点，fallback/url-test）
+              传输层：外部 AIO 的首跳 listener（登记为 transport，推荐）
+                     / sub2api 内嵌首跳组（迁移 249，过渡与回退）
                      / 单个 transport 代理 / 直连
 ```
+
+### 2.1 传输层归属（2026-10-28 决定）
+
+首跳（机场订阅、自建节点、抗封锁协议、节点切换）不属于 sub2api 的功能边界，交给外部 AIO（MetaCubeXD All-in-One，mihomo 内核）统一管理；sub2api 只管静态落地 IP。
+
+- **AIO 负责**：在线订阅、`首跳` 组及健康检查策略。每个环境一个 AIO 实例（home、testenv、生产集群各自运行），使用同一份在线订阅，不跨网络共用实例。该实例额外开一个 listener，`proxy: 首跳`。
+- **sub2api 负责**：把这个 listener 登记为一条 `role=transport` 代理，作为落地代理的前置（或默认前置）；拨号时现拼「AIO 首跳 → 落地」。落地 IP 的拉取、分配、计数、退役不进 AIO。
+- **不采用整链托管**：Ant 的做法是把落地写进订阅、每个落地开一个 listener，适合 5 个手工维护、与 profile 一一对应的 IP。sub2api 的落地从供应商拉取、频繁增删，整链托管会让 IP 清单在 AIO 与数据库各存一份，计数还要维护端口→IP 映射；落地也不能写进多端共享的在线订阅。
+- **首跳负载**：`首跳-机场` 用 `load-balance` + `strategy: consistent-hashing`（软绑定）替代 url-test。经首跳的目标就是落地 host，因此不同落地分散到不同节点，同一落地固定走同一节点，节点故障只改派映射到它的那部分。不用 round-robin：每条新连接换节点，延迟随机场节点质量波动，协议会话复用变差。需实测确认 `dialer-proxy` 场景下哈希键确为落地 host（看连接表中各落地是否落在不同节点）。组内不放 DIRECT，全挂 fail-closed。
+- **落地不做负载**：一个账号固定一个落地 IP；落地之间的分摊由第 4 节的 churn/sticky 分配完成。
+- **延迟**：切换只发生在节点故障时，且只影响新连接，已有 keep-alive 连接不受影响。主要因素是首跳与落地的地理搭配；url-test 只测「节点→测速 URL」，测不到「节点→落地」，必要时按地区筛选首跳成员。
+- **约束**：若静态 IP 供应商按来源 IP 白名单认证，首跳出口必须固定，负载策略失效；这类供应商改用账号密码认证或单独固定首跳。
+- **内嵌首跳组**（迁移 249）保留为过渡与回退；各环境切到 AIO 并验收后，再决定是否移除（可去掉约 10MB 体积及 mihomo 全局状态、日志接管等绕行处理）。
 
 | 概念 | 说明 | 与账号的关系 |
 |---|---|---|
@@ -76,14 +90,14 @@
 
 | 情况 | 判定 | 处理 |
 |---|---|---|
-| 传输层故障 | 首跳组/前置全部不可用 | 首跳组级告警；账号状态不动（请求本身 fail-closed） |
+| 传输层故障 | 首跳组/前置全部不可用（含 AIO listener 不通） | 首跳组级告警；账号状态不动（请求本身 fail-closed） |
 | 出口代理不可用 | 传输层健康，但经该 egress 探测失败；或代理过期/停用 | sticky：暂停账号 + 告警；churn：按策略自动换 IP |
 
 实现要点（迁移 252，`internal/service/proxy_egress_health.go`）：
 
 - 巡检有账号在用的 egress 代理（Redis 选主，单实例执行），连续失败达到阈值才处置，避免抖动误伤；故障层级变化时重新计数、重新处置。
 - 巡检配置存于 settings `proxy_egress_health_config`：开关、间隔（30–3600 秒，默认 120）、失败阈值（1–20，默认 3）。在代理池页故障列表上方修改，下一轮生效；配置损坏时回退默认值。
-- 判层：链路无法解析或首跳组没有健康节点 → transport；否则经该代理探测失败 → egress。
+- 判层：链路无法解析或首跳组没有健康节点 → transport；否则经该代理探测失败 → egress。前置为 AIO listener 时，经该 transport 访问固定探测地址失败即判 transport；哪个首跳节点坏了由 AIO 自己处理，sub2api 不感知。
 - 暂停用账号的 `schedulable=false`，处置记录在 `proxy_egress_incident_accounts`。原本就不可调度的账号只记 `alert_only`，恢复时不会被误打开。
 - 告警写入运维告警（`ops_alert_events`，egress P1、transport P2），走现有告警页面与邮件；运维监控关闭时只写日志。
 - 探测恢复后故障与告警自动关闭，但暂停的账号不自动恢复。代理被删除时故障自动关闭。
@@ -100,9 +114,12 @@
 
 - 策略维度目前是 `platform`。ollama-cloud 与 codex 都挂在 `openai` 等平台下会共用一条策略；需要分开配时，把策略细化到「平台 + 上游（base_url）」。
 
+- 传输层切到 AIO 后，评估移除内嵌首跳组（迁移 249 相关代码与表）。
+
 ## 6. 参考
 
-- mihomo/Clash：节点、proxy-groups、proxy-providers、`dialer-proxy` 分离，对应本文的 transport 与首跳组。
+- mihomo/Clash：节点、proxy-groups、proxy-providers、`dialer-proxy` 分离，对应本文的 transport 与首跳组；`load-balance` 的 `consistent-hashing` 策略见第 2.1 节。
+- home Ant 集成：`/data/workspaces/ops/ant/changes/20261027-dedicated-aio/`（ant-aio 实例、回环 listener、整链托管）。
 - 代理服务商（Bright Data、Oxylabs 等）：数据中心 / ISP（静态住宅）/ 动态住宅 / 移动的分类，sticky 与 rotating 会话。
 - 指纹浏览器（AdsPower、Multilogin 等）：一个长期账号一个固定 IP，IP 变化即告警，对应 sticky 策略。
 
@@ -121,3 +138,8 @@
 1. 代理角色：`role`、落地 IP 去重、按 host 合并计数；池只收 egress，账号不能直接用 transport。上一轮的 `purpose` 改造并入此期。
 2. 平台策略：`platform_ip_policies` 替代 `platform_limits`，实现 churn/sticky 分配与跨平台复用。
 3. 健康与运维：分层故障判定、暂停与告警、一键换 IP / 恢复 / 批量迁移（迁移 252）。
+4. 传输层外置到 AIO（第 2.1 节），以运维变更为主，sub2api 代码基本不动：
+   1. 在独立 mihomo 实例验证 `首跳-机场` 改 consistent-hashing：五个落地分散到不同节点、单节点故障只改派部分落地、全挂 fail-closed。通过后再改共享在线订阅（影响 home、laptop、手机）。
+   2. testenv：起一个使用同一订阅的 AIO 容器，加 `proxy: 首跳` listener；在后台登记为 transport，替换 bwg-chain-1..5 的首跳组前置（改前快照）；复跑链路测试与 Kiro token 刷新、`/v1/messages`。
+   3. 生产：集群内 `mihomo-hop` 桥接换成同订阅 AIO 容器，整理为运维方案由 Jay 执行（不停机：先并行起新端点并登记 transport，逐个切换前置，观察后下线旧桥接）。
+   4. 全部环境稳定后，评估移除内嵌首跳组。
