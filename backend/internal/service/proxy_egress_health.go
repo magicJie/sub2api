@@ -303,9 +303,10 @@ func (s *ProxyEgressHealthService) CheckProxy(ctx context.Context, p *Proxy) err
 	return s.handleIncident(ctx, p, incident)
 }
 
-// probe 返回故障层级：链路无法解析或首跳组没有健康节点算 transport，其余探测失败算 egress。
+// probe 先检查前置链路和 transport 代理，再将落地探测失败归为 egress。
 func (s *ProxyEgressHealthService) probe(ctx context.Context, p *Proxy) (string, error) {
-	if _, chainErr := DescribeProxyChain(p); chainErr != "" {
+	chain, chainErr := DescribeProxyChain(p)
+	if chainErr != "" {
 		return ProxyIncidentLayerTransport, errors.New(chainErr)
 	}
 	if groupID := effectiveHopGroupID(p); groupID != nil {
@@ -313,6 +314,16 @@ func (s *ProxyEgressHealthService) probe(ctx context.Context, p *Proxy) (string,
 			if err == nil {
 				err = errors.New("first-hop group has no healthy member")
 			}
+			return ProxyIncidentLayerTransport, err
+		}
+	}
+	snapshot := currentProxyChainSnapshot()
+	for _, hop := range chain {
+		upstream, ok := snapshot.byID[hop.ID]
+		if !ok || NormalizeProxyRole(upstream.Role) != ProxyRoleTransport {
+			continue
+		}
+		if _, _, err := s.prober.ProbeProxy(ctx, upstream.URL()); err != nil {
 			return ProxyIncidentLayerTransport, err
 		}
 	}

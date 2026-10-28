@@ -129,3 +129,79 @@ corepack pnpm@9 test:run
 最终运行镜像为 `sha256:239f795d150ec7e5aecc055a3ce3298438d9aff49c9b9e8f76b0e00dedc13686`：`testenv.sh up` 退出 0，`/health` 返回 `{"status":"ok"}`，Docker 容器健康状态为 `healthy`。只读 schema 元数据检查确认首跳组表、代理组引用列及 `ON DELETE SET NULL` 外键均已生效；未查询或修改用户维护的数据内容。
 
 模块版本实测保持 `mihomo v1.19.33`、`xray-core v1.260206.0`、`refraction-networking/utls v1.8.2`，没有升级后两者。
+
+## 外部 AIO 首跳（transport）
+
+2026-10-28 已授权的 testenv 运行配置：运行目录 `/data/workspaces/sub2api-testenv/aio/`，
+独立容器 `sub2api-testenv-aio`，官方镜像 `ghcr.io/metacubex/metacubexd-server:v1.273.1`，
+内置 mihomo 实测为 `v1.19.27`。共享 laptop/home AIO、在线订阅及生产保持原样。
+
+- `compose.yaml`、`aio.env`、`isolation.js` 及 `data/` 均位于仓库外；目录 0700，敏感文件 0600。
+  容器 UID/GID 1000:1000、`cap_drop: ALL`、`no-new-privileges`、umask 077、restart `unless-stopped`。
+- 控制台 `http://127.0.0.1:18083`，核心 API `http://127.0.0.1:19093`，令牌只保存在私有 env/数据中。
+  mixed listener 为 `sub2api-testenv-aio:17890`，只在 `sub2api-testenv_testenv` Docker 网络内开放；
+  宿主机未发布该代理端口。TUN、DNS 监听及普通代理入站均关闭。
+- 原生 remote profile 订阅同一在线来源，自动使用 `clash.meta` User-Agent，刷新间隔 360 分钟。
+  持久化 script profile 在订阅合成后应用 `isolation.js`：`首跳` 固定选 `首跳-机场`，
+  后者本地覆盖为 `load-balance` + `consistent-hashing` + `empty-fallback: REJECT`。
+  机场 provider 刷新经自身 `首跳`，已完成一次性网络自举和原生 provider 刷新。
+
+### 启动、停止与登记
+
+```bash
+docker compose -f /data/workspaces/sub2api-testenv/aio/compose.yaml up -d
+docker compose -f /data/workspaces/sub2api-testenv/aio/compose.yaml stop
+docker compose -f /data/workspaces/sub2api-testenv/aio/compose.yaml start
+```
+
+现有后台登记为代理 **37 `testenv-aio-firsthop`**：
+`role=transport`、`protocol=http`、`host=sub2api-testenv-aio`、`port=17890`、
+`upstream_mode=direct`、`fallback_mode=none`。HTTP CONNECT 和 SOCKS5 共用该 mixed listener；
+此处 sub2api 使用 HTTP。以后维护复用此 ID。
+
+落地代理实际名称已为 `chain-0..4`（旧任务名 `bwg-chain-1..5`），ID 分别为
+25、24、26、27、28；本次只把其前置字段改为
+`upstream_mode=proxy`、`upstream_proxy_id=37`、`upstream_hop_group_id=null`。
+首跳组 **1 `laomao-fallback`** 保留。
+
+### 回退到首跳组 1
+
+1. 先保存当前 testenv 快照；原始迁移前快照名为 `pre-aio-transport-20261028`。
+2. 在代理管理中逐个编辑 ID 24..28，将前置改为“首跳组”，选择组 1 并保存。
+   等价管理 API 为 `PUT /api/v1/admin/proxies/:id`，请求体：
+   `{"upstream_mode":"hop_group","upstream_hop_group_id":1,"upstream_proxy_id":null}`。
+3. 逐条测试出口仍为各自落地 IP，再停止专用 AIO。保留 transport 37，便于重新切回。
+   此回退只改链路；全库 restore 会同时回滚后续账号凭据与业务数据。
+
+### 实测与巡检判层
+
+五条链出口分别为 chain-0 `38.75.201.17`、chain-1 `64.32.187.254`、
+chain-2 `204.1.110.98`、chain-3 `69.3.236.10`、chain-4 `69.3.236.49`。
+Kiro 账号 7/8/9 已通过外部 transport 刷新成功；使用原有 `T-kiro-smoke` Key，
+模型 `claude-sonnet-4-5-20250929` 的 `/v1/messages` 返回 200、正文 `pong`。
+
+Kiro 手动刷新使用 `/api/v1/admin/kiro/oauth/refresh-token`；返回结果通过标准
+`/api/v1/admin/accounts/:id/apply-oauth-credentials` 合并保存。通用
+`/admin/accounts/:id/refresh` 当前会把 Kiro 送入 Claude OAuth 分支，不用于 Kiro 验收。
+首次 provider 刷新后 chain-4 曾返回 EOF，完成健康检查后出口恢复；核心 ready 与链路 ready 分开确认。
+
+巡检对解析出的 `role=transport` 前置先做独立可达性探测，再检查落地：
+前置失败归类 `transport`，只告警；前置健康而落地失败归类 `egress`，按原策略处置。
+原巡检配置保持启用、120 秒周期、3 次失败阈值。逐代理手动检查入口为
+`POST /api/v1/admin/proxies/:id/health-check`，正常时返回成功且故障数据为空。
+
+实际停止专用 AIO 后，五条链测试均失败且无出口 IP；连续三轮手动巡检均判 `transport`，
+第三轮 `fail_count=3`、`handled=true`。账号 7/8/9/14/15/16 的状态、可调度性和代理绑定均保持原值，
+五条故障均无账号处置记录。恢复 AIO 并完成 provider 健康检查后，五个出口恢复、故障全部 resolved，
+新运行镜像的 `/v1/messages` 再次返回 200、`pong`。
+
+本次最小代码修改为 `proxy_egress_health.go` 对 transport 前置增加独立探测，
+对应回归覆盖显式/默认前置失败不误处置账号，以及前置健康时仍按落地失败处置。
+`go test -tags=unit ./internal/service/... ./internal/pkg/proxychain/...` 全部通过。
+当前应用镜像为 `sub2api-testenv:aio-transport-20261028`（也已标记为 `sub2api-testenv:local`），
+旧镜像保存在 `sub2api-testenv:pre-aio-transport-20261028`。
+完整 Docker 构建遇到 Alpine APK TLS 下载失败；最终复用已构建前端、本机 Go 1.27.3 和模块缓存，
+以 `CGO_ENABLED=0`、`-tags embed` 编译后在旧运行镜像中替换二进制，未改仓库构建定义。
+
+完整运行定义、验收与故障证据见
+`/data/workspaces/sub2api-testenv/reports/20261028-aio-transport.md`。

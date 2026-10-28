@@ -259,6 +259,43 @@ func TestProxyEgressHealth_TransportFailureDoesNotTouchAccounts(t *testing.T) {
 	require.Equal(t, int64(1), *accRepo.accounts[10].ProxyID)
 }
 
+func TestProxyEgressHealth_ExternalTransportFailure(t *testing.T) {
+	for _, mode := range []string{UpstreamModeProxy, UpstreamModeDefault} {
+		t.Run(mode, func(t *testing.T) {
+			svc, repo, accRepo, prober := healthFixture(t)
+			p := repo.members[0].Proxy
+			upstream := Proxy{ID: 3, Name: "aio", Protocol: "http", Host: "127.0.0.1", Port: 17890,
+				Status: StatusActive, Role: ProxyRoleTransport}
+			p.UpstreamMode = mode
+			if mode == UpstreamModeProxy {
+				p.UpstreamProxyID = &upstream.ID
+			}
+			prev := proxyChainState.Load()
+			proxyChainState.Store(&proxyChainSnapshot{byID: map[int64]Proxy{p.ID: p, upstream.ID: upstream},
+				defaultUpstreamID: &upstream.ID, loaded: true})
+			t.Cleanup(func() { proxyChainState.Store(prev) })
+			prober.down = map[string]bool{upstream.URL(): true, p.URL(): true}
+
+			for range ProxyEgressDefaultFailThreshold {
+				require.NoError(t, svc.CheckProxy(context.Background(), &p))
+			}
+			require.Equal(t, ProxyIncidentLayerTransport, repo.incidents[p.ID].Layer)
+			require.NotNil(t, repo.incidents[p.ID].HandledAt)
+			require.Empty(t, repo.records)
+			require.True(t, accRepo.accounts[11].Schedulable)
+			require.Equal(t, p.ID, *accRepo.accounts[10].ProxyID)
+
+			// A healthy listener with a failed landing remains an egress failure.
+			delete(prober.down, upstream.URL())
+			for range ProxyEgressDefaultFailThreshold {
+				require.NoError(t, svc.CheckProxy(context.Background(), &p))
+			}
+			require.Equal(t, ProxyIncidentLayerEgress, repo.incidents[p.ID].Layer)
+			require.False(t, accRepo.accounts[11].Schedulable)
+		})
+	}
+}
+
 func TestReplaceAccountProxy(t *testing.T) {
 	svc, repo, accRepo, _ := healthFixture(t)
 	ctx := context.Background()

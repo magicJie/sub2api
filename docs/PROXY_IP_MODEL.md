@@ -30,7 +30,9 @@
 - **AIO 负责**：在线订阅、`首跳` 组及健康检查策略。每个环境一个 AIO 实例（home、testenv、生产集群各自运行），使用同一份在线订阅，不跨网络共用实例。该实例额外开一个 listener，`proxy: 首跳`。
 - **sub2api 负责**：把这个 listener 登记为一条 `role=transport` 代理，作为落地代理的前置（或默认前置）；拨号时现拼「AIO 首跳 → 落地」。落地 IP 的拉取、分配、计数、退役不进 AIO。
 - **不采用整链托管**：Ant 的做法是把落地写进订阅、每个落地开一个 listener，适合 5 个手工维护、与 profile 一一对应的 IP。sub2api 的落地从供应商拉取、频繁增删，整链托管会让 IP 清单在 AIO 与数据库各存一份，计数还要维护端口→IP 映射；落地也不能写进多端共享的在线订阅。
-- **首跳负载**：`首跳-机场` 用 `load-balance` + `strategy: consistent-hashing`（软绑定）替代 url-test。经首跳的目标就是落地 host，因此不同落地分散到不同节点，同一落地固定走同一节点，节点故障只改派映射到它的那部分。不用 round-robin：每条新连接换节点，延迟随机场节点质量波动，协议会话复用变差。需实测确认 `dialer-proxy` 场景下哈希键确为落地 host（看连接表中各落地是否落在不同节点）。组内不放 DIRECT，全挂 fail-closed。
+- **首跳负载**：`首跳-机场` 用 `load-balance` + `strategy: consistent-hashing`（软绑定）替代 url-test。经首跳的目标就是落地 host，因此不同落地分散到不同节点，同一落地固定走同一节点，节点故障只改派映射到它的那部分。不用 round-robin：每条新连接换节点，延迟随机场节点质量波动，协议会话复用变差。2026-10-28 已在 mihomo v1.19.29 实测（报告 `/data/workspaces/sub2api-testenv/reports/20261028-firsthop-chash.md`）：`dialer-proxy` 场景哈希键是落地 IP，五个落地分散到五个节点且稳定。注意两点：
+  - 局部改派只对「成员列表不变、节点健康失败」成立（实测只改派 1/5）；成员增删或顺序变化（订阅更新、改 `exclude-filter`）会让 jump hash 索引移动，实测删 1 个节点改派 3/5。这类改派只换首跳、不换落地 IP，代价是部分连接重建。
+  - 组必须加 `empty-fallback: REJECT`：成员为空时默认回退 `COMPATIBLE`（等效 DIRECT），会绕过 fail-closed。组内也不放 DIRECT。
 - **落地不做负载**：一个账号固定一个落地 IP；落地之间的分摊由第 4 节的 churn/sticky 分配完成。
 - **延迟**：切换只发生在节点故障时，且只影响新连接，已有 keep-alive 连接不受影响。主要因素是首跳与落地的地理搭配；url-test 只测「节点→测速 URL」，测不到「节点→落地」，必要时按地区筛选首跳成员。
 - **约束**：若静态 IP 供应商按来源 IP 白名单认证，首跳出口必须固定，负载策略失效；这类供应商改用账号密码认证或单独固定首跳。
