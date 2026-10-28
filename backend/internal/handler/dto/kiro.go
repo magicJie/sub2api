@@ -14,13 +14,16 @@ type KiroAccountRuntimeDTO struct {
 	KiroRuntimeState   string     `json:"kiro_runtime_state,omitempty"`
 	KiroRuntimeReason  string     `json:"kiro_runtime_reason,omitempty"`
 	KiroRuntimeResetAt *time.Time `json:"kiro_runtime_reset_at,omitempty"`
+	// KiroQuotaRejectedAt / Reason 是上游额度拒绝时落库的「可退役」标记（extra 系统托管键）。
+	KiroQuotaRejectedAt     *time.Time `json:"kiro_quota_rejected_at,omitempty"`
+	KiroQuotaRejectedReason string     `json:"kiro_quota_rejected_reason,omitempty"`
 }
 
 func kiroAccountRuntimeDTO(a *service.Account) KiroAccountRuntimeDTO {
 	if a == nil {
 		return KiroAccountRuntimeDTO{}
 	}
-	return KiroAccountRuntimeDTO{
+	out := KiroAccountRuntimeDTO{
 		KiroQuotaState:     a.KiroQuotaState,
 		KiroQuotaReason:    a.KiroQuotaReason,
 		KiroQuotaResetAt:   a.KiroQuotaResetAt,
@@ -28,4 +31,8 @@ func kiroAccountRuntimeDTO(a *service.Account) KiroAccountRuntimeDTO {
 		KiroRuntimeReason:  a.KiroRuntimeReason,
 		KiroRuntimeResetAt: a.KiroRuntimeResetAt,
 	}
+	if a.Platform == service.PlatformKiro {
+		out.KiroQuotaRejectedAt, out.KiroQuotaRejectedReason = service.KiroQuotaRejectionFromExtra(a.Extra)
+	}
+	return out
 }

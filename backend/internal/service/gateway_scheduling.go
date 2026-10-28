@@ -746,7 +746,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			if cfg.PreferSoonestReset {
 				candidates = filterBySoonestReset(candidates)
 			}
-			candidates = filterByKiroPace(candidates) // Kiro（fork）：按额度进度收窄
+			candidates = filterKiroCandidates(candidates) // Kiro（fork）：集中耗尽 / 额度进度收窄
 			// 3. 取负载率最低的集合
 			candidates = filterByMinLoadRate(candidates)
 			// 4. LRU 选择最久未用的账号

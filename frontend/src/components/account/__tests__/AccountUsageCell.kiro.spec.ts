@@ -20,6 +20,7 @@ const messages: Record<string, string> = {
   'admin.accounts.usageWindow.kiroRemaining': '剩 {remaining} / {limit}',
   'admin.accounts.usageWindow.kiroNearlyExhausted': '即将耗尽',
   'admin.accounts.usageWindow.kiroUpstreamRejected': '已被上游拒绝，{time} 恢复',
+  'admin.accounts.usageWindow.kiroRetirable': '可退役',
   'admin.accounts.usageWindow.kiroDaysRemaining': '剩余 {days} 天'
 }
 
@@ -148,5 +149,32 @@ describe('AccountUsageCell Kiro 额度', () => {
 
     expect(wrapper.find('[data-test="kiro-upstream-rejected"]').exists()).toBe(false)
     expect(wrapper.get('[data-test="kiro-credit-remaining"]').classes()).toContain('text-amber-600')
+  })
+
+  it('带上游拒绝标记时在拒绝提示旁显示可退役标签', async () => {
+    const wrapper = await mountKiro(
+      { kiro_credit: { current_usage: 4990, usage_limit: 5000, percentage_used: 99.8 } },
+      {
+        rate_limited_at: '2026-10-27T04:02:00Z',
+        rate_limit_reset_at: '2026-11-01T00:00:00Z',
+        kiro_quota_rejected_at: '2026-10-27T04:02:00Z',
+        kiro_quota_rejected_reason: '402 monthly_request_count'
+      }
+    )
+
+    expect(wrapper.find('[data-test="kiro-upstream-rejected"]').exists()).toBe(true)
+    const tag = wrapper.get('[data-test="kiro-retirable"]')
+    expect(tag.text()).toBe('可退役')
+    expect(tag.attributes('title')).toBe('402 monthly_request_count')
+  })
+
+  it('没有上游拒绝标记时不显示可退役标签', async () => {
+    const wrapper = await mountKiro(
+      { kiro_credit: { current_usage: 5000, usage_limit: 5000, percentage_used: 100 } },
+      { rate_limit_reset_at: '2026-11-01T00:00:00Z' }
+    )
+
+    expect(wrapper.find('[data-test="kiro-upstream-rejected"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="kiro-retirable"]').exists()).toBe(false)
   })
 })

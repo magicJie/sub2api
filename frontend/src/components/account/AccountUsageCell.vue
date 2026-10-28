@@ -248,12 +248,22 @@
             {{ formatKiroCredit(usageInfo.kiro_bonus) }}{{ kiroBonusRemaining }}
           </div>
         </template>
-        <div
-          v-if="kiroUpstreamRejected"
-          data-test="kiro-upstream-rejected"
-          class="text-[10px] font-medium text-rose-600 dark:text-rose-400"
-        >
-          {{ t('admin.accounts.usageWindow.kiroUpstreamRejected', { time: formatDateTimeToMinute(account.rate_limit_reset_at) }) }}
+        <div v-if="kiroUpstreamRejected || kiroRetirable" class="flex flex-wrap items-center gap-1">
+          <span
+            v-if="kiroUpstreamRejected"
+            data-test="kiro-upstream-rejected"
+            class="text-[10px] font-medium text-rose-600 dark:text-rose-400"
+          >
+            {{ t('admin.accounts.usageWindow.kiroUpstreamRejected', { time: formatDateTimeToMinute(account.rate_limit_reset_at) }) }}
+          </span>
+          <span
+            v-if="kiroRetirable"
+            data-test="kiro-retirable"
+            class="rounded bg-rose-100 px-1 text-[10px] font-medium text-rose-700 dark:bg-rose-900/40 dark:text-rose-300"
+            :title="account.kiro_quota_rejected_reason || undefined"
+          >
+            {{ t('admin.accounts.usageWindow.kiroRetirable') }}
+          </span>
         </div>
         <div v-if="kiroOverageLabel" class="text-[10px] text-amber-600 dark:text-amber-400">
           {{ kiroOverageLabel }}
@@ -1119,6 +1129,9 @@ const kiroUpstreamRejected = computed(() => {
   const resetTime = Date.parse(resetAt)
   return Number.isFinite(resetTime) && resetTime > Date.now()
 })
+
+// 上游额度拒绝时后端写入的「可退役」标记；新周期 reset 后由后台额度刷新自动清除。
+const kiroRetirable = computed(() => Boolean(props.account.kiro_quota_rejected_at))
 
 const kiroCreditTextClass = (credit: KiroCredit) => {
   if (kiroUpstreamRejected.value) return 'text-rose-600 dark:text-rose-400'

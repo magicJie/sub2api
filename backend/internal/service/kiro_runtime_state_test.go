@@ -604,7 +604,7 @@ func TestExecuteKiroUpstreamMonthlyRequestCountRateLimitsUntilNextMonthAndFailov
 	require.Equal(t, nextKiroMonthlyResetUTC(time.Now()), repo.rateLimitReset)
 }
 
-func TestExecuteKiroUpstreamPlain402FailoversWithoutTempUnschedule(t *testing.T) {
+func TestExecuteKiroUpstreamPlain402FailoversAndRateLimitsWithoutTempUnschedule(t *testing.T) {
 	account := &Account{
 		ID:          42,
 		Platform:    PlatformKiro,
@@ -638,7 +638,10 @@ func TestExecuteKiroUpstreamPlain402FailoversWithoutTempUnschedule(t *testing.T)
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusPaymentRequired, failoverErr.StatusCode)
 	require.False(t, repo.called)
-	require.False(t, repo.rateCalled)
+	// 无法识别的 402 也视为上游额度拒绝：限流到 reset（没有快照时为下月 1 号 UTC）。
+	require.True(t, repo.rateCalled)
+	require.Equal(t, nextKiroMonthlyResetUTC(time.Now()), repo.rateLimitReset)
+	kiroQuotaRejections.Delete(account.ID)
 }
 
 func TestExecuteKiroUpstreamInvalidGrantForceRefreshSetsErrorWithoutTempUnschedule(t *testing.T) {

@@ -2,6 +2,9 @@ package service
 
 // Kiro（fork）多账号调度：按额度进度排序（借鉴 yetone/magpie，MIT）。
 //
+// 这是 SUB2API_KIRO_SCHEDULING_STRATEGY=pace 时的均摊策略；默认的 drain（集中耗尽）见
+// kiro_drain_scheduling.go。本文件同时提供两种策略共用的调度快照与后台刷新。
+//
 // Kiro 订阅按月重置 Credit。默认的「优先级 → 负载率 → LRU」不看额度，容易出现
 // 一个账号先用到见底、另一个账号到重置时还剩大半的情况。这里在优先级之后、负载率之前
 // 加一层（同一进度档内再按负载率、LRU 打散）：
@@ -13,7 +16,7 @@ package service
 // 用量来自进程内快照：后台刷新器（kiro_usage_refresher.go）从落库的 kiro_usage_snapshot 恢复，
 // 或 AccountUsageService 拉取 Kiro 额度时写入；调度时不发网络请求。
 // 粘性会话（Layer 1.5）在此之前生效，同一会话不会因为排序变化而换账号。
-// 设置 SUB2API_KIRO_PACE_SCHEDULING=off 可关闭，回到原有排序。
+// 设置 SUB2API_KIRO_PACE_SCHEDULING=off 可关闭（两种策略都关），回到原有排序。
 
 import (
 	"context"
@@ -192,11 +195,10 @@ func filterByKiroPace(accounts []accountWithLoad) []accountWithLoad {
 	return result
 }
 
-// kiroStickyAccountSpent 报告粘住的 Kiro 账号是否已接近用尽（≥98%），且池中还有未到这一档的
-// Kiro 账号可接手。此时放开粘性：继续粘着只会在几次请求后撞上额度耗尽、被迫中途换号。
-// 会话绑定不删除，额度回满后（重置）仍可回到原账号。
-func kiroStickyAccountSpent(account *Account, pool []Account) bool {
-	if account == nil || account.Platform != PlatformKiro || !kiroPaceSchedulingEnabled() {
+// kiroStickyAccountPaceSpent 是 pace 策略的粘性解除判断：粘住的 Kiro 账号已接近用尽（≥98%），
+// 且池中还有未到这一档的 Kiro 账号可接手。由 kiroStickyAccountSpent 按策略分派。
+func kiroStickyAccountPaceSpent(account *Account, pool []Account) bool {
+	if account == nil || account.Platform != PlatformKiro {
 		return false
 	}
 	now := time.Now()

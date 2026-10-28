@@ -512,10 +512,8 @@ func (s *GatewayService) executeKiroUpstreamWithParsed(ctx context.Context, acco
 				if readErr != nil {
 					return nil, requestCtx, readErr
 				}
-				classification := classifyKiroHTTPError(resp.StatusCode, string(respBody))
-				if classification.Category == kiroErrorMonthlyRequest {
-					s.markKiroMonthlyRequestCountRateLimited(ctx, account, string(respBody))
-				}
+				// 402 一律视为上游额度拒绝：限流到 reset 并打「可退役」标记（kiro_quota_rejection.go）。
+				s.markKiroQuotaRejectedIfNeeded(ctx, account, resp.StatusCode, string(respBody))
 				return nil, requestCtx, &UpstreamFailoverError{
 					StatusCode:      resp.StatusCode,
 					ResponseBody:    respBody,
@@ -936,9 +934,8 @@ func (s *GatewayService) classifyKiroHTTPErrorAndRecordOps(ctx context.Context, 
 	if resp.StatusCode == http.StatusBadRequest {
 		logKiroBadRequestClassification(classification, account, "", resp.Header, respBody)
 	}
-	if classification.Category == kiroErrorMonthlyRequest {
-		s.markKiroMonthlyRequestCountRateLimited(ctx, account, string(respBody))
-	}
+	// 402 / 额度类 429：限流到 reset 并打「可退役」标记；限流性质的 429 不在此处理。
+	quotaRejected := s.markKiroQuotaRejectedIfNeeded(ctx, account, resp.StatusCode, string(respBody))
 	if classification.Category == kiroErrorBadRequestInvalidModel && account != nil && account.Type == AccountTypeOAuth {
 		s.markKiroInvalidModelRateLimited(ctx, account, mappedModel)
 		event := s.buildKiroInvalidModelUpstreamEvent(account, resp, upstreamMsg, mappedModel, requestBody, c)
@@ -1001,7 +998,8 @@ func (s *GatewayService) classifyKiroHTTPErrorAndRecordOps(ctx context.Context, 
 			Message:            upstreamMsg,
 			Detail:             s.kiroUpstreamErrorDetail(respBody),
 		})
-		if s.rateLimitService != nil {
+		// 额度拒绝已经限流到 reset：通用处理会把 402 置为 error、把 429 覆盖成秒级冷却。
+		if s.rateLimitService != nil && !quotaRejected {
 			s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
 		}
 		return nil, &UpstreamFailoverError{

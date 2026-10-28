@@ -314,5 +314,6 @@ func (s *AccountUsageService) refreshKiroUsageSnapshot(ctx context.Context, acco
 	}
 	account.Extra[KiroUsageSnapshotExtraKey] = snapshot
 	restoreKiroPaceSnapshot(account.ID, snapshot)
+	s.clearKiroQuotaRejectionAfterReset(ctx, account, prev, snapshot, now)
 	return usage, snapshot, nil
 }
