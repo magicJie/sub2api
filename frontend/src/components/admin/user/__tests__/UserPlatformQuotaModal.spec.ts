@@ -106,7 +106,7 @@ describe('UserPlatformQuotaModal', () => {
     const rows = w.findAll('tbody tr')
     expect(rows.map(row => row.find('td').text())).toEqual([
       'anthropic', 'openai', 'gemini', 'antigravity', 'grok',
-      'kimi', 'zhipu', 'deepseek', 'minimax', 'opencode_go', 'typesafe', 'command_code', 'cline', 'kiro', 'ollama', // Kiro（fork）
+      'kimi', 'zhipu', 'deepseek', 'minimax', 'ollama', 'opencode_go', 'typesafe', 'command_code', 'cline', 'kiro', // Kiro（fork）
     ])
     for (const row of rows) {
       const inputs = row.findAll('input[type=number]')

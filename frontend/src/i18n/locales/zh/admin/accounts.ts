@@ -147,6 +147,7 @@ export default {
         extendHint: '从当前到期日顺延；到期日为空或已过期时从现在算。'
       },
       ollamaCloud: {
+        cellNotConfigured: '未配置用量会话，在编辑账号中填写 ollama.com 会话后可查询',
         approximateReset: '约{time}',
         staleData: '显示的是上次数据。',
         title: 'Ollama Cloud 用量',

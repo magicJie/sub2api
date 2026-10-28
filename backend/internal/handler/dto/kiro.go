@@ -17,6 +17,8 @@ type KiroAccountRuntimeDTO struct {
 	// KiroQuotaRejectedAt / Reason 是上游额度拒绝时落库的「可退役」标记（extra 系统托管键）。
 	KiroQuotaRejectedAt     *time.Time `json:"kiro_quota_rejected_at,omitempty"`
 	KiroQuotaRejectedReason string     `json:"kiro_quota_rejected_reason,omitempty"`
+	// KiroSubscriptionName 来自后台刷新的额度快照（如 "KIRO PRO MAX"），供账号列表显示套餐。
+	KiroSubscriptionName string `json:"kiro_subscription_name,omitempty"`
 }
 
 func kiroAccountRuntimeDTO(a *service.Account) KiroAccountRuntimeDTO {
@@ -33,6 +35,7 @@ func kiroAccountRuntimeDTO(a *service.Account) KiroAccountRuntimeDTO {
 	}
 	if a.Platform == service.PlatformKiro {
 		out.KiroQuotaRejectedAt, out.KiroQuotaRejectedReason = service.KiroQuotaRejectionFromExtra(a.Extra)
+		out.KiroSubscriptionName = service.KiroSubscriptionNameFromExtra(a.Extra)
 	}
 	return out
 }

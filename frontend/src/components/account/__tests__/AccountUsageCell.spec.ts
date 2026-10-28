@@ -484,7 +484,7 @@ describe('AccountUsageCell', () => {
     expect(wrapper.text()).toContain('25')
   })
 
-  it('Kiro OAuth 会显示套餐、额度、Bonus，并回传额度耗尽状态', async () => {
+  it('Kiro OAuth 会显示额度、Bonus，并回传额度耗尽状态', async () => {
     getUsage.mockResolvedValue({
       kiro_subscription_name: 'KIRO PRO+',
       kiro_reset_at: '2026-04-01T00:00:00Z',
@@ -526,7 +526,7 @@ describe('AccountUsageCell', () => {
     await flushPromises()
 
     expect(getUsage).toHaveBeenCalledWith(1003)
-    expect(wrapper.text()).toContain('KIRO PRO+')
+    expect(wrapper.text()).not.toContain('KIRO PRO+') // 套餐只在平台类型标签下显示
     expect(wrapper.text()).toContain('admin.accounts.usageWindow.kiroCredit|100|2026-04-01T00:00:00Z')
     expect(wrapper.text()).toContain('admin.accounts.usageWindow.kiroBonus|5|2026-03-22T00:00:00Z')
     expect(wrapper.emitted('kiro-usage-state')?.[0]).toEqual([{

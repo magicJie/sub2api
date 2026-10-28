@@ -307,6 +307,7 @@ export default {
         extendHint: 'Extends from the current expiry date; starts from now when empty or already expired.'
       },
       ollamaCloud: {
+        cellNotConfigured: 'Usage session not set. Add an ollama.com session in Edit to query usage.',
         approximateReset: '{time} (approx.)',
         staleData: 'Showing previous data.',
         title: 'Ollama Cloud usage',

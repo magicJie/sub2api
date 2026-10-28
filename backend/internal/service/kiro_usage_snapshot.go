@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"time"
 )
 
@@ -50,6 +51,14 @@ func (s *KiroUsageSnapshot) refreshRequested() bool {
 }
 
 // decodeKiroUsageSnapshot 从账号 extra 解析快照；缺失或格式不对时返回 nil。
+// KiroSubscriptionNameFromExtra 返回额度快照里的套餐名，没有快照时为空。
+func KiroSubscriptionNameFromExtra(extra map[string]any) string {
+	if snap := decodeKiroUsageSnapshot(extra); snap != nil {
+		return strings.TrimSpace(snap.KiroSubscriptionName)
+	}
+	return ""
+}
+
 func decodeKiroUsageSnapshot(extra map[string]any) *KiroUsageSnapshot {
 	if extra == nil {
 		return nil

@@ -40,6 +40,9 @@
       {{ usageWarning }}
       <span v-if="hasUsageWindows">{{ t('admin.accounts.ollamaCloud.staleData') }}</span>
     </div>
+    <div v-if="!state.configured" class="text-[10px] text-gray-400 dark:text-gray-500" data-testid="ollama-cloud-usage-not-configured">
+      {{ t('admin.accounts.ollamaCloud.cellNotConfigured') }}
+    </div>
     <div v-if="state.configured" class="flex items-center pt-0.5">
       <button
         type="button"
