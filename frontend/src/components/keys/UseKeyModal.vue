@@ -336,7 +336,7 @@ let codexModelManifestRequestID = 0
 const showCodexModelCatalog = computed(() =>
   props.show &&
   (activeClientTab.value === 'codex' ||
-    (props.platform === 'openai' && activeClientTab.value === 'codex-ws'))
+    ((props.platform === 'openai' || props.platform === 'ollama') && activeClientTab.value === 'codex-ws'))
 )
 
 const codexModelCatalogPath = computed(() => {
@@ -359,6 +359,7 @@ const defaultClientTab = computed(() => {
   if (props.claudeCodeOnly) return 'claude'
   switch (props.platform) {
     case 'openai':
+    case 'ollama':
       return 'codex'
     case 'grok':
       return 'grok'
@@ -467,7 +468,8 @@ const clientTabs = computed((): TabConfig[] => {
     return [{ id: 'claude', label: t('keys.useKeyModal.cliTabs.claudeCode'), icon: TerminalIcon }]
   }
   switch (props.platform) {
-    case 'openai': {
+    case 'openai':
+    case 'ollama': {
       const tabs: TabConfig[] = [
         { id: 'codex', label: t('keys.useKeyModal.cliTabs.codexCli'), icon: TerminalIcon },
         { id: 'codex-ws', label: t('keys.useKeyModal.cliTabs.codexCliWs'), icon: TerminalIcon },
@@ -535,7 +537,7 @@ const openaiTabs: TabConfig[] = [
 const showShellTabs = computed(() => activeClientTab.value !== 'opencode')
 
 const showCodexAuthMode = computed(() =>
-  props.platform === 'openai' &&
+  (props.platform === 'openai' || props.platform === 'ollama') &&
   (activeClientTab.value === 'codex' || activeClientTab.value === 'codex-ws')
 )
 
@@ -550,6 +552,7 @@ const currentTabs = computed(() => {
 const platformDescription = computed(() => {
   if (activeClientTab.value === 'codex' &&
     props.platform !== 'openai' &&
+    props.platform !== 'ollama' &&
     props.platform !== 'grok' &&
     props.platform !== 'deepseek' &&
     props.platform !== 'minimax' &&
@@ -558,6 +561,7 @@ const platformDescription = computed(() => {
   }
   switch (props.platform) {
     case 'openai':
+    case 'ollama':
       if (activeClientTab.value === 'claude') {
         return t('keys.useKeyModal.description')
       }
@@ -596,6 +600,7 @@ const platformDescription = computed(() => {
 const platformNote = computed(() => {
   if (activeClientTab.value === 'codex' &&
     props.platform !== 'openai' &&
+    props.platform !== 'ollama' &&
     props.platform !== 'grok' &&
     props.platform !== 'deepseek' &&
     props.platform !== 'minimax' &&
@@ -604,6 +609,7 @@ const platformNote = computed(() => {
   }
   switch (props.platform) {
     case 'openai':
+    case 'ollama':
       if (activeClientTab.value === 'claude') {
         return t('keys.useKeyModal.note')
       }
@@ -778,6 +784,7 @@ const currentFiles = computed((): FileConfig[] => {
     case 'typesafe':
       return [generateSystemOneCurl(baseRoot, apiKey)]
     case 'openai':
+    case 'ollama':
       if (activeClientTab.value === 'claude') {
         // Anthropic clients append /v1/messages themselves.
         return generateAnthropicFiles(baseRoot, apiKey)
@@ -1320,7 +1327,8 @@ function generateRoutedCodexFiles(
     minimax: 'MiniMax-M3',
     opencode_go: 'glm-5.3',
     composite: 'gpt-5.5',
-    kiro: 'claude-sonnet-4.6'
+    kiro: 'claude-sonnet-4.6',
+    ollama: 'gpt-5.5'
   }
   const preferredModel = preferredModels[platform] || ''
   const model = selectCodexCatalogModel(preferredModel)
@@ -1339,7 +1347,8 @@ function generateRoutedCodexFiles(
     command_code: 'Command Code',
     cline: 'Cline',
     composite: 'Composite',
-    kiro: 'Kiro'
+    kiro: 'Kiro',
+    ollama: 'Ollama Cloud'
   }
   const label = labels[platform]
   const envContent = isWindows
@@ -2033,7 +2042,7 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
     provider[platform].npm = '@ai-sdk/google'
     provider[platform].name = 'Antigravity (Gemini)'
     provider[platform].models = antigravityGeminiModels
-  } else if (platform === 'openai') {
+  } else if (platform === 'openai' || platform === 'ollama') {
     provider[platform].models = openaiModels
   } else if (platform === 'grok') {
     // Custom provider pointing at Sub2API OpenAI-compatible Responses/Chat endpoints.
@@ -2043,7 +2052,7 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
   }
 
   const agent =
-    platform === 'openai'
+    platform === 'openai' || platform === 'ollama'
       ? {
           build: {
             options: {

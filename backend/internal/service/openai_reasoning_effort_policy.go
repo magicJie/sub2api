@@ -138,7 +138,7 @@ func NormalizeMaxReasoningEffort(raw string) string {
 
 func reasoningEffortValuesForPlatform(platform string) []string {
 	switch platform {
-	case PlatformOpenAI, PlatformComposite:
+	case PlatformOpenAI, PlatformOllama, PlatformComposite:
 		return openAIReasoningEffortValues
 	case PlatformAnthropic:
 		return anthropicReasoningEffortValues
@@ -155,9 +155,10 @@ func normalizeMaxReasoningEffortForPlatform(platform, raw string) (string, error
 	allowedValues := reasoningEffortValuesForPlatform(platform)
 	if len(allowedValues) == 0 {
 		return "", fmt.Errorf(
-			"reasoning effort policy is only supported for platforms %q, %q, and %q",
+			"reasoning effort policy is only supported for platforms %q, %q, %q, and %q",
 			PlatformAnthropic,
 			PlatformOpenAI,
+			PlatformOllama,
 			PlatformComposite,
 		)
 	}
@@ -204,9 +205,10 @@ func normalizeMaxReasoningEffortOverLimitForPlatform(platform, raw string) (stri
 	}
 	if len(reasoningEffortValuesForPlatform(platform)) == 0 {
 		return "", fmt.Errorf(
-			"reasoning effort policy is only supported for platforms %q, %q, and %q",
+			"reasoning effort policy is only supported for platforms %q, %q, %q, and %q",
 			PlatformAnthropic,
 			PlatformOpenAI,
+			PlatformOllama,
 			PlatformComposite,
 		)
 	}
@@ -357,8 +359,8 @@ func NormalizeReasoningEffortMappings(platform string, raw []ReasoningEffortMapp
 			}
 		} else if len(reasoningEffortValuesForPlatform(platform)) == 0 {
 			return nil, fmt.Errorf(
-				"reasoning effort mapping %d source: reasoning effort policy is only supported for platforms %q and %q",
-				i+1, PlatformOpenAI, PlatformComposite,
+				"reasoning effort mapping %d source: reasoning effort policy is only supported for platforms %q, %q, %q, and %q",
+				i+1, PlatformAnthropic, PlatformOpenAI, PlatformOllama, PlatformComposite,
 			)
 		}
 		if to != ReasoningEffortMappingDeny {
@@ -367,10 +369,11 @@ func NormalizeReasoningEffortMappings(platform string, raw []ReasoningEffortMapp
 			}
 		} else if len(reasoningEffortValuesForPlatform(platform)) == 0 {
 			return nil, fmt.Errorf(
-				"reasoning effort mapping %d target: reasoning effort policy is only supported for platforms %q, %q, and %q",
+				"reasoning effort mapping %d target: reasoning effort policy is only supported for platforms %q, %q, %q, and %q",
 				i+1,
 				PlatformAnthropic,
 				PlatformOpenAI,
+				PlatformOllama,
 				PlatformComposite,
 			)
 		}
@@ -484,7 +487,7 @@ func sanitizeGroupReasoningEffortPolicy(group *Group) {
 	if mappingsErr != nil {
 		mappings = []ReasoningEffortMapping{}
 	}
-	if overLimit == "" || (group.Platform != PlatformAnthropic && group.Platform != PlatformOpenAI && group.Platform != PlatformComposite) {
+	if overLimit == "" || (group.Platform != PlatformAnthropic && group.Platform != PlatformOpenAI && group.Platform != PlatformOllama && group.Platform != PlatformComposite) {
 		overLimit = ReasoningEffortOverLimitDowngrade
 	}
 	group.MaxReasoningEffort = maxEffort

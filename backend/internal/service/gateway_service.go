@@ -1448,7 +1448,7 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 		// Treat it like an unmapped account: skip its mapping here and let
 		// supplementUnmappedOpenAIModels contribute the default set. Mappings on
 		// the ordinary accounts in the same group still count.
-		if platform == PlatformOpenAI && acc.IsOpenAIPassthroughEnabled() {
+		if (platform == PlatformOpenAI || platform == PlatformOllama) && acc.IsOpenAIPassthroughEnabled() {
 			continue
 		}
 
@@ -1466,7 +1466,7 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 	}
 
 	// If no account has model_mapping, return nil (use default)
-	if !hasAnyMapping && platform == PlatformOpenAI {
+	if !hasAnyMapping && (platform == PlatformOpenAI || platform == PlatformOllama) {
 		models := filterRetiredOpenAIModelIDs(accounts, openai.DefaultModelIDs())
 		if len(models) != len(openai.DefaultModels) {
 			return models
@@ -1487,7 +1487,7 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 	}
 	sort.Strings(models)
 
-	if platform == PlatformOpenAI {
+	if platform == PlatformOpenAI || platform == PlatformOllama {
 		models = supplementUnmappedOpenAIModels(accounts, models)
 		models = filterRetiredOpenAIModelIDs(accounts, models)
 		// nil means "use defaults" to listing callers; an empty filtered catalog

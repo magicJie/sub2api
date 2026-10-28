@@ -309,7 +309,7 @@ func (s *ollamaUsageHTTPStub) DoWithTLS(req *http.Request, proxyURL string, acco
 
 func ollamaUsageAccount(id int64) *Account {
 	return &Account{
-		ID: id, Name: fmt.Sprintf("ollama-%d", id), Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		ID: id, Name: fmt.Sprintf("ollama-%d", id), Platform: PlatformOllama, Type: AccountTypeAPIKey,
 		Credentials: map[string]any{"base_url": "https://ollama.com", "api_key": fmt.Sprintf("key-%d", id)},
 		Extra:       map[string]any{}, Status: StatusActive, Schedulable: true, Concurrency: 1,
 	}
@@ -461,7 +461,7 @@ func TestScheduleOllamaCloudUsageActivityOnlyForOllama(t *testing.T) {
 	deferred := NewDeferredService(nil, nil, time.Second)
 	ollama := ollamaUsageAccount(1)
 	other := ollamaUsageAccount(2)
-	other.Credentials["base_url"] = "https://api.openai.com"
+	other.Platform = PlatformOpenAI
 
 	scheduleOllamaCloudUsageActivity(deferred, ollama)
 	scheduleOllamaCloudUsageActivity(deferred, other)
@@ -473,46 +473,23 @@ func TestScheduleOllamaCloudUsageActivityOnlyForOllama(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestIsOllamaCloudUsageAccountStrictOfficialHost(t *testing.T) {
-	tests := []struct {
-		baseURL  string
-		platform string
-		want     bool
-	}{
-		{"https://ollama.com", PlatformOpenAI, true},
-		{"HTTPS://OLLAMA.COM", PlatformAnthropic, true},
-		{"https://www.OLLAMA.com:443/v1", PlatformOpenAI, true},
-		// 官方 ollama.com key 挂在国产 OpenAI 兼容平台下同样进用量窗口。
-		{"https://ollama.com", PlatformKimi, true},
-		{"https://www.ollama.com/v1", PlatformZhipu, true},
-		{"https://ollama.com:443", PlatformDeepseek, true},
-		// 用量窗口不随 base_url 放开到其余平台。
-		{"https://ollama.com", PlatformGemini, false},
-		{"https://ollama.com", PlatformGrok, false},
-		{"https://ollama.com", PlatformAntigravity, false},
-		{"https://ollama.com/", PlatformAnthropic, false},
-		{"https://ollama.com/v1/", PlatformOpenAI, false},
-		{"http://ollama.com", PlatformOpenAI, false},
-		{"https://ollama.com.evil.test", PlatformOpenAI, false},
-		{"https://ollama.com:444", PlatformOpenAI, false},
-		{"https://user@ollama.com", PlatformOpenAI, false},
-		{"https://ollama.com/v2", PlatformOpenAI, false},
-		{"https://ollama.com?next=https://evil.test", PlatformOpenAI, false},
-		{"https://ollama.com#usage", PlatformOpenAI, false},
+func TestIsOllamaCloudUsageAccountUsesPlatform(t *testing.T) {
+	require.False(t, IsOllamaCloudUsageAccount(nil))
+	for _, baseURL := range []string{"", "https://ollama.com/v1", "https://relay.example.com"} {
+		account := ollamaUsageAccount(1)
+		account.Credentials["base_url"] = baseURL
+		require.True(t, IsOllamaCloudUsageAccount(account))
 	}
-	for _, test := range tests {
-		t.Run(test.baseURL+test.platform, func(t *testing.T) {
-			account := ollamaUsageAccount(1)
-			account.Platform = test.platform
-			account.Credentials["base_url"] = test.baseURL
-			require.Equal(t, test.want, IsOllamaCloudUsageAccount(account))
-		})
+	for _, platform := range []string{PlatformOpenAI, PlatformAnthropic, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformGrok} {
+		account := ollamaUsageAccount(1)
+		account.Platform = platform
+		require.False(t, IsOllamaCloudUsageAccount(account), platform)
 	}
 }
 
-// oauth 类型账号即使平台与 base_url 都命中也不进用量窗口（仅 apikey 账号）。
+// Ollama usage supports API key credentials only.
 func TestIsOllamaCloudUsageAccountRejectsOAuthType(t *testing.T) {
-	for _, platform := range []string{PlatformOpenAI, PlatformAnthropic, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax} {
+	for _, platform := range []string{PlatformOllama, PlatformOpenAI, PlatformAnthropic} {
 		account := ollamaUsageAccount(1)
 		account.Platform = platform
 		account.Type = AccountTypeOAuth
@@ -686,7 +663,7 @@ func TestOllamaCloudUsageManagedExtraCannotBeImported(t *testing.T) {
 		OllamaCloudUsageSnapshotExtraKey:    map[string]any{"status": "forged"},
 	}
 	created, err := buildAccountForCreate(&CreateAccountInput{
-		Name: "ollama", Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Name: "ollama", Platform: PlatformOllama, Type: AccountTypeAPIKey,
 		Credentials: map[string]any{"base_url": "https://ollama.com", "api_key": "key"},
 		Concurrency: 1,
 	}, mergeMap(nil, remoteExtra))
@@ -784,8 +761,7 @@ func TestOllamaCloudUsageGroupSharesAcrossPlatformsURLVariantsAndDynamicSiblings
 	}
 	source.UpdatedAt = time.Now().Add(-time.Minute)
 	sibling := ollamaUsageAccount(72)
-	sibling.Platform = PlatformAnthropic
-	sibling.Credentials = map[string]any{"base_url": "HTTPS://WWW.OLLAMA.COM:443/v1", "api_key": "shared-key"}
+	sibling.Credentials = map[string]any{"base_url": "https://ollama.com/v1", "api_key": "shared-key"}
 	sibling.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=shared"
 	sibling.Extra[OllamaCloudUsageAutoRefreshExtraKey] = true
 	sibling.UpdatedAt = time.Now()
@@ -807,7 +783,6 @@ func TestOllamaCloudUsageGroupSharesAcrossPlatformsURLVariantsAndDynamicSiblings
 	require.False(t, differentState.Configured)
 
 	newSibling := ollamaUsageAccount(74)
-	newSibling.Platform = PlatformAnthropic
 	newSibling.Credentials = map[string]any{"base_url": "https://ollama.com:443", "api_key": "shared-key"}
 	repo.mu.Lock()
 	repo.accounts[newSibling.ID] = newSibling
@@ -826,8 +801,7 @@ func TestOllamaCloudUsageSaveAutoRefreshAndDeleteAreGroupScoped(t *testing.T) {
 	first := ollamaUsageAccount(81)
 	first.Credentials["api_key"] = "shared-key"
 	second := ollamaUsageAccount(82)
-	second.Platform = PlatformAnthropic
-	second.Credentials = map[string]any{"base_url": "https://www.ollama.com/v1", "api_key": "shared-key"}
+	second.Credentials = map[string]any{"base_url": "https://ollama.com/v1", "api_key": "shared-key"}
 	different := ollamaUsageAccount(83)
 	different.Credentials["api_key"] = "different-key"
 	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
@@ -864,8 +838,7 @@ func TestOllamaCloudUsageRefreshSingleflightAndRunnerDeduplicateSharedGroup(t *t
 	first.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=shared"
 	first.Extra[OllamaCloudUsageAutoRefreshExtraKey] = true
 	second := ollamaUsageAccount(92)
-	second.Platform = PlatformAnthropic
-	second.Credentials = map[string]any{"base_url": "https://www.ollama.com:443/v1", "api_key": "shared-key"}
+	second.Credentials = map[string]any{"base_url": "https://ollama.com:443/v1", "api_key": "shared-key"}
 	second.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=shared"
 	second.Extra[OllamaCloudUsageAutoRefreshExtraKey] = true
 	repo := &ollamaUsageTestRepo{
@@ -1115,8 +1088,7 @@ func TestOllamaCloudUsageRunnerIdentityChangePreservesOldGroupAndDoesNotLoop(t *
 	anchor.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=secret"
 	anchor.Extra[OllamaCloudUsageAutoRefreshExtraKey] = true
 	sibling := ollamaUsageAccount(16)
-	sibling.Platform = PlatformAnthropic
-	sibling.Credentials = map[string]any{"api_key": "shared-before-rotation", "base_url": "https://www.ollama.com:443/v1"}
+	sibling.Credentials = map[string]any{"api_key": "shared-before-rotation", "base_url": "https://ollama.com:443/v1"}
 	sibling.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=secret"
 	sibling.Extra[OllamaCloudUsageAutoRefreshExtraKey] = true
 	dueAnchor := *anchor

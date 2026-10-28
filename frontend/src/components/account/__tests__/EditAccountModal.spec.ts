@@ -2229,3 +2229,77 @@ describe('EditAccountModal temp-unschedulable rule scope', () => {
     wrapper.unmount()
   })
 })
+
+describe('EditAccountModal Ollama Cloud platform', () => {
+  beforeEach(() => {
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+  })
+
+  it('defaults Ollama Cloud responses mode to force_chat_completions even with legacy openai_responses_supported=true and retains explicit force_responses', async () => {
+    const account = {
+      ...buildAccount(),
+      id: 58,
+      name: 'Ollama Cloud 58',
+      platform: 'ollama',
+      type: 'apikey',
+      credentials: {
+        base_url: 'https://ollama.com/v1',
+        model_mapping: { 'deepseek-v3.2': 'deepseek-v3.2' }
+      },
+      credentials_status: { has_api_key: true },
+      extra: {
+        openai_responses_supported: true
+      }
+    }
+    updateAccountMock.mockResolvedValue(account)
+    const wrapper = mountModal(account)
+
+    const select = wrapper.get<HTMLSelectElement>('[data-testid="openai-responses-mode-select"]')
+    expect(select.element.value).toBe('force_chat_completions')
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.base_url).toBe('https://ollama.com/v1')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.model_mapping).toEqual({
+      'deepseek-v3.2': 'deepseek-v3.2'
+    })
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_responses_mode).toBe('force_chat_completions')
+    wrapper.unmount()
+
+    const forcedResponsesAccount = {
+      ...account,
+      extra: {
+        openai_responses_mode: 'force_responses',
+        openai_responses_supported: true
+      }
+    }
+    updateAccountMock.mockReset().mockResolvedValue(forcedResponsesAccount)
+    const second = mountModal(forcedResponsesAccount)
+    expect(second.get<HTMLSelectElement>('[data-testid="openai-responses-mode-select"]').element.value).toBe('force_responses')
+    await second.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_responses_mode).toBe('force_responses')
+    second.unmount()
+  })
+
+  it('rejects non-official base_url when saving an Ollama Cloud account', async () => {
+    const account = {
+      ...buildAccount(),
+      id: 59,
+      platform: 'ollama',
+      type: 'apikey',
+      credentials: { base_url: 'https://ollama.com/v1' },
+      credentials_status: { has_api_key: true }
+    }
+    const wrapper = mountModal(account)
+    await wrapper.get('input[placeholder="https://ollama.com/v1"]').setValue('https://www.ollama.com/v1')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(updateAccountMock).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+})

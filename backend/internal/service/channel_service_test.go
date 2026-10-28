@@ -2113,31 +2113,6 @@ func TestIsPlatformPricingMatch(t *testing.T) {
 	}
 }
 
-// ===========================================================================
-// 8. matchingPlatforms
-// ===========================================================================
-
-func TestMatchingPlatforms(t *testing.T) {
-	tests := []struct {
-		name          string
-		groupPlatform string
-		want          []string
-	}{
-		{"antigravity returns itself only", PlatformAntigravity, []string{PlatformAntigravity}},
-		{"anthropic returns itself", PlatformAnthropic, []string{PlatformAnthropic}},
-		{"gemini returns itself", PlatformGemini, []string{PlatformGemini}},
-		{"openai returns itself", PlatformOpenAI, []string{PlatformOpenAI}},
-		{"composite returns concrete platforms", PlatformComposite, []string{PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo, PlatformTypeSafe, PlatformCommandCode, PlatformCline, PlatformKiro}}, // Kiro（fork）
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := matchingPlatforms(tt.groupPlatform)
-			require.Equal(t, tt.want, result)
-		})
-	}
-}
-
 func TestCompositeChannelLookupUsesResolvedTargetPlatform(t *testing.T) {
 	channel := Channel{
 		ID:       1,

@@ -504,7 +504,15 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 			extra = mergeMap(existing.Extra, extra)
 			credentials = mergeMap(existing.Credentials, credentials)
 		}
-		reconcileCRSUpstreamBillingProbeExtra(existing, PlatformAnthropic, AccountTypeAPIKey, credentials, extra)
+		targetPlatform, err := normalizeCRSAPIKeyPlatform(existing, PlatformAnthropic, credentials)
+		if err != nil {
+			item.Action = "failed"
+			item.Error = err.Error()
+			result.Failed++
+			result.Items = append(result.Items, item)
+			continue
+		}
+		reconcileCRSUpstreamBillingProbeExtra(existing, targetPlatform, AccountTypeAPIKey, credentials, extra)
 
 		if existing == nil {
 			if !shouldCreateAccount(src.ID, selectedSet) {
@@ -540,7 +548,7 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 		}
 
 		// 母账号守卫(外审第9轮):CRS ID 跨平台碰撞时,本(Anthropic APIKey)分支不得改坏有 spark 影子的 OpenAI 母账号。
-		if gerr := guardCRSShadowParentInvariant(ctx, s.accountRepo, existing, PlatformAnthropic, AccountTypeAPIKey); gerr != nil {
+		if gerr := guardCRSShadowParentInvariant(ctx, s.accountRepo, existing, targetPlatform, AccountTypeAPIKey); gerr != nil {
 			item.Action = "failed"
 			item.Error = gerr.Error()
 			result.Failed++
@@ -550,7 +558,7 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 
 		existing.Extra = extra
 		existing.Name = defaultName(src.Name, src.ID)
-		existing.Platform = PlatformAnthropic
+		existing.Platform = targetPlatform
 		existing.Type = AccountTypeAPIKey
 		existing.Credentials = credentials
 		if proxyID != nil {
@@ -753,12 +761,6 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 			continue
 		}
 
-		if baseURL, ok := src.Credentials["base_url"].(string); !ok || strings.TrimSpace(baseURL) == "" {
-			src.Credentials["base_url"] = "https://api.openai.com"
-		}
-		// 🔧 Remove /v1 suffix from base_url for OpenAI accounts
-		cleanBaseURL(src.Credentials, "/v1")
-
 		proxyID, err := s.mapOrCreateProxy(
 			ctx,
 			input.SyncProxies,
@@ -810,7 +812,21 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 		if existing != nil {
 			credentials = mergeMap(existing.Credentials, credentials)
 		}
-		reconcileCRSUpstreamBillingProbeExtra(existing, PlatformOpenAI, AccountTypeAPIKey, credentials, extra)
+		targetPlatform, err := normalizeCRSAPIKeyPlatform(existing, PlatformOpenAI, credentials)
+		if err != nil {
+			item.Action = "failed"
+			item.Error = err.Error()
+			result.Failed++
+			result.Items = append(result.Items, item)
+			continue
+		}
+		if targetPlatform == PlatformOpenAI {
+			if baseURL, _ := credentials["base_url"].(string); strings.TrimSpace(baseURL) == "" {
+				credentials["base_url"] = "https://api.openai.com"
+			}
+			cleanBaseURL(credentials, "/v1")
+		}
+		reconcileCRSUpstreamBillingProbeExtra(existing, targetPlatform, AccountTypeAPIKey, credentials, extra)
 
 		if existing == nil {
 			if !shouldCreateAccount(src.ID, selectedSet) {
@@ -847,7 +863,7 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 
 		// 母账号守卫(外审第8/9轮):CRS 不得把有 spark 影子的母账号改离 OpenAI OAuth(此处会翻成 api_key),
 		// 否则影子读透母凭据失败、resolveCredentialAccount 必报错、spark 调度与用量刷新全崩。须先删影子再改。
-		if gerr := guardCRSShadowParentInvariant(ctx, s.accountRepo, existing, PlatformOpenAI, AccountTypeAPIKey); gerr != nil {
+		if gerr := guardCRSShadowParentInvariant(ctx, s.accountRepo, existing, targetPlatform, AccountTypeAPIKey); gerr != nil {
 			item.Action = "failed"
 			item.Error = gerr.Error()
 			result.Failed++
@@ -857,7 +873,7 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 
 		existing.Extra = extra
 		existing.Name = defaultName(src.Name, src.ID)
-		existing.Platform = PlatformOpenAI
+		existing.Platform = targetPlatform
 		existing.Type = AccountTypeAPIKey
 		existing.Credentials = credentials
 		if proxyID != nil {

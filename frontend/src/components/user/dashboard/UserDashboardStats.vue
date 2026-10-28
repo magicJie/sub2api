@@ -260,6 +260,7 @@ const PLATFORM_LABELS: Record<string, string> = {
   deepseek: 'DeepSeek',
   minimax: 'MiniMax',
   typesafe: 'TypeSafe / Jev',
+  ollama: 'Ollama Cloud',
 }
 
 const platformLabel = (p: string) => PLATFORM_LABELS[p] ?? p

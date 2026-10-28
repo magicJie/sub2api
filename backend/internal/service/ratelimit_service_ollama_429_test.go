@@ -28,7 +28,7 @@ func ollama429Account(id int64, platform string) *Account {
 		Status:      StatusActive,
 		Schedulable: true,
 		Credentials: map[string]any{
-			"base_url": "https://www.ollama.com",
+			"base_url": DefaultOllamaBaseURL,
 			"api_key":  "ollama429-key",
 		},
 	}
@@ -247,8 +247,8 @@ func ollama429Fixture(t *testing.T, repo *ollama429Repo, scheduler *ollama429Sch
 	return svc, blocker
 }
 
-func TestHandle429_OllamaEarlyBranchAcrossPlatforms(t *testing.T) {
-	platforms := []string{PlatformOpenAI, PlatformAnthropic, PlatformKimi, PlatformZhipu, PlatformDeepseek}
+func TestHandle429_OllamaEarlyBranch(t *testing.T) {
+	platforms := []string{PlatformOllama}
 	for _, platform := range platforms {
 		t.Run(platform, func(t *testing.T) {
 			acct := ollama429Account(101, platform)
@@ -278,7 +278,7 @@ func TestHandle429_NonOllamaUnchanged(t *testing.T) {
 }
 
 func TestHandle429_OllamaUsesValidRetryAfter(t *testing.T) {
-	acct := ollama429Account(301, PlatformOpenAI)
+	acct := ollama429Account(301, PlatformOllama)
 	repo := newOllama429Repo(acct)
 	scheduler := newOllama429SchedulerStub(true)
 	svc, _ := ollama429Fixture(t, repo, scheduler)
@@ -295,7 +295,7 @@ func TestHandle429_OllamaUsesValidRetryAfter(t *testing.T) {
 }
 
 func TestHandle429_OllamaFallsBackToSecondsCooldown(t *testing.T) {
-	acct := ollama429Account(302, PlatformAnthropic)
+	acct := ollama429Account(302, PlatformOllama)
 	repo := newOllama429Repo(acct)
 	scheduler := newOllama429SchedulerStub(true)
 	svc, _ := ollama429Fixture(t, repo, scheduler)
@@ -313,7 +313,7 @@ func TestHandle429_OllamaFallsBackToSecondsCooldown(t *testing.T) {
 }
 
 func TestHandle429_OllamaScheduleRejectedStillCooled(t *testing.T) {
-	acct := ollama429Account(303, PlatformOpenAI)
+	acct := ollama429Account(303, PlatformOllama)
 	repo := newOllama429Repo(acct)
 	scheduler := newOllama429SchedulerStub(false) // queue full / service stopped
 	svc, _ := ollama429Fixture(t, repo, scheduler)
@@ -325,7 +325,7 @@ func TestHandle429_OllamaScheduleRejectedStillCooled(t *testing.T) {
 }
 
 func TestHandle429_OllamaDoesNotShrinkConfirmedLongCooldown(t *testing.T) {
-	acct := ollama429Account(304, PlatformOpenAI)
+	acct := ollama429Account(304, PlatformOllama)
 	repo := newOllama429Repo(acct)
 	long := time.Now().Add(time.Hour)
 	repo.mutate(acct.ID, func(a *Account) { a.RateLimitResetAt = &long })
@@ -343,7 +343,7 @@ func TestHandle429_OllamaDoesNotShrinkConfirmedLongCooldown(t *testing.T) {
 }
 
 func TestOllamaProbeCallback_ValidUpdatesDBAndMemory(t *testing.T) {
-	acct := ollama429Account(401, PlatformOpenAI)
+	acct := ollama429Account(401, PlatformOllama)
 	repo := newOllama429Repo(acct)
 	scheduler := newOllama429SchedulerStub(true)
 	svc, blocker := ollama429Fixture(t, repo, scheduler)
@@ -366,7 +366,7 @@ func TestOllamaProbeCallback_ValidUpdatesDBAndMemory(t *testing.T) {
 }
 
 func TestOllamaProbeCallback_DuplicateNoDoubleUpdate(t *testing.T) {
-	acct := ollama429Account(402, PlatformOpenAI)
+	acct := ollama429Account(402, PlatformOllama)
 	repo := newOllama429Repo(acct)
 	scheduler := newOllama429SchedulerStub(true)
 	svc, blocker := ollama429Fixture(t, repo, scheduler)
@@ -386,7 +386,7 @@ func TestOllamaProbeCallback_DuplicateNoDoubleUpdate(t *testing.T) {
 }
 
 func TestOllamaProbeCallback_StaleLongDoesNotOverrideNewShort(t *testing.T) {
-	acct := ollama429Account(403, PlatformOpenAI)
+	acct := ollama429Account(403, PlatformOllama)
 	repo := newOllama429Repo(acct)
 	scheduler := newOllama429SchedulerStub(true)
 	svc, blocker := ollama429Fixture(t, repo, scheduler)
@@ -416,7 +416,7 @@ func TestOllamaProbeCallback_StaleLongDoesNotOverrideNewShort(t *testing.T) {
 }
 
 func TestOllamaProbeCallback_AdminClearSkips(t *testing.T) {
-	acct := ollama429Account(404, PlatformOpenAI)
+	acct := ollama429Account(404, PlatformOllama)
 	repo := newOllama429Repo(acct)
 	scheduler := newOllama429SchedulerStub(true)
 	svc, blocker := ollama429Fixture(t, repo, scheduler)
@@ -438,7 +438,7 @@ func TestOllamaProbeCallback_AdminClearSkips(t *testing.T) {
 }
 
 func TestOllamaProbeCallback_KeySwapSkips(t *testing.T) {
-	acct := ollama429Account(405, PlatformOpenAI)
+	acct := ollama429Account(405, PlatformOllama)
 	repo := newOllama429Repo(acct)
 	scheduler := newOllama429SchedulerStub(true)
 	svc, _ := ollama429Fixture(t, repo, scheduler)
@@ -457,7 +457,7 @@ func TestOllamaProbeCallback_KeySwapSkips(t *testing.T) {
 }
 
 func TestOllamaProbeCallback_ResetAlreadyPastSkips(t *testing.T) {
-	acct := ollama429Account(406, PlatformOpenAI)
+	acct := ollama429Account(406, PlatformOllama)
 	repo := newOllama429Repo(acct)
 	scheduler := newOllama429SchedulerStub(true)
 	svc, _ := ollama429Fixture(t, repo, scheduler)
@@ -477,7 +477,7 @@ func TestOllamaProbeCallback_SnapshotPersistBumpStillApplies(t *testing.T) {
 	// delivery, which advances the row's UpdatedAt (TimeMixin) without touching
 	// the rate-limit generation. The write-back must still succeed: it binds the
 	// CAS to the version re-read in the callback, not the scheduling-time one.
-	acct := ollama429Account(501, PlatformOpenAI)
+	acct := ollama429Account(501, PlatformOllama)
 	repo := newOllama429Repo(acct)
 	scheduler := newOllama429SchedulerStub(true)
 	svc, blocker := ollama429Fixture(t, repo, scheduler)
@@ -503,7 +503,7 @@ func TestOllamaProbeCallback_SnapshotPersistBumpStillApplies(t *testing.T) {
 func TestOllamaProbeCallback_NeverShortensCooldownFloor(t *testing.T) {
 	// An explicit Retry-After sets a 120s floor. A later async probe that reports
 	// a shorter (still-future) reset must not shrink that floor back down.
-	acct := ollama429Account(502, PlatformOpenAI)
+	acct := ollama429Account(502, PlatformOllama)
 	repo := newOllama429Repo(acct)
 	scheduler := newOllama429SchedulerStub(true)
 	svc, _ := ollama429Fixture(t, repo, scheduler)
@@ -525,7 +525,7 @@ func TestOllamaProbeCallback_NeverShortensCooldownFloor(t *testing.T) {
 }
 
 func TestOllamaProbeCallback_DisabledSkips(t *testing.T) {
-	acct := ollama429Account(503, PlatformOpenAI)
+	acct := ollama429Account(503, PlatformOllama)
 	repo := newOllama429Repo(acct)
 	scheduler := newOllama429SchedulerStub(true)
 	svc, _ := ollama429Fixture(t, repo, scheduler)
@@ -538,7 +538,7 @@ func TestOllamaProbeCallback_DisabledSkips(t *testing.T) {
 }
 
 func TestHandle429_OllamaSchedulerAbsentStillNotifiesRuntime(t *testing.T) {
-	acct := ollama429Account(504, PlatformOpenAI)
+	acct := ollama429Account(504, PlatformOllama)
 	repo := newOllama429Repo(acct)
 	svc := NewRateLimitService(repo, nil, nil, nil, nil)
 	blocker := &ollama429BlockerStub{}

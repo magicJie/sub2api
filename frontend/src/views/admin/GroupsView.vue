@@ -158,7 +158,9 @@
                                 ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400'
                               : value === 'opencode_go'
                                 ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
-                                : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+                                : value === 'ollama'
+                                  ? 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200'
+                                  : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
               ]"
             >
               <PlatformIcon :platform="value" size="xs" />
@@ -1344,7 +1346,7 @@
         </div>
 
         <!-- MCP XML 协议注入（仅 antigravity 平台） -->
-        <div v-if="createForm.platform === 'antigravity'" class="border-t pt-4">
+        <div v-if="createForm.platform === 'antigravity' || createForm.platform === 'ollama'" class="border-t pt-4">
           <div class="mb-1.5 flex items-center gap-1">
             <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
               {{ t("admin.groups.mcpXml.title") }}
@@ -1442,7 +1444,7 @@
 
         <!-- Codex 网页搜索按次计费（仅 openai 平台） -->
         <div
-          v-if="createForm.platform === 'openai'"
+          v-if="createForm.platform === 'openai' || createForm.platform === 'ollama'"
           class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4"
         >
           <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
@@ -1637,7 +1639,7 @@
 
           <div
             v-if="
-              createForm.platform === 'openai' &&
+              (createForm.platform === 'openai' || createForm.platform === 'ollama') &&
               createForm.allow_messages_dispatch
             "
             class="mt-3"
@@ -2984,7 +2986,7 @@
         </div>
 
         <!-- MCP XML 协议注入（仅 antigravity 平台） -->
-        <div v-if="editForm.platform === 'antigravity'" class="border-t pt-4">
+        <div v-if="editForm.platform === 'antigravity' || editForm.platform === 'ollama'" class="border-t pt-4">
           <div class="mb-1.5 flex items-center gap-1">
             <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
               {{ t("admin.groups.mcpXml.title") }}
@@ -3082,7 +3084,7 @@
 
         <!-- Codex 网页搜索按次计费（仅 openai 平台） -->
         <div
-          v-if="editForm.platform === 'openai'"
+          v-if="editForm.platform === 'openai' || editForm.platform === 'ollama'"
           class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4"
         >
           <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
@@ -3117,9 +3119,10 @@
 
         <!-- 固定账号获取 Codex Model Manifest（仅 openai 平台，仅编辑对话框） -->
         <CodexManifestAccountsField
-          v-if="editForm.platform === 'openai' && editingGroup"
+          v-if="(editForm.platform === 'openai' || editForm.platform === 'ollama') && editingGroup"
           ref="editCodexManifestRef"
           :group-id="editingGroup.id"
+          :platform="editForm.platform"
           :model-value="editCodexManifestConfig"
           @update:model-value="Object.assign(editCodexManifestConfig, $event)"
           :account-names="editCodexManifestAccountNames"
@@ -3287,7 +3290,7 @@
 
           <div
             v-if="
-              editForm.platform === 'openai' && editForm.allow_messages_dispatch
+              (editForm.platform === 'openai' || editForm.platform === 'ollama') && editForm.allow_messages_dispatch
             "
             class="mt-3"
           >
@@ -3835,7 +3838,9 @@
                                     ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400'
                                   : group.platform === 'opencode_go'
                                     ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
-                                    : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+                                    : group.platform === 'ollama'
+                                      ? 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200'
+                                      : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
                   ]"
                 >
                   {{ t("admin.groups.platforms." + group.platform, platformLabel(group.platform)) }}
@@ -4382,7 +4387,7 @@ import {
 } from "./groupsVideoModelPricing";
 
 const supportsLivePlatform = (platform: string): boolean =>
-  platform === "openai" || platform === "composite";
+  platform === "openai" || platform === "ollama" || platform === "composite";
 
 const emptyGroupPricing = (): PricingFormEntry => ({
   models: [],
@@ -5955,7 +5960,7 @@ const handleCreateGroup = async () => {
         createForm.supported_model_scopes,
       ),
       messages_dispatch_model_config:
-        createForm.platform === "openai"
+        createForm.platform === "openai" || createForm.platform === "ollama"
           ? messagesDispatchFormStateToConfig({
               allow_messages_dispatch: createForm.allow_messages_dispatch,
               opus_mapped_model: createForm.opus_mapped_model,
@@ -6249,7 +6254,7 @@ const handleUpdateGroup = async () => {
   }
   // 固定账号 manifest：开启后至少一个账号，前端阻止提交并提示。
   if (
-    editForm.platform === "openai" &&
+    (editForm.platform === "openai" || editForm.platform === "ollama") &&
     editCodexManifestConfig.value.enabled &&
     editCodexManifestConfig.value.account_ids.length === 0
   ) {
@@ -6299,7 +6304,7 @@ const handleUpdateGroup = async () => {
       model_allowlist: buildModelAllowlistConfig(editModelAllowlistState),
       // 非 openai 平台提交关闭状态，与后端归一化一致
       codex_models_manifest_config:
-        editForm.platform === "openai"
+        editForm.platform === "openai" || editForm.platform === "ollama"
           ? {
               enabled: editCodexManifestConfig.value.enabled,
               account_ids: [...editCodexManifestConfig.value.account_ids],
@@ -6311,7 +6316,7 @@ const handleUpdateGroup = async () => {
         editForm.supported_model_scopes,
       ),
       messages_dispatch_model_config:
-        editForm.platform === "openai"
+        editForm.platform === "openai" || editForm.platform === "ollama"
           ? messagesDispatchFormStateToConfig({
               allow_messages_dispatch: editForm.allow_messages_dispatch,
               opus_mapped_model: editForm.opus_mapped_model,

@@ -525,7 +525,7 @@ func RegisterGatewayRoutes(
 }
 
 func dispatchCodexModelsGateway(c *gin.Context, openAIHandler, generatedHandler gin.HandlerFunc) {
-	if getGroupPlatform(c) == service.PlatformOpenAI {
+	if platform := getGroupPlatform(c); platform == service.PlatformOpenAI || platform == service.PlatformOllama {
 		openAIHandler(c)
 		return
 	}

@@ -81,7 +81,7 @@ func (c *Channel) CodexImageGenerationBridgeOverride(platform string) *bool {
 // CodexImageGenerationBridgeOverride returns the account-level override for Codex
 // image_generation bridge injection. Nil means follow the channel/global policy.
 func (a *Account) CodexImageGenerationBridgeOverride() *bool {
-	if a == nil || a.Platform != PlatformOpenAI || a.Extra == nil {
+	if a == nil || !a.IsOpenAI() || a.Extra == nil {
 		return nil
 	}
 	if override := boolOverrideFromMap(a.Extra, featureKeyCodexImageGenerationBridge, "codex_image_generation_bridge_enabled"); override != nil {
@@ -95,7 +95,7 @@ func (a *Account) CodexImageGenerationBridgeOverride() *bool {
 // client-provided Codex /responses image_generation tools. Unknown or unset
 // values default to allow to preserve existing behavior.
 func (a *Account) CodexImageGenerationExplicitToolPolicy() string {
-	if a == nil || a.Platform != PlatformOpenAI || a.Extra == nil {
+	if a == nil || !a.IsOpenAI() || a.Extra == nil {
 		return codexImageGenerationExplicitToolPolicyAllow
 	}
 	if policy, ok := stringOverrideFromMap(a.Extra, featureKeyCodexImageGenerationExplicitToolPolicy); ok {

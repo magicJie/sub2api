@@ -357,7 +357,7 @@ func normalizeAccountConcurrency(platform, accountType string, concurrency int) 
 
 // ValidateOpenAILongContextBillingExtra validates the OpenAI account billing flag when present.
 func ValidateOpenAILongContextBillingExtra(platform string, extra map[string]any) error {
-	if platform != PlatformOpenAI {
+	if platform != PlatformOpenAI && platform != PlatformOllama {
 		return nil
 	}
 	raw, exists := extra[openAILongContextBillingEnabledKey]
@@ -374,7 +374,7 @@ func ValidateOpenAILongContextBillingExtra(platform string, extra map[string]any
 }
 
 func normalizeOpenAILongContextBillingExtra(platform string, extra map[string]any) (map[string]any, error) {
-	if platform != PlatformOpenAI {
+	if platform != PlatformOpenAI && platform != PlatformOllama {
 		return extra, nil
 	}
 	if err := ValidateOpenAILongContextBillingExtra(platform, extra); err != nil {
@@ -394,7 +394,7 @@ func normalizeOpenAILongContextBillingExtra(platform string, extra map[string]an
 
 func normalizeOpenAILongContextBillingUpdateExtra(account *Account, input *UpdateAccountInput) (map[string]any, error) {
 	normalized, err := normalizeOpenAILongContextBillingExtra(account.Platform, input.Extra)
-	if err != nil || account.Platform != PlatformOpenAI {
+	if err != nil || !account.IsOpenAI() {
 		return normalized, err
 	}
 
@@ -438,6 +438,9 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 		Priority:    input.Priority,
 		Status:      StatusActive,
 		Schedulable: true,
+	}
+	if err := normalizeOllamaAccount(account); err != nil {
+		return nil, err
 	}
 	if input.ProbeEnabled != nil && *input.ProbeEnabled {
 		if !isUpstreamBillingProbeAccount(account) {
@@ -676,6 +679,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		}
 		// Strip SSO/password residue that must never sit next to OAuth tokens.
 		account.Credentials = SanitizeStoredCredentials(account.Platform, account.Credentials)
+	}
+	if err := normalizeOllamaAccount(account); err != nil {
+		return nil, err
 	}
 	// Extra 使用 map：需要区分“未提供(nil)”与“显式清空({})”。
 	// 关闭配额限制时前端会删除 quota_* 键并提交 extra:{}，此时也必须落库。
@@ -1070,6 +1076,13 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 			if acc != nil && acc.IsCredentialShadow() {
 				return nil, infraerrors.Newf(http.StatusBadRequest, "SPARK_SHADOW_NO_CREDENTIALS",
 					"spark shadow account %d cannot hold credentials; manage credentials on the parent account", acc.ID)
+			}
+			if acc != nil && acc.Platform == PlatformOllama {
+				target := *acc
+				target.Credentials = mergeMap(acc.Credentials, input.Credentials)
+				if err := normalizeOllamaAccount(&target); err != nil {
+					return nil, err
+				}
 			}
 		}
 	}

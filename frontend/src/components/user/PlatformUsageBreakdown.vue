@@ -100,6 +100,7 @@ const PLATFORM_LABELS: Record<string, string> = {
   zhipu: 'Zhipu GLM',
   deepseek: 'DeepSeek',
   minimax: 'MiniMax',
+  ollama: 'Ollama Cloud',
 }
 
 function platformLabel(platform: string): string {

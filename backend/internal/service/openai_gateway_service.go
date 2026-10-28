@@ -618,7 +618,7 @@ func (s *OpenAIGatewayService) ResolveChannelMappingAndRestrict(ctx context.Cont
 // MiniMax 等经 OpenAI 网关转发的原生 Responses 上游不识别，注入后会被 400 拒绝，
 // 因此非 OpenAI 平台账号一律不桥接，后续再按账号 → 渠道 → 全局的优先级取开关。
 func (s *OpenAIGatewayService) isCodexImageGenerationBridgeEnabled(ctx context.Context, account *Account, apiKey *APIKey) bool {
-	if account == nil || account.Platform != PlatformOpenAI {
+	if account == nil || !account.IsOpenAI() {
 		return false
 	}
 	if override := account.CodexImageGenerationBridgeOverride(); override != nil {
@@ -628,7 +628,7 @@ func (s *OpenAIGatewayService) isCodexImageGenerationBridgeEnabled(ctx context.C
 		ch, err := s.channelService.GetChannelForGroup(ctx, *apiKey.GroupID)
 		if err != nil {
 			slog.Warn("failed to resolve codex image generation bridge channel override", "group_id", *apiKey.GroupID, "error", err)
-		} else if override := ch.CodexImageGenerationBridgeOverride(PlatformOpenAI); override != nil {
+		} else if override := ch.CodexImageGenerationBridgeOverride(account.Platform); override != nil {
 			return *override
 		}
 	}

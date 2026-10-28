@@ -22,7 +22,7 @@ const (
 	opencodeGoBaseURLMatchSQLSuffix = ") ~ '" + opencodeGoBaseURLRegexSQL + "'"
 	// opencodeGoUsageMountPlatformsSQL 是 service.isOpenCodeGoUsageMountPlatform 的
 	// SQL 镜像：OpenCode Go key 允许挂在 openai/anthropic 与国产 OpenAI 兼容平台
-	// 下复用，与 ollama 的 ollamaCloudUsagePlatformsSQL 完全一致。opencode_go
+	// 下复用。opencode_go
 	// 平台本身不在名单内——平台账号走下方 account_mode 分支。所有平台白名单 SQL
 	// 只允许引用本常量，不得各处重写字面量，防止漂移。
 	opencodeGoUsageMountPlatformsSQL = "'openai', 'anthropic', 'kimi', 'zhipu', 'deepseek', 'minimax'"

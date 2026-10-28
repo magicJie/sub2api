@@ -417,6 +417,7 @@ function platformLabel(value: string) {
       openai: 'OpenAI',
       grok: 'Grok',
       kiro: 'Kiro',
+      ollama: 'Ollama Cloud',
       gemini: 'Gemini',
       antigravity: 'Antigravity',
       kimi: 'Kimi',

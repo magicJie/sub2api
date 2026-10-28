@@ -394,7 +394,7 @@ func (s *defaultOpenAIAccountScheduler) Select(
 	}()
 
 	previousResponseID := strings.TrimSpace(req.PreviousResponseID)
-	if previousResponseID != "" && NormalizeOpenAICompatiblePlatform(req.Platform) == PlatformOpenAI &&
+	if previousResponseID != "" && (NormalizeOpenAICompatiblePlatform(req.Platform) == PlatformOpenAI || req.Platform == PlatformOllama) &&
 		(!req.StickyWeighted || !req.PreviousResponseCanMove) {
 		selection, err := s.service.selectAccountByPreviousResponseIDForCapability(
 			ctx,
@@ -2182,8 +2182,8 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 	if !errors.Is(err, ErrNoAvailableAccounts) && !errors.Is(err, ErrNoAvailableCompactAccounts) {
 		return selection, decision, err
 	}
-	// The circuit only ever quarantines PlatformOpenAI accounts.
-	if NormalizeOpenAICompatiblePlatform(platform) != PlatformOpenAI {
+	// The circuit quarantines OpenAI API-key compatible accounts.
+	if NormalizeOpenAICompatiblePlatform(platform) != PlatformOpenAI && platform != PlatformOllama {
 		return selection, decision, err
 	}
 	blocked := s.getOpenAIProxyStreamCircuit().activeBlockCount(time.Now())
@@ -2257,7 +2257,7 @@ func (s *OpenAIGatewayService) selectLegacyAccountByPreviousResponse(
 	requireCompact bool,
 	platform string,
 ) (*AccountSelectionResult, bool, error) {
-	if strings.TrimSpace(previousResponseID) == "" || platform != PlatformOpenAI {
+	if strings.TrimSpace(previousResponseID) == "" || (platform != PlatformOpenAI && platform != PlatformOllama) {
 		return nil, false, nil
 	}
 	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
@@ -2444,7 +2444,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 	stickyWeighted := s.isOpenAIAdvancedSchedulerStickyWeightedEnabled(ctx)
 	subscriptionPriority := s.isOpenAIAdvancedSchedulerSubscriptionPriorityEnabled(ctx)
 	stickyPreviousAccountID := int64(0)
-	if stickyWeighted && previousResponseCanMove && strings.TrimSpace(previousResponseID) != "" && platform == PlatformOpenAI {
+	if stickyWeighted && previousResponseCanMove && strings.TrimSpace(previousResponseID) != "" && (platform == PlatformOpenAI || platform == PlatformOllama) {
 		stickyPreviousAccountID = s.ResolveAccountIDByPreviousResponseIDForScheduler(ctx, groupID, previousResponseID, requestedModel, excludedIDs, requiredCapability, requireCompact)
 	}
 

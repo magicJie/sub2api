@@ -11,8 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// newOllamaCloudAnthropicAuthAccount 构造挂在 Anthropic 平台分组下的 Ollama Cloud
-// API Key 账号（base_url 指向官方 ollama.com Anthropic 兼容端点）。
+// newOllamaCloudAnthropicAuthAccount constructs an Ollama API key account.
 func newOllamaCloudAnthropicAuthAccount(baseURL string, extra map[string]any) *Account {
 	if extra == nil {
 		extra = map[string]any{}
@@ -20,7 +19,7 @@ func newOllamaCloudAnthropicAuthAccount(baseURL string, extra map[string]any) *A
 	return &Account{
 		ID:          901,
 		Name:        "ollama-cloud-anthropic-auth",
-		Platform:    PlatformAnthropic,
+		Platform:    PlatformOllama,
 		Type:        AccountTypeAPIKey,
 		Concurrency: 1,
 		Credentials: map[string]any{
@@ -33,121 +32,18 @@ func newOllamaCloudAnthropicAuthAccount(baseURL string, extra map[string]any) *A
 	}
 }
 
-// TestSetAnthropicAPIKeyAuthHeader_OllamaCloudForcesBearer：Ollama Cloud 官方
-// Anthropic 兼容端点只认 Authorization: Bearer——extra 缺失或显式 x_api_key 均
-// 强制 Bearer；判定与实际 base_url 同源并做与出站组装一致的尾斜杠归一化；
-// 其它上游保持历史 extra/default 行为，恶意相似 host 不误判。
 func TestSetAnthropicAPIKeyAuthHeader_OllamaCloudForcesBearer(t *testing.T) {
-	tests := []struct {
-		name        string
-		baseURL     string
-		extra       map[string]any
-		accountType string
-		wantAuth    string // "" = 不应出现 Authorization 头
-		wantXAPIKey string // "" = 不应出现 x-api-key 头
-	}{
-		{
-			name:     "ollama 缺 extra 默认 Bearer",
-			baseURL:  "https://ollama.com",
-			wantAuth: "Bearer ollama-cloud-key",
-		},
-		{
-			name:     "ollama base 尾斜杠仍 Bearer",
-			baseURL:  "https://ollama.com/",
-			wantAuth: "Bearer ollama-cloud-key",
-		},
-		{
-			name:     "ollama /v1 路径 Bearer",
-			baseURL:  "https://ollama.com/v1",
-			wantAuth: "Bearer ollama-cloud-key",
-		},
-		{
-			name:     "ollama /v1 尾斜杠 Bearer",
-			baseURL:  "https://www.ollama.com/v1/",
-			wantAuth: "Bearer ollama-cloud-key",
-		},
-		{
-			name:     "host 大小写不敏感 Bearer",
-			baseURL:  "https://OLLAMA.COM",
-			wantAuth: "Bearer ollama-cloud-key",
-		},
-		{
-			name:     "ollama 显式 x_api_key 也强制 Bearer",
-			baseURL:  "https://ollama.com",
-			extra:    map[string]any{anthropicAPIKeyAuthSchemeExtraKey: AnthropicAPIKeyAuthSchemeXAPIKey},
-			wantAuth: "Bearer ollama-cloud-key",
-		},
-		{
-			name:        "非 Ollama 默认 x-api-key",
-			baseURL:     "https://api.anthropic.com",
-			wantXAPIKey: "ollama-cloud-key",
-		},
-		{
-			name:        "默认官方端点（空 base_url）x-api-key",
-			baseURL:     "",
-			wantXAPIKey: "ollama-cloud-key",
-		},
-		{
-			name:     "非 Ollama 显式 authorization_bearer 保持 Bearer",
-			baseURL:  "https://api.anthropic.com",
-			extra:    map[string]any{anthropicAPIKeyAuthSchemeExtraKey: AnthropicAPIKeyAuthSchemeAuthorizationBearer},
-			wantAuth: "Bearer ollama-cloud-key",
-		},
-		{
-			name:        "恶意相似 host 子串不命中",
-			baseURL:     "https://evil.com/ollama.com",
-			wantXAPIKey: "ollama-cloud-key",
-		},
-		{
-			name:        "恶意相似 host 后缀不命中",
-			baseURL:     "https://ollama.com.evil.com",
-			wantXAPIKey: "ollama-cloud-key",
-		},
-		{
-			name:        "http 明文不命中",
-			baseURL:     "http://ollama.com",
-			wantXAPIKey: "ollama-cloud-key",
-		},
-		{
-			name:        "非标准端口不命中",
-			baseURL:     "https://ollama.com:8443",
-			wantXAPIKey: "ollama-cloud-key",
-		},
-		{
-			name:        "带 path 的 messages 地址不命中（判定用 base 而非完整 URL）",
-			baseURL:     "https://ollama.com/v1/messages",
-			wantXAPIKey: "ollama-cloud-key",
-		},
-		{
-			name:        "非 APIKey 账号类型不强制",
-			baseURL:     "https://ollama.com",
-			accountType: AccountTypeOAuth,
-			wantXAPIKey: "ollama-cloud-key",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			accountType := AccountTypeAPIKey
-			if tt.accountType != "" {
-				accountType = tt.accountType
-			}
-			account := newOllamaCloudAnthropicAuthAccount(tt.baseURL, tt.extra)
-			account.Type = accountType
-
-			header := http.Header{}
-			setAnthropicAPIKeyAuthHeader(header, account, "ollama-cloud-key", tt.baseURL)
-			require.Equal(t, tt.wantAuth, header.Get("Authorization"), "Authorization 头不符")
-			require.Equal(t, tt.wantXAPIKey, header.Get("x-api-key"), "x-api-key 头不符")
-		})
+	for _, extra := range []map[string]any{nil, {anthropicAPIKeyAuthSchemeExtraKey: AnthropicAPIKeyAuthSchemeXAPIKey}} {
+		account := newOllamaCloudAnthropicAuthAccount("", extra)
+		header := http.Header{}
+		setAnthropicAPIKeyAuthHeader(header, account, "ollama-cloud-key")
+		require.Equal(t, "Bearer ollama-cloud-key", header.Get("Authorization"))
+		require.Empty(t, header.Get("x-api-key"))
 	}
 }
 
-// TestSetAnthropicAPIKeyAuthHeader_CNAdaptiveBaseURLResolution：adaptive 账号经
-// GetCNProtocolBaseURL(anthropic) / GetAnthropicProtocolBaseURL 选出的分协议地址
-// 才是判定依据，Chat Completions 地址（GetOpenAIBaseURL 选到的 CC base）不参与。
+// Other platforms keep their configured scheme regardless of endpoint hostname.
 func TestSetAnthropicAPIKeyAuthHeader_CNAdaptiveBaseURL(t *testing.T) {
-	// adaptive：anthropic 分协议地址指向 ollama.com → Bearer；CC 地址同挂 ollama
-	// 不影响（判定只用 anthropic 分协议地址）。
 	adaptiveOllamaAnthropic := &Account{
 		ID:       902,
 		Name:     "adaptive-ollama-anthropic",
@@ -165,9 +61,9 @@ func TestSetAnthropicAPIKeyAuthHeader_CNAdaptiveBaseURL(t *testing.T) {
 	anthropicBase := adaptiveOllamaAnthropic.GetCNProtocolBaseURL(APIProtocolAnthropic)
 	require.Equal(t, "https://ollama.com", anthropicBase)
 	header := http.Header{}
-	setAnthropicAPIKeyAuthHeader(header, adaptiveOllamaAnthropic, "kimi-key", anthropicBase)
-	require.Equal(t, "Bearer kimi-key", header.Get("Authorization"))
-	require.Empty(t, header.Get("x-api-key"))
+	setAnthropicAPIKeyAuthHeader(header, adaptiveOllamaAnthropic, "kimi-key")
+	require.Empty(t, header.Get("Authorization"))
+	require.Equal(t, "kimi-key", header.Get("x-api-key"))
 
 	// 反向：CC 地址挂 ollama.com，anthropic 分协议地址非 ollama → 不误判，
 	// 保持 x-api-key。
@@ -188,11 +84,11 @@ func TestSetAnthropicAPIKeyAuthHeader_CNAdaptiveBaseURL(t *testing.T) {
 	anthropicBase = adaptiveOllamaCC.GetCNProtocolBaseURL(APIProtocolAnthropic)
 	require.Equal(t, "https://api.moonshot.cn/anthropic", anthropicBase)
 	header = http.Header{}
-	setAnthropicAPIKeyAuthHeader(header, adaptiveOllamaCC, "kimi-key", anthropicBase)
+	setAnthropicAPIKeyAuthHeader(header, adaptiveOllamaCC, "kimi-key")
 	require.Empty(t, header.Get("Authorization"))
 	require.Equal(t, "kimi-key", header.Get("x-api-key"))
 
-	// anthropic 协议（非 adaptive）：凭证 base_url 指向 ollama.com → Bearer。
+	// A Kimi Anthropic-protocol account retains its default authentication.
 	anthropicProtocolOllama := &Account{
 		ID:       904,
 		Name:     "anthropic-protocol-ollama",
@@ -207,9 +103,9 @@ func TestSetAnthropicAPIKeyAuthHeader_CNAdaptiveBaseURL(t *testing.T) {
 	anthropicBase = anthropicProtocolOllama.GetAnthropicProtocolBaseURL()
 	require.Equal(t, "https://ollama.com", anthropicBase)
 	header = http.Header{}
-	setAnthropicAPIKeyAuthHeader(header, anthropicProtocolOllama, "kimi-key", anthropicBase)
-	require.Equal(t, "Bearer kimi-key", header.Get("Authorization"))
-	require.Empty(t, header.Get("x-api-key"))
+	setAnthropicAPIKeyAuthHeader(header, anthropicProtocolOllama, "kimi-key")
+	require.Empty(t, header.Get("Authorization"))
+	require.Equal(t, "kimi-key", header.Get("x-api-key"))
 
 	// 同协议但 base 为 kimi 官方 → 保持 x-api-key。
 	anthropicProtocolKimi := &Account{
@@ -224,7 +120,7 @@ func TestSetAnthropicAPIKeyAuthHeader_CNAdaptiveBaseURL(t *testing.T) {
 		},
 	}
 	header = http.Header{}
-	setAnthropicAPIKeyAuthHeader(header, anthropicProtocolKimi, "kimi-key", anthropicProtocolKimi.GetAnthropicProtocolBaseURL())
+	setAnthropicAPIKeyAuthHeader(header, anthropicProtocolKimi, "kimi-key")
 	require.Empty(t, header.Get("Authorization"))
 	require.Equal(t, "kimi-key", header.Get("x-api-key"))
 }
@@ -246,6 +142,9 @@ func TestGatewayService_AnthropicPassthrough_OllamaCloudBearer(t *testing.T) {
 
 		svc := &GatewayService{cfg: &config.Config{}}
 		account := newOllamaCloudAnthropicAuthAccount(baseURL, nil)
+		if baseURL == "https://api.anthropic.com" {
+			account.Platform = PlatformAnthropic
+		}
 		body := []byte(`{"model":"claude-3-7-sonnet-20250219","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`)
 		req, _, err := svc.buildUpstreamRequestAnthropicAPIKeyPassthrough(context.Background(), c, account, body, "ollama-cloud-key")
 		require.NoError(t, err)
@@ -279,6 +178,9 @@ func TestGatewayService_BuildUpstreamRequest_OllamaCloudBearer(t *testing.T) {
 
 		svc := &GatewayService{cfg: &config.Config{}}
 		account := newOllamaCloudAnthropicAuthAccount(baseURL, nil)
+		if baseURL == "https://api.anthropic.com" {
+			account.Platform = PlatformAnthropic
+		}
 		body := []byte(`{"model":"claude-3-7-sonnet-20250219","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`)
 		req, _, err := svc.buildUpstreamRequest(context.Background(), c, account, body, "ollama-cloud-key", "apikey", "claude-3-7-sonnet-20250219", false, false)
 		require.NoError(t, err)
@@ -295,9 +197,7 @@ func TestGatewayService_BuildUpstreamRequest_OllamaCloudBearer(t *testing.T) {
 	require.Equal(t, "ollama-cloud-key", anthropicReq.Header.Get("x-api-key"))
 }
 
-// TestOpenAIGatewayService_NativeAnthropicBridge_OllamaCloudBearer：经 native
-// Anthropic 桥接 builder（CC/Responses → /v1/messages）真实构造 http.Request
-// 验证最终 header。
+// A native Anthropic bridge uses the account platform's authentication scheme.
 func TestOpenAIGatewayService_NativeAnthropicBridge_OllamaCloudBearer(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -321,8 +221,8 @@ func TestOpenAIGatewayService_NativeAnthropicBridge_OllamaCloudBearer(t *testing
 	body := []byte(`{"model":"kimi-k2-thinking","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`)
 	req, _, err := svc.buildNativeAnthropicUpstreamRequest(context.Background(), c, account, body, "ollama-cloud-key", targetURL)
 	require.NoError(t, err)
-	require.Equal(t, "Bearer ollama-cloud-key", req.Header.Get("Authorization"))
-	require.Empty(t, req.Header.Get("x-api-key"))
+	require.Empty(t, req.Header.Get("Authorization"))
+	require.Equal(t, "ollama-cloud-key", req.Header.Get("x-api-key"))
 
 	// 非 Ollama 上游：保持 x-api-key，无 Authorization。
 	account.Credentials["base_url"] = "https://api.moonshot.cn/anthropic"

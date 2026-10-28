@@ -269,3 +269,22 @@ func TestClientRequestedModelUsesCompositePublicModel(t *testing.T) {
 	require.Equal(t, "public-alias", fields.ChannelMappedModel)
 	require.Equal(t, "public-alias\u2192gpt-5", fields.ModelMappingChain)
 }
+
+func TestOllamaReasoningPolicyAppliesToConcreteAndCompositeGroups(t *testing.T) {
+	for _, platform := range []string{service.PlatformOllama, service.PlatformComposite} {
+		t.Run(platform, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+			c.Request = c.Request.WithContext(service.WithResolvedTargetPlatform(c.Request.Context(), service.PlatformOllama))
+			apiKey := &service.APIKey{Group: &service.Group{Platform: platform, MaxReasoningEffort: "medium"}}
+			body := []byte(`{"reasoning":{"effort":"high"}}`)
+			got, changed, err := applyOpenAIReasoningEffortPolicyForRequest(c, apiKey, body)
+			require.NoError(t, err)
+			require.True(t, changed)
+			require.Equal(t, "medium", gjson.GetBytes(got, "reasoning.effort").String())
+			apiKey.Group.MaxReasoningEffortOverLimit = service.ReasoningEffortOverLimitDeny
+			_, _, err = applyOpenAIReasoningEffortPolicyForRequest(c, apiKey, body)
+			require.Error(t, err)
+		})
+	}
+}

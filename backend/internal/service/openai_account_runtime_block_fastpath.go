@@ -87,7 +87,7 @@ func isGrokOAuthAccount(account *Account) bool {
 }
 
 func isOpenAIAccount(account *Account) bool {
-	return account != nil && (account.Platform == PlatformOpenAI || account.Platform == PlatformGrok)
+	return account != nil && (account.IsOpenAI() || account.Platform == PlatformGrok)
 }
 
 // handleOpenAIAccountUpstreamError expects canonicalModel to be the model used
@@ -103,12 +103,12 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 	}
 	// Capacity shedding describes this request, not account health. Keep the
 	// account schedulable while the request-local retry budget handles recovery.
-	if account != nil && account.Platform == PlatformOpenAI && isOpenAIRequestScopedCapacityShed("", responseBody) {
+	if account != nil && account.IsOpenAI() && isOpenAIRequestScopedCapacityShed("", responseBody) {
 		return false
 	}
 	stateCtx, cancel := openAIAccountStateContext(ctx)
 	defer cancel()
-	if account != nil && account.Platform == PlatformOpenAI && isOpenAIHTTPUpstreamAccessStateError(statusCode, "", responseBody) {
+	if account != nil && account.IsOpenAI() && isOpenAIHTTPUpstreamAccessStateError(statusCode, "", responseBody) {
 		message := "OpenAI upstream account or workspace is unavailable"
 		if upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(responseBody)); upstreamMsg != "" {
 			message = upstreamMsg
@@ -122,7 +122,7 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 		return true
 	}
 
-	if account != nil && account.Platform == PlatformOpenAI && isOpenAIContextWindowError("", responseBody) {
+	if account != nil && account.IsOpenAI() && isOpenAIContextWindowError("", responseBody) {
 		return false
 	}
 
@@ -184,7 +184,7 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 	// same-account retry budget. Recording the generic account+model transient
 	// cooldown here would block the next approved retry before that budget is used.
 	poolModeRetryable := account.IsPoolMode() && account.IsPoolModeRetryableStatus(statusCode)
-	if !shouldDisable && account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey &&
+	if !shouldDisable && account.IsOpenAIApiKey() &&
 		shouldCooldownOpenAITransientUpstreamError(statusCode, responseBody) && !poolModeRetryable {
 		model := ""
 		if len(canonicalModel) > 0 {

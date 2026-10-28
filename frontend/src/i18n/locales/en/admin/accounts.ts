@@ -120,6 +120,7 @@ export default {
         opencode_go: 'OpenCode',
         typesafe: 'TypeSafe / Jev',
         kiro: 'Kiro',
+        ollama: 'Ollama Cloud',
       },
       cnProviders: {
         accountMode: {
@@ -842,6 +843,11 @@ export default {
           localOnlyWarning: 'This only simulates Sub2API usage and billing categories. It does not mean Kiro upstream hit a real cache and does not reduce upstream tokens, context, or quota usage.',
           ratioRangeError: 'The simulated classification ratio must be greater than 0 and no more than 100%'
         },
+      },
+      ollama: {
+        baseUrlHint: 'Defaults to https://ollama.com/v1. Only official ollama.com HTTPS endpoints (/ or /v1) are accepted.',
+        apiKeyHint: 'Get your API key from https://ollama.com/settings/keys',
+        baseUrlInvalid: 'Ollama Cloud Base URL must use https://ollama.com or https://ollama.com/v1',
       },
       anthropic: {
         apiKeyPassthrough: 'Auto passthrough (auth only)',

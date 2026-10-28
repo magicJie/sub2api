@@ -1159,8 +1159,8 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 		platform = forcedPlatform
 	}
 
-	if platform == service.PlatformOpenAI && apiKey != nil && apiKey.Group != nil &&
-		apiKey.Group.Platform == service.PlatformOpenAI && apiKey.Group.CodexModelsManifestConfig.Enabled {
+	if (platform == service.PlatformOpenAI || platform == service.PlatformOllama) && apiKey != nil && apiKey.Group != nil &&
+		(apiKey.Group.Platform == service.PlatformOpenAI || apiKey.Group.Platform == service.PlatformOllama) && apiKey.Group.CodexModelsManifestConfig.Enabled {
 		h.pinnedOpenAIModels(c, apiKey.Group)
 		return
 	}
@@ -1191,13 +1191,13 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 		return
 	}
 
-	if len(availableModels) > 0 || (platform == service.PlatformOpenAI && availableModels != nil) {
+	if len(availableModels) > 0 || ((platform == service.PlatformOpenAI || platform == service.PlatformOllama) && availableModels != nil) {
 		writeModelsList(c, platform, availableModels)
 		return
 	}
 
 	// Fallback to default models
-	if platform == service.PlatformOpenAI {
+	if platform == service.PlatformOpenAI || platform == service.PlatformOllama {
 		writeModelsListResponse(c, openai.DefaultModels)
 		return
 	}
@@ -1339,7 +1339,7 @@ func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *
 }
 
 func writeModelsList(c *gin.Context, platform string, modelIDs []string) {
-	if platform == service.PlatformOpenAI {
+	if platform == service.PlatformOpenAI || platform == service.PlatformOllama {
 		writeOpenAIModelsList(c, modelIDs)
 		return
 	}
@@ -1360,7 +1360,7 @@ func writeModelsList(c *gin.Context, platform string, modelIDs []string) {
 }
 
 func writeAllowlistedModelsList(c *gin.Context, platform string, modelIDs []string) {
-	if platform == service.PlatformOpenAI {
+	if platform == service.PlatformOpenAI || platform == service.PlatformOllama {
 		writeOpenAIModelsList(c, modelIDs)
 		return
 	}
@@ -1455,7 +1455,7 @@ func writeOpenAIModelsList(c *gin.Context, modelIDs []string) {
 // 与平台默认列表（fallbackModels）。账号映射为空时回落默认列表；Anthropic
 // 平台两者取并集，其余平台以账号映射键为准。
 func modelListingSource(platform string, availableModels, fallbackModels []string) []string {
-	if platform == service.PlatformOpenAI && availableModels != nil {
+	if (platform == service.PlatformOpenAI || platform == service.PlatformOllama) && availableModels != nil {
 		return availableModels
 	}
 	if len(availableModels) == 0 {
@@ -1480,7 +1480,7 @@ func defaultCodexModelIDsForPlatform(platform string) []string {
 
 func defaultModelIDsForPlatform(platform string) []string {
 	switch platform {
-	case service.PlatformOpenAI:
+	case service.PlatformOpenAI, service.PlatformOllama:
 		return openai.DefaultModelIDs()
 	case service.PlatformGemini:
 		ids := make([]string, 0, len(geminicli.DefaultModels))

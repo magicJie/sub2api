@@ -156,8 +156,7 @@ func TestOllamaCloudUsageRateLimitProbeSameGroupCoalescesIntoOneFetchPerAccount(
 	first.Credentials["api_key"] = "shared-key"
 	first.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=shared"
 	second := ollamaUsageAccount(22)
-	second.Platform = PlatformAnthropic
-	second.Credentials = map[string]any{"base_url": "https://www.ollama.com/v1", "api_key": "shared-key"}
+	second.Credentials = map[string]any{"base_url": "https://ollama.com/v1", "api_key": "shared-key"}
 	second.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=shared"
 	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{
 		accounts: map[int64]*Account{first.ID: first, second.ID: second},
@@ -200,7 +199,7 @@ func TestOllamaCloudUsageRateLimitProbeSkipsMissingCookieAndNonOllamaAccount(t *
 	noCookie := ollamaUsageAccount(31)
 	noCookie.Extra = map[string]any{} // no session
 	nonOllama := ollamaUsageAccount(32)
-	nonOllama.Credentials["base_url"] = "https://api.openai.com"
+	nonOllama.Platform = PlatformOpenAI
 	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{
 		accounts: map[int64]*Account{noCookie.ID: noCookie, nonOllama.ID: nonOllama},
 	}}

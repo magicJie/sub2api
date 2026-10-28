@@ -889,7 +889,7 @@ func modelRoutingAppliesToPlatform(targetPlatform, groupPlatform string) bool {
 // 在只知道目标平台、还没取到分组的位置（调试日志、取分组前的短路）单独判定用。
 func modelRoutingAppliesToTargetPlatform(targetPlatform string) bool {
 	switch targetPlatform {
-	case PlatformAnthropic, PlatformOpenAI:
+	case PlatformAnthropic, PlatformOpenAI, PlatformOllama:
 		return true
 	default:
 		return false
@@ -2664,7 +2664,7 @@ func (s *GatewayService) isModelSupportedByAccount(account *Account, requestedMo
 		return ok
 	}
 	// OpenAI 透传模式：仅替换认证，允许所有模型
-	if account.Platform == PlatformOpenAI && account.IsOpenAIPassthroughEnabled() {
+	if account.IsOpenAI() && account.IsOpenAIPassthroughEnabled() {
 		return true
 	}
 	// OAuth/SetupToken 账号使用 Anthropic 标准映射（短ID → 长ID）

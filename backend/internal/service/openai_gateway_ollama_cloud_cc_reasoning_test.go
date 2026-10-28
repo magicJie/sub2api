@@ -21,7 +21,7 @@ func ollamaCloudRawChatCompletionsTestAccount() *Account {
 	return &Account{
 		ID:       143,
 		Name:     "DeepSeek Ollama",
-		Platform: PlatformOpenAI,
+		Platform: PlatformOllama,
 		Type:     AccountTypeAPIKey,
 		Credentials: map[string]any{
 			"api_key":  "sk-test",
@@ -35,58 +35,18 @@ func ollamaCloudRawChatCompletionsTestAccount() *Account {
 
 func TestIsOllamaCloudRawChatCompletionsAccount(t *testing.T) {
 	t.Parallel()
-
-	t.Run("ollama.com + force_chat_completions", func(t *testing.T) {
-		t.Parallel()
-		require.True(t, isOllamaCloudRawChatCompletionsAccount(ollamaCloudRawChatCompletionsTestAccount()))
-	})
-
-	t.Run("extra usage signal without ollama host", func(t *testing.T) {
-		t.Parallel()
-		account := rawChatCompletionsTestAccount()
-		account.Credentials["base_url"] = "https://example.invalid/v1"
-		account.Extra = map[string]any{
-			openai_compat.ExtraKeyResponsesMode: string(openai_compat.ResponsesSupportModeForceChatCompletions),
-			OllamaCloudUsageSnapshotExtraKey:    map[string]any{"status": "ok"},
-		}
-		require.True(t, isOllamaCloudRawChatCompletionsAccount(account))
-	})
-
-	t.Run("official DeepSeek", func(t *testing.T) {
-		t.Parallel()
-		account := rawChatCompletionsTestAccount()
-		account.Name = "DeepSeek"
-		account.Credentials["base_url"] = "https://api.deepseek.com"
-		account.Extra = map[string]any{
-			openai_compat.ExtraKeyResponsesMode: string(openai_compat.ResponsesSupportModeForceChatCompletions),
-		}
-		require.False(t, isOllamaCloudRawChatCompletionsAccount(account))
-	})
-
-	t.Run("OpenCode Go extra", func(t *testing.T) {
-		t.Parallel()
-		account := rawChatCompletionsTestAccount()
-		account.Credentials["base_url"] = "https://opencode.ai/zen/go/v1"
-		account.Extra = map[string]any{
-			openai_compat.ExtraKeyResponsesMode: string(openai_compat.ResponsesSupportModeForceChatCompletions),
-			"opencode_go_usage_auto_refresh":    true,
-		}
-		require.False(t, isOllamaCloudRawChatCompletionsAccount(account))
-	})
-
-	t.Run("ollama.com without force_chat_completions", func(t *testing.T) {
-		t.Parallel()
-		account := ollamaCloudRawChatCompletionsTestAccount()
-		account.Extra = nil
-		require.False(t, isOllamaCloudRawChatCompletionsAccount(account))
-	})
-
-	t.Run("anthropic ollama.com", func(t *testing.T) {
-		t.Parallel()
-		account := ollamaCloudRawChatCompletionsTestAccount()
-		account.Platform = PlatformAnthropic
-		require.False(t, isOllamaCloudRawChatCompletionsAccount(account))
-	})
+	for _, platform := range []string{PlatformOllama, PlatformOpenAI, PlatformAnthropic, PlatformDeepseek} {
+		t.Run(platform, func(t *testing.T) {
+			account := ollamaCloudRawChatCompletionsTestAccount()
+			account.Platform = platform
+			account.Extra = nil
+			require.Equal(t, platform == PlatformOllama, isOllamaCloudRawChatCompletionsAccount(account))
+		})
+	}
+	account := ollamaCloudRawChatCompletionsTestAccount()
+	account.Type = AccountTypeOAuth
+	require.False(t, isOllamaCloudRawChatCompletionsAccount(account))
+	require.False(t, isOllamaCloudRawChatCompletionsAccount(nil))
 }
 
 func TestNormalizeOllamaCloudChatCompletionsResponseJSON(t *testing.T) {

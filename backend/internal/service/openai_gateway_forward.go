@@ -584,7 +584,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		maxOutputTokens := gjson.GetBytes(body, "max_output_tokens")
 		if maxOutputTokens.Exists() {
 			switch account.Platform {
-			case PlatformOpenAI, PlatformDeepseek:
+			case PlatformOpenAI, PlatformOllama, PlatformDeepseek:
 				// Preserve Responses-native output limits unless the selected upstream
 				// explicitly rejects the field in the bounded HTTP retry loop below.
 			case PlatformAnthropic:
@@ -607,7 +607,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		// Chat Completions 习惯发送 max_tokens，兼容 Responses 上游会拒绝该字段（#4417）。
 		// 仅对 OpenAI 平台归一化：Anthropic 合法使用 max_tokens，其 max_output_tokens
 		// 反向转换已在上方 switch 中处理。
-		if account.Platform == PlatformOpenAI {
+		if account.IsOpenAI() {
 			if maxTokens := gjson.GetBytes(body, "max_tokens"); maxTokens.Exists() {
 				if !gjson.GetBytes(body, "max_output_tokens").Exists() {
 					markPatchSet("max_output_tokens", maxTokens.Value())
@@ -1025,7 +1025,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		reasoningEffortValue = *reasoningEffort
 	}
 	firstOutputTimeout := time.Duration(0)
-	if reqStream && account.Platform == PlatformOpenAI {
+	if reqStream && account.IsOpenAI() {
 		firstOutputTimeout = s.openAIFirstOutputTimeout(reasoningEffortValue)
 	}
 
@@ -1347,6 +1347,13 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 func shouldForwardOpenAIResponsesViaRawChatCompletions(account *Account) bool {
 	if account == nil || account.Type != AccountTypeAPIKey {
 		return false
+	}
+	// Ollama's default upstream is Chat Completions, including when an old
+	// capability probe reported Responses support. Explicit overrides retain
+	// the OpenAI API-key routing contract.
+	if account.Platform == PlatformOllama {
+		mode, _ := account.Extra[openai_compat.ExtraKeyResponsesMode].(string)
+		return openai_compat.NormalizeResponsesSupportMode(mode) != openai_compat.ResponsesSupportModeForceResponses
 	}
 	if account.routesByModel() {
 		// Model protocol_rules are the authority. Probe Extra must not collapse

@@ -288,7 +288,7 @@ func openAICompatibleRequestPlatform(ctx context.Context, apiKey *service.APIKey
 }
 
 func openAIResponsesRequiredCapability(imageIntent bool, platform string) service.OpenAIEndpointCapability {
-	if imageIntent && platform == service.PlatformOpenAI {
+	if imageIntent && (platform == service.PlatformOpenAI || platform == service.PlatformOllama) {
 		return service.OpenAIEndpointCapabilityResponses
 	}
 	return service.OpenAIEndpointCapabilityChatCompletions
@@ -298,7 +298,7 @@ func openAIResponsesRequiredCapability(imageIntent bool, platform string) servic
 // required by an image or Responses request. needsResponses includes both the
 // legacy /responses/compact endpoint and native remote compaction v2.
 func openAIResponsesRequiredCapabilityForRequest(imageIntent bool, needsResponses bool, platform string) service.OpenAIEndpointCapability {
-	if needsResponses && platform == service.PlatformOpenAI {
+	if needsResponses && (platform == service.PlatformOpenAI || platform == service.PlatformOllama) {
 		return service.OpenAIEndpointCapabilityResponses
 	}
 	return openAIResponsesRequiredCapability(imageIntent, platform)
@@ -342,7 +342,7 @@ func openAICompatibleTextTargetAllowed(c *gin.Context, apiKey *service.APIKey, m
 // 放行只会把明确的策略拒绝变成误导性的 "no available account"。
 func isResponsesWebSocketCompositePlatform(platform string) bool {
 	switch platform {
-	case service.PlatformOpenAI, service.PlatformGrok:
+	case service.PlatformOpenAI, service.PlatformOllama, service.PlatformGrok:
 		return true
 	default:
 		return false
@@ -2780,7 +2780,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	// WSv2 传输本身已隐含 Responses 支持，此处为防御性对齐。
 	// 使用 IsExplicitImageGenerationIntent 排除被动 namespace 声明（#4476）。
 	requiredCapability := service.OpenAIEndpointCapabilityChatCompletions
-	if service.IsExplicitImageGenerationIntent("/v1/responses", reqModel, firstMessage) && requestPlatform == service.PlatformOpenAI {
+	if service.IsExplicitImageGenerationIntent("/v1/responses", reqModel, firstMessage) && (requestPlatform == service.PlatformOpenAI || requestPlatform == service.PlatformOllama) {
 		requiredCapability = service.OpenAIEndpointCapabilityResponses
 	}
 

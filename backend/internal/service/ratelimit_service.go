@@ -454,7 +454,7 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 		}
 		// OpenAI: token_invalidated / token_revoked 表示 token 被永久作废（非过期），直接标记 error
 		openai401Code := extractUpstreamErrorCode(responseBody)
-		if authAccount.Platform == PlatformOpenAI && (openai401Code == "token_invalidated" || openai401Code == "token_revoked") {
+		if authAccount.IsOpenAI() && (openai401Code == "token_invalidated" || openai401Code == "token_revoked") {
 			msg := "Token revoked (401): account authentication permanently revoked"
 			if upstreamMsg != "" {
 				msg = "Token revoked (401): " + upstreamMsg
@@ -464,7 +464,7 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			break
 		}
 		// OpenAI: {"detail":"Unauthorized"} 表示 token 完全无效（非标准 OpenAI 错误格式），直接标记 error
-		if authAccount.Platform == PlatformOpenAI && gjson.GetBytes(responseBody, "detail").String() == "Unauthorized" {
+		if authAccount.IsOpenAI() && gjson.GetBytes(responseBody, "detail").String() == "Unauthorized" {
 			msg := "Unauthorized (401): account authentication failed permanently"
 			if upstreamMsg != "" {
 				msg = "Unauthorized (401): " + upstreamMsg
@@ -548,7 +548,7 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			break
 		}
 		// OpenAI: deactivated_workspace 表示工作区已停用，直接标记 error
-		if account.Platform == PlatformOpenAI && gjson.GetBytes(responseBody, "detail.code").String() == "deactivated_workspace" {
+		if account.IsOpenAI() && gjson.GetBytes(responseBody, "detail.code").String() == "deactivated_workspace" {
 			msg := "Workspace deactivated (402): workspace has been deactivated"
 			s.handleAuthError(ctx, account, msg)
 			shouldDisable = true
@@ -1037,7 +1037,7 @@ func (s *RateLimitService) handle403(ctx context.Context, account *Account, upst
 	// 国产供应商与 openai 同口径:HTML 403(CDN/代理拦截页)不构成账号失效证据,
 	// 且 403 在 failover 状态集里会被逐账号重放——直接 SetError 会让一个坏请求/
 	// 一层坏代理连环永久禁用整组账号。走 HTML 豁免 + N 次累计 + 临时冷却。
-	if account.Platform == PlatformOpenAI || account.IsMultiProtocolAPIKey() {
+	if account.IsOpenAI() || account.IsMultiProtocolAPIKey() {
 		return s.handleOpenAI403(ctx, account, upstreamMsg, responseBody)
 	}
 	// 非 Antigravity 平台：保持原有行为
@@ -2369,7 +2369,7 @@ func (s *RateLimitService) HandleOpenAIImageRateLimit(ctx context.Context, accou
 	if s == nil || account == nil || s.accountRepo == nil {
 		return false
 	}
-	if account.Platform != PlatformOpenAI {
+	if !account.IsOpenAI() {
 		return false
 	}
 	if !account.ShouldHandleErrorCode(statusCode) {
@@ -2430,7 +2430,7 @@ func (s *RateLimitService) HandleOpenAIImageCapabilityLoss(ctx context.Context, 
 	if s == nil || account == nil || s.accountRepo == nil {
 		return false
 	}
-	if account.Platform != PlatformOpenAI {
+	if !account.IsOpenAI() {
 		return false
 	}
 	if !account.ShouldHandleErrorCode(statusCode) {
@@ -2670,7 +2670,7 @@ func unauthorizedRequiresCredentialHandling(account *Account, responseBody []byt
 	if account.Type == AccountTypeOAuth || account.IsShadow() {
 		return true
 	}
-	if account.Platform != PlatformOpenAI {
+	if !account.IsOpenAI() {
 		return false
 	}
 	switch extractUpstreamErrorCode(responseBody) {

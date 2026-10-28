@@ -339,6 +339,7 @@ export default {
         opencode_go: 'OpenCode',
         typesafe: 'TypeSafe / Jev',
         kiro: 'Kiro',
+        ollama: 'Ollama Cloud',
       },
       cnProviders: {
         accountMode: {
@@ -960,6 +961,11 @@ export default {
           localOnlyWarning: '这是 Sub2API 本地 usage 与计费分类模拟，不代表 Kiro 上游真实命中缓存，也不会减少上游 Token、上下文或额度消耗。',
           ratioRangeError: '模拟归类比例必须大于 0 且不超过 100%'
         },
+      },
+      ollama: {
+        baseUrlHint: '默认使用 https://ollama.com/v1，仅允许官方 ollama.com 的 HTTPS 地址（/ 或 /v1）。',
+        apiKeyHint: '在 https://ollama.com/settings/keys 获取 API Key',
+        baseUrlInvalid: 'Ollama Cloud Base URL 必须使用 https://ollama.com 或 https://ollama.com/v1',
       },
       anthropic: {
         apiKeyPassthrough: '自动透传（仅替换认证）',

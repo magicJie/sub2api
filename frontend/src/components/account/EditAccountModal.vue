@@ -45,7 +45,9 @@
                       ? 'https://api.x.ai/v1'
                       : account.platform === 'kiro'
                         ? 'https://your-kiro-upstream.example.com'
-                        : 'https://api.anthropic.com'
+                        : account.platform === 'ollama'
+                          ? 'https://ollama.com/v1'
+                          : 'https://api.anthropic.com'
             "
           />
           <p v-if="baseUrlHint" class="input-hint">{{ baseUrlHint }}</p>
@@ -246,7 +248,9 @@
                     ? 'sk-...'
                     : account.platform === 'grok'
                       ? 'xai-...'
-                      : 'sk-ant-...'
+                      : account.platform === 'ollama'
+                        ? 'sk-...'
+                        : 'sk-ant-...'
             "
           />
           <p class="input-hint">{{ t('admin.accounts.leaveEmptyToKeep') }}</p>
@@ -1912,7 +1916,7 @@
 
       <!-- OpenAI 自动透传开关（OAuth/API Key） -->
       <div
-        v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
+        v-if="(account?.platform === 'openai' || account?.platform === 'ollama') && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="flex items-center justify-between">
@@ -1973,7 +1977,7 @@
 
       <!-- OpenAI Codex hosted image_generation bridge policy -->
       <div
-        v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
+        v-if="(account?.platform === 'openai' || account?.platform === 'ollama') && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="overflow-hidden rounded-lg border border-sky-100 bg-sky-50/60 shadow-sm dark:border-sky-900/50 dark:bg-sky-950/20">
@@ -2033,7 +2037,7 @@
 
       <!-- OpenAI WS Mode 三态（off/ctx_pool/passthrough） -->
       <div
-        v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
+        v-if="(account?.platform === 'openai' || account?.platform === 'ollama') && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="flex items-center justify-between">
@@ -2054,7 +2058,7 @@
 
       <!-- OpenAI APIKey Responses API support mode -->
       <div
-        v-if="account?.platform === 'openai' && account?.type === 'apikey'"
+        v-if="(account?.platform === 'openai' || account?.platform === 'ollama') && account?.type === 'apikey'"
         class="space-y-4 border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="flex items-center justify-between gap-4">
@@ -2110,7 +2114,7 @@
 
       <!-- OpenAI APIKey images: backfill b64_json from url -->
       <div
-        v-if="account?.platform === 'openai' && account?.type === 'apikey'"
+        v-if="(account?.platform === 'openai' || account?.platform === 'ollama') && account?.type === 'apikey'"
         class="flex items-center justify-between gap-4 border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div>
@@ -2298,7 +2302,7 @@
 
       <!-- Anthropic / OpenAI API Key: Web Search Emulation (hidden when global disabled) -->
       <div
-        v-if="(account?.platform === 'anthropic' || account?.platform === 'openai') && account?.type === 'apikey' && webSearchGlobalEnabled"
+        v-if="(account?.platform === 'anthropic' || account?.platform === 'openai' || account?.platform === 'ollama') && account?.type === 'apikey' && webSearchGlobalEnabled"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="flex items-center justify-between">
@@ -2421,7 +2425,7 @@
 
       <!-- OpenAI API 长上下文计费开关 -->
       <div
-        v-if="account?.platform === 'openai' && !isSparkShadow && !hideAccountLongContextBilling && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
+        v-if="(account?.platform === 'openai' || account?.platform === 'ollama') && !isSparkShadow && !hideAccountLongContextBilling && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="flex items-center justify-between gap-4">
@@ -2544,7 +2548,7 @@
       </div>
 
       <div
-        v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
+        v-if="(account?.platform === 'openai' || account?.platform === 'ollama') && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
         class="border-t border-gray-200 pt-4 dark:border-dark-600 space-y-4"
       >
         <div class="flex items-center justify-between">
@@ -3394,6 +3398,7 @@ import {
 } from '@/kiro/models'
 import KiroCacheConfigFields from '@/kiro/components/KiroCacheConfigFields.vue'
 import { kiroCachePercentToRatio, kiroCacheRatioToPercent, validateKiroCacheConfig } from '@/kiro/cacheConfig'
+import { DEFAULT_OLLAMA_BASE_URL, isValidOllamaBaseUrl } from '@/utils/ollamaUsage'
 
 interface Props {
   show: boolean
@@ -3525,6 +3530,7 @@ const baseUrlHint = computed(() => {
   if (props.account.platform === 'gemini') return t('admin.accounts.gemini.baseUrlHint')
   if (props.account.platform === 'grok') return ''
   if (props.account.platform === 'kiro') return t('admin.accounts.kiro.baseUrlHint')
+  if (props.account.platform === 'ollama') return t('admin.accounts.ollama.baseUrlHint')
   return t('admin.accounts.baseUrlHint')
 })
 
@@ -4066,6 +4072,9 @@ const openAITextEndpointCapabilityLabel = computed(() => {
   if (openAIResponsesMode.value === 'force_chat_completions') {
     return t('admin.accounts.openai.capabilityChatCompletions')
   }
+  if (props.account?.platform === 'ollama') {
+    return t('admin.accounts.openai.capabilityChatCompletions')
+  }
   const extra = props.account?.extra as Record<string, unknown> | undefined
   if (extra?.openai_responses_supported === true) {
     return t('admin.accounts.openai.capabilityResponsesAuto')
@@ -4139,20 +4148,23 @@ const applyOpenAIEndpointCapabilities = (credentials: Record<string, unknown>) =
   }
   credentials.openai_capabilities = capabilities
 }
-const normalizeOpenAIResponsesMode = (mode: unknown): OpenAIResponsesMode => {
+const normalizeOpenAIResponsesMode = (mode: unknown, platform?: string): OpenAIResponsesMode => {
   if (mode === 'force_responses' || mode === 'force_chat_completions') {
     return mode
+  }
+  if (platform === 'ollama') {
+    return 'force_chat_completions'
   }
   return 'auto'
 }
 const isOpenAIModelRestrictionDisabled = computed(() =>
-  props.account?.platform === 'openai' && openaiPassthroughEnabled.value
+  (props.account?.platform === 'openai' || props.account?.platform === 'ollama') && openaiPassthroughEnabled.value
 )
 const openAIResponsesStatusKey = computed(() => {
   if (openAIResponsesMode.value === 'force_responses') {
     return 'admin.accounts.openai.responsesStatusForcedResponses'
   }
-  if (openAIResponsesMode.value === 'force_chat_completions') {
+  if (openAIResponsesMode.value === 'force_chat_completions' || props.account?.platform === 'ollama') {
     return 'admin.accounts.openai.responsesStatusForcedChatCompletions'
   }
   const extra = props.account?.extra as Record<string, unknown> | undefined
@@ -4166,7 +4178,7 @@ const openAIResponsesStatusKey = computed(() => {
 })
 const openAICompactStatusKey = computed(() => {
   const extra = props.account?.extra as Record<string, unknown> | undefined
-  if (!props.account || props.account.platform !== 'openai') return ''
+  if (!props.account || (props.account.platform !== 'openai' && props.account.platform !== 'ollama')) return ''
   const mode = typeof extra?.openai_compact_mode === 'string' ? extra.openai_compact_mode : 'auto'
   if (mode === 'force_on') return 'admin.accounts.openai.compactSupported'
   if (mode === 'force_off') return 'admin.accounts.openai.compactUnsupported'
@@ -4233,6 +4245,7 @@ const defaultBaseUrl = computed(() => {
   if (props.account?.platform === 'grok') return 'https://api.x.ai/v1'
   if (props.account?.platform === 'typesafe') return 'https://api.typesafe.ai'
   if (props.account?.platform === 'kiro') return ''
+  if (props.account?.platform === 'ollama') return DEFAULT_OLLAMA_BASE_URL
   // CN 供应商：按当前模式/协议回落到官方预设（清空输入框提交时使用），
   // 不能落到 anthropic 默认值（会被当 CC base 拼出错误端点）。
   if (props.account && isMultiProtocolApiKeyPlatform(props.account.platform)) {
@@ -4438,7 +4451,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   anthropicPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
-  if (newAccount.platform === 'openai' && (newAccount.type === 'oauth' || newAccount.type === 'setup-token' || newAccount.type === 'apikey')) {
+  if ((newAccount.platform === 'openai' || newAccount.platform === 'ollama') && (newAccount.type === 'oauth' || newAccount.type === 'setup-token' || newAccount.type === 'apikey')) {
     openaiPassthroughEnabled.value = extra?.openai_passthrough === true || extra?.openai_oauth_passthrough === true
     openaiFlattenNamespacesEnabled.value =
       newAccount.type === 'oauth' && extra?.openai_responses_flatten_namespaces === true
@@ -4450,7 +4463,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
       : ''
     openAICompactMode.value = (extra?.openai_compact_mode as OpenAICompactMode) || 'auto'
     if (newAccount.type === 'apikey') {
-      openAIResponsesMode.value = normalizeOpenAIResponsesMode(extra?.openai_responses_mode)
+      openAIResponsesMode.value = normalizeOpenAIResponsesMode(extra?.openai_responses_mode, newAccount.platform)
       openAIEndpointCapabilities.value = readOpenAIEndpointCapabilities(
         newAccount.credentials as Record<string, unknown> | undefined
       )
@@ -4504,7 +4517,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
       ? 'authorization_bearer'
       : 'x_api_key'
   }
-  if ((newAccount.platform === 'anthropic' || newAccount.platform === 'openai') && newAccount.type === 'apikey') {
+  if ((newAccount.platform === 'anthropic' || newAccount.platform === 'openai' || newAccount.platform === 'ollama') && newAccount.type === 'apikey') {
     // 三态：string "default"/"enabled"/"disabled"，向后兼容旧 bool
     const wsVal = extra?.web_search_emulation
     if (wsVal === 'enabled' || wsVal === 'disabled') {
@@ -4705,6 +4718,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
               ? 'https://api.typesafe.ai'
               : newAccount.platform === 'kiro'
                 ? ''
+                : newAccount.platform === 'ollama'
+                  ? DEFAULT_OLLAMA_BASE_URL
             : isMultiProtocolApiKeyPlatform(newAccount.platform)
               ? defaultCNBaseUrl(newAccount.platform, currentOpenCodeOrCNMode(), editApiProtocol.value)
               : 'https://api.anthropic.com'
@@ -4791,6 +4806,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
             ? 'https://api.x.ai/v1'
             : newAccount.platform === 'kiro'
               ? ''
+              : newAccount.platform === 'ollama'
+                ? DEFAULT_OLLAMA_BASE_URL
               : 'https://api.anthropic.com'
     editBaseUrl.value = platformDefaultUrl
 
@@ -5463,8 +5480,12 @@ const handleSubmit = async () => {
     // For apikey type, handle credentials update
     if (props.account.type === 'apikey') {
       const currentCredentials = (props.account.credentials as Record<string, unknown>) || {}
+      if (props.account.platform === 'ollama' && !isValidOllamaBaseUrl(editBaseUrl.value)) {
+        appStore.showError(t('admin.accounts.ollama.baseUrlInvalid'))
+        return
+      }
       const newBaseUrl = editBaseUrl.value.trim() || defaultBaseUrl.value
-      const shouldApplyModelMapping = !(props.account.platform === 'openai' && openaiPassthroughEnabled.value)
+      const shouldApplyModelMapping = !((props.account.platform === 'openai' || props.account.platform === 'ollama') && openaiPassthroughEnabled.value)
 
       // Always update credentials for apikey type to handle model mapping changes
       const newCredentials: Record<string, unknown> = {
@@ -5537,7 +5558,7 @@ const handleSubmit = async () => {
       } else if (currentCredentials.model_mapping) {
         newCredentials.model_mapping = currentCredentials.model_mapping
       }
-      if (props.account.platform === 'openai') {
+      if (props.account.platform === 'openai' || props.account.platform === 'ollama') {
         applyOpenAIEndpointCapabilities(newCredentials)
         const compactModelMapping = buildModelMappingObject('mapping', [], openAICompactModelMappings.value)
         if (compactModelMapping) {
@@ -6020,7 +6041,7 @@ const handleSubmit = async () => {
     }
 
     // For OpenAI OAuth/SetupToken/API Key accounts, handle passthrough mode in extra
-    if (props.account.platform === 'openai' && (props.account.type === 'oauth' || props.account.type === 'setup-token' || props.account.type === 'apikey')) {
+    if ((props.account.platform === 'openai' || props.account.platform === 'ollama') && (props.account.type === 'oauth' || props.account.type === 'setup-token' || props.account.type === 'apikey')) {
       const currentExtra = (props.account.extra as Record<string, unknown>) || {}
       const newExtra: Record<string, unknown> = { ...currentExtra }
       const hadCodexCLIOnlyEnabled = currentExtra.codex_cli_only === true

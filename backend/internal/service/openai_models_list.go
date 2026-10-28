@@ -274,7 +274,7 @@ func projectAccountModelAliases(body []byte, account *Account, group *Group, cod
 // including ordinary discovery and pinned scheduler fallback. Locally generated
 // catalogs retain their existing policy and do not pass through this function.
 func ApplyPinnedCodexModelsMapping(response *OpenAIModelsResponse, account *Account, group *Group) error {
-	if group == nil || group.Platform != PlatformOpenAI {
+	if group == nil || (group.Platform != PlatformOpenAI && group.Platform != PlatformOllama) {
 		return nil
 	}
 	body, err := projectAccountModelsBody(response.Body, account, group, true)
@@ -392,7 +392,7 @@ func (s *OpenAIGatewayService) fetchScheduledOpenAIModels(ctx context.Context, g
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		account, err := s.SelectAccountForModelWithExclusions(ctx, &group.ID, "", "", excluded)
+		account, err := s.selectAccountForModelWithExclusions(s.withOpenAIQuotaAutoPauseContext(ctx), &group.ID, group.Platform, "", "", excluded, false, 0, "", false)
 		if err != nil {
 			if lastErr != nil {
 				return nil, lastErr

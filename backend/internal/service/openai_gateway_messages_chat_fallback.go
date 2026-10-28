@@ -88,7 +88,7 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 	if normalizedBody, normalized := NormalizeGLMOpenAIReasoningEffort(chatBody, upstreamModel); normalized {
 		chatBody = normalizedBody
 	}
-	if account.Platform == PlatformOpenAI {
+	if account.IsOpenAI() {
 		policyBody, changed, policyErr := ApplyOpenAIReasoningEffortPolicyFromContext(ctx, chatBody)
 		if policyErr != nil {
 			if IsReasoningEffortPolicyDenied(policyErr) {
@@ -101,6 +101,7 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 			chatBody = policyBody
 		}
 	}
+	chatBody = clampOllamaCloudUpstreamMaxTokens(account, chatBody)
 	// Provider normalization and policy caps can both change the converted effort.
 	// Use the final outbound value for usage logs and billing.
 	reasoningEffort := extractOpenAIReasoningEffortFromBody(chatBody, upstreamModel, billingModel, originalModel)

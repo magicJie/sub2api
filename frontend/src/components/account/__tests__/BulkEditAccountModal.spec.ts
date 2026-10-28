@@ -1003,4 +1003,31 @@ describe('BulkEditAccountModal', () => {
       }
     })
   })
+
+  it('supports OpenAI APIKey bulk options and validates base_url for ollama accounts', async () => {
+    const wrapper = mountModal({
+      selectedPlatforms: ['ollama'],
+      selectedTypes: ['apikey']
+    })
+
+    expect(wrapper.find('#bulk-edit-openai-responses-mode-enabled').exists()).toBe(true)
+    expect(wrapper.find('#bulk-edit-openai-long-context-billing-enabled').exists()).toBe(true)
+
+    await wrapper.get('#bulk-edit-base-url-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-base-url').setValue('https://relay.example.com/v1')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).not.toHaveBeenCalled()
+
+    await wrapper.get('#bulk-edit-base-url').setValue('https://ollama.com/v1')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      credentials: {
+        base_url: 'https://ollama.com/v1'
+      }
+    })
+  })
 })

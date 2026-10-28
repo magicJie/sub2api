@@ -186,6 +186,20 @@
             <PlatformIcon platform="kiro" size="sm" />
             Kiro
           </button>
+          <button
+            type="button"
+            data-testid="platform-button-ollama"
+            @click="selectOllamaPlatform()"
+            :class="[
+              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              form.platform === 'ollama'
+                ? 'bg-white text-slate-800 shadow-sm dark:bg-dark-600 dark:text-slate-100'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+          >
+            <PlatformIcon platform="ollama" size="sm" />
+            Ollama Cloud
+          </button>
         </div>
         <!-- 国产厂商：Kimi / Zhipu GLM / DeepSeek / MiniMax -->
         <div class="mt-2 flex flex-wrap rounded-lg bg-gray-100 p-1 dark:bg-dark-700" data-testid="platform-row-cn">
@@ -3398,7 +3412,7 @@
 
       <!-- OpenAI 自动透传开关（OAuth/API Key） -->
       <div
-        v-if="form.platform === 'openai'"
+        v-if="form.platform === 'openai' || form.platform === 'ollama'"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="flex items-center justify-between">
@@ -3459,7 +3473,7 @@
 
       <!-- OpenAI WS Mode 三态（off/ctx_pool/passthrough） -->
       <div
-        v-if="form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
+        v-if="(form.platform === 'openai' || form.platform === 'ollama') && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
         data-testid="create-openai-ws-mode"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
@@ -3549,7 +3563,7 @@
 
       <!-- OpenAI API 长上下文计费开关 -->
       <div
-        v-if="form.platform === 'openai' && !hideAccountLongContextBilling && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
+        v-if="(form.platform === 'openai' || form.platform === 'ollama') && !hideAccountLongContextBilling && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="flex items-center justify-between gap-4">
@@ -3655,7 +3669,7 @@
 
       <!-- OpenAI Compact 能力配置 -->
       <div
-        v-if="form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
+        v-if="(form.platform === 'openai' || form.platform === 'ollama') && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
         class="border-t border-gray-200 pt-4 dark:border-dark-600 space-y-4"
       >
         <div class="flex items-center justify-between">
@@ -3694,7 +3708,7 @@
 
       <!-- OpenAI APIKey Responses API support mode -->
       <div
-        v-if="form.platform === 'openai' && accountCategory === 'apikey'"
+        v-if="(form.platform === 'openai' || form.platform === 'ollama') && accountCategory === 'apikey'"
         class="space-y-4 border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="flex items-center justify-between gap-4">
@@ -3744,7 +3758,7 @@
 
       <!-- OpenAI APIKey images: backfill b64_json from url -->
       <div
-        v-if="form.platform === 'openai' && accountCategory === 'apikey'"
+        v-if="(form.platform === 'openai' || form.platform === 'ollama') && accountCategory === 'apikey'"
         class="flex items-center justify-between gap-4 border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div>
@@ -4373,6 +4387,7 @@ import {
   resolveOpenAIWSModeHintKey,
   type OpenAIWSMode
 } from '@/utils/openaiWsMode'
+import { DEFAULT_OLLAMA_BASE_URL, isValidOllamaBaseUrl } from '@/utils/ollamaUsage'
 import OAuthAuthorizationFlow from './OAuthAuthorizationFlow.vue'
 
 // Type for exposed OAuthAuthorizationFlow component
@@ -4417,6 +4432,7 @@ const baseUrlHint = computed(() => {
   if (form.platform === 'gemini') return t('admin.accounts.gemini.baseUrlHint')
   if (form.platform === 'grok') return ''
   if (form.platform === 'kiro') return t('admin.accounts.kiro.baseUrlHint')
+  if (form.platform === 'ollama') return t('admin.accounts.ollama.baseUrlHint')
   return t('admin.accounts.baseUrlHint')
 })
 
@@ -4424,6 +4440,7 @@ const apiKeyHint = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.openai.apiKeyHint')
   if (form.platform === 'gemini') return t('admin.accounts.gemini.apiKeyHint')
   if (form.platform === 'kiro') return t('admin.accounts.kiro.apiKeyHint')
+  if (form.platform === 'ollama') return t('admin.accounts.ollama.apiKeyHint')
   // Grok 与多协议供应商没有对应的说明文案；通用文案指 Claude Console Key。
   if (form.platform === 'grok' || isMultiProtocolPlatform.value) return ''
   return t('admin.accounts.apiKeyHint')
@@ -4444,6 +4461,8 @@ const apiKeyBaseUrlPlaceholder = computed(() => {
       return 'https://api.x.ai/v1'
     case 'typesafe':
       return 'https://api.typesafe.ai'
+    case 'ollama':
+      return DEFAULT_OLLAMA_BASE_URL
     default:
       return 'https://api.anthropic.com'
   }
@@ -4468,6 +4487,8 @@ const apiKeyValuePlaceholder = computed(() => {
       return 'sk-...'
     case 'typesafe':
       return 'ts-...'
+    case 'ollama':
+      return 'sk-...'
     default:
       return isMultiProtocolPlatform.value ? 'sk-...' : 'sk-ant-...'
   }
@@ -4701,6 +4722,13 @@ function selectTypeSafePlatform() {
   accountCategory.value = 'apikey'
   apiKeyBaseUrl.value = 'https://api.typesafe.ai'
   allowedModels.value = ['jev-latest']
+}
+function selectOllamaPlatform() {
+  form.platform = 'ollama'
+  form.type = 'apikey'
+  accountCategory.value = 'apikey'
+  apiKeyBaseUrl.value = DEFAULT_OLLAMA_BASE_URL
+  openAIResponsesMode.value = 'force_chat_completions'
 }
 function selectGenericMultiProtocolPlatform(platform: string) {
   form.platform = platform
@@ -5100,13 +5128,13 @@ const openAIWSModeOptions = computed(() => [
 
 const openaiResponsesWebSocketV2Mode = computed({
   get: () => {
-    if (form.platform === 'openai' && accountCategory.value === 'apikey') {
+    if ((form.platform === 'openai' || form.platform === 'ollama') && accountCategory.value === 'apikey') {
       return openaiAPIKeyResponsesWebSocketV2Mode.value
     }
     return openaiOAuthResponsesWebSocketV2Mode.value
   },
   set: (mode: OpenAIWSMode) => {
-    if (form.platform === 'openai' && accountCategory.value === 'apikey') {
+    if ((form.platform === 'openai' || form.platform === 'ollama') && accountCategory.value === 'apikey') {
       openaiAPIKeyResponsesWebSocketV2Mode.value = mode
       return
     }
@@ -5119,7 +5147,7 @@ const openAIWSModeHintKey = computed(() =>
 )
 
 const isOpenAIModelRestrictionDisabled = computed(() =>
-  form.platform === 'openai' && openaiPassthroughEnabled.value
+  (form.platform === 'openai' || form.platform === 'ollama') && openaiPassthroughEnabled.value
 )
 
 const mixedChannelWarningMessageText = computed(() => {
@@ -5366,7 +5394,9 @@ watch(
                 ? 'https://api.typesafe.ai'
                 : newPlatform === 'kiro'
                   ? ''
-                  : 'https://api.anthropic.com'
+                  : newPlatform === 'ollama'
+                    ? DEFAULT_OLLAMA_BASE_URL
+                    : 'https://api.anthropic.com'
     }
     // Clear model-related settings
     allowedModels.value = []
@@ -5377,6 +5407,12 @@ watch(
       // Grok 等平台会把模式切到映射；TypeSafe 只用白名单写入 jev-latest。
       modelRestrictionMode.value = 'whitelist'
       allowedModels.value = ['jev-latest']
+    }
+    if (newPlatform === 'ollama') {
+      accountCategory.value = 'apikey'
+      openAIResponsesMode.value = 'force_chat_completions'
+    } else {
+      openAIResponsesMode.value = 'auto'
     }
     // Antigravity: 默认使用映射模式并填充默认映射
     if (newPlatform === 'antigravity') {
@@ -5432,7 +5468,7 @@ watch(
     if (newPlatform !== 'anthropic' && newPlatform !== 'antigravity') {
       interceptWarmupRequests.value = false
     }
-    if (newPlatform !== 'openai') {
+    if (newPlatform !== 'openai' && newPlatform !== 'ollama') {
       openaiPassthroughEnabled.value = false
       openaiFlattenNamespacesEnabled.value = false
       openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
@@ -5972,7 +6008,7 @@ const handleClose = () => {
 }
 
 const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknown> | undefined => {
-  if (form.platform !== 'openai') {
+  if (form.platform !== 'openai' && form.platform !== 'ollama') {
     return base
   }
 
@@ -6341,6 +6377,10 @@ const handleSubmit = async () => {
     appStore.showError(t('admin.accounts.pleaseEnterApiKey'))
     return
   }
+  if (form.platform === 'ollama' && !isValidOllamaBaseUrl(apiKeyBaseUrl.value)) {
+    appStore.showError(t('admin.accounts.ollama.baseUrlInvalid'))
+    return
+  }
 
   // Determine default base URL based on platform
   const defaultBaseUrl =
@@ -6354,7 +6394,9 @@ const handleSubmit = async () => {
             ? 'https://api.typesafe.ai'
             : form.platform === 'kiro'
               ? ''
-              : 'https://api.anthropic.com'
+              : form.platform === 'ollama'
+                ? DEFAULT_OLLAMA_BASE_URL
+                : 'https://api.anthropic.com'
 
   // Build credentials with optional model mapping
   const credentials: Record<string, unknown> = {
@@ -6409,7 +6451,7 @@ const handleSubmit = async () => {
       credentials.model_mapping = modelMapping
     }
   }
-  if (form.platform === 'openai') {
+  if (form.platform === 'openai' || form.platform === 'ollama') {
     applyOpenAIEndpointCapabilities(credentials)
     const compactModelMapping = buildOpenAICompactModelMapping()
     if (compactModelMapping) {

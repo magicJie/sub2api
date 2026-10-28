@@ -122,7 +122,7 @@ func TestOllamaCloudUsageEncryptionKeyStateConsistentAcrossAccountResponses(t *t
 			account := &service.Account{
 				ID:          7,
 				Name:        "ollama",
-				Platform:    service.PlatformOpenAI,
+				Platform:    service.PlatformOllama,
 				Type:        service.AccountTypeAPIKey,
 				Credentials: map[string]any{"base_url": "https://ollama.com", "api_key": "test-key"},
 				Extra:       map[string]any{},
@@ -189,7 +189,7 @@ func TestOllamaCloudUsageSharedStateMatchesListDetailAndSpecialEndpointWithoutLi
 	gin.SetMode(gin.TestMode)
 	now := time.Now().UTC()
 	source := &service.Account{
-		ID: 7, Name: "source", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+		ID: 7, Name: "source", Platform: service.PlatformOllama, Type: service.AccountTypeAPIKey,
 		Credentials: map[string]any{"base_url": "https://ollama.com", "api_key": "shared-secret-key"},
 		Extra: map[string]any{
 			service.OllamaCloudUsageSessionExtraKey:     "ciphertext-secret",
@@ -202,8 +202,8 @@ func TestOllamaCloudUsageSharedStateMatchesListDetailAndSpecialEndpointWithoutLi
 		Status: service.StatusActive,
 	}
 	sibling := &service.Account{
-		ID: 8, Name: "sibling", Platform: service.PlatformAnthropic, Type: service.AccountTypeAPIKey,
-		Credentials: map[string]any{"base_url": "HTTPS://WWW.OLLAMA.COM:443/v1", "api_key": "shared-secret-key"},
+		ID: 8, Name: "sibling", Platform: service.PlatformOllama, Type: service.AccountTypeAPIKey,
+		Credentials: map[string]any{"base_url": "https://ollama.com/v1", "api_key": "shared-secret-key"},
 		Extra:       map[string]any{}, Status: service.StatusActive,
 	}
 	repo := &ollamaCloudUsageHandlerTestRepo{accounts: []*service.Account{source, sibling}}

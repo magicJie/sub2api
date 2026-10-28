@@ -64,7 +64,7 @@ const detailedState = (plan = 'max'): OllamaCloudUsageState => state({
 const account = (usage: OllamaCloudUsageState = state()): Account => ({
   id: 7,
   name: 'ollama',
-  platform: 'anthropic',
+  platform: 'ollama',
   type: 'apikey',
   ollama_cloud_usage: usage,
   proxy_id: null,

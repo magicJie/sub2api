@@ -95,6 +95,7 @@ describe('ChannelsView pricing model sync', () => {
 
   it.each([
     ['openai', true],
+    ['ollama', true],
     ['opencode_go', true],
     ['typesafe', true],
     ['command_code', false],

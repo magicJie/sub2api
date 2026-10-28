@@ -1517,6 +1517,7 @@ import {
   resolveOpenAIWSModeHintKey
 } from '@/utils/openaiWsMode'
 import type { OpenAIWSMode } from '@/utils/openaiWsMode'
+import { isValidOllamaBaseUrl } from '@/utils/ollamaUsage'
 interface Props {
   show: boolean
   accountIds: number[]
@@ -1558,9 +1559,12 @@ const isMixedPlatform = computed(() => targetSelectedPlatforms.value.length > 1)
 const allOpenAIPassthroughCapable = computed(() => {
   return (
     targetSelectedPlatforms.value.length === 1 &&
-    targetSelectedPlatforms.value[0] === 'openai' &&
-    targetSelectedTypes.value.length > 0 &&
-    targetSelectedTypes.value.every(t => t === 'oauth' || t === 'setup-token' || t === 'apikey')
+    ((targetSelectedPlatforms.value[0] === 'openai' &&
+      targetSelectedTypes.value.length > 0 &&
+      targetSelectedTypes.value.every(t => t === 'oauth' || t === 'setup-token' || t === 'apikey')) ||
+      (targetSelectedPlatforms.value[0] === 'ollama' &&
+        targetSelectedTypes.value.length > 0 &&
+        targetSelectedTypes.value.every(t => t === 'apikey')))
   )
 })
 
@@ -1586,7 +1590,7 @@ const allOpenAIOAuthOnly = computed(() => {
 const allOpenAIAPIKey = computed(() => {
   return (
     targetSelectedPlatforms.value.length === 1 &&
-    targetSelectedPlatforms.value[0] === 'openai' &&
+    (targetSelectedPlatforms.value[0] === 'openai' || targetSelectedPlatforms.value[0] === 'ollama') &&
     targetSelectedTypes.value.length > 0 &&
     targetSelectedTypes.value.every(t => t === 'apikey')
   )
@@ -2241,6 +2245,10 @@ const handleSubmit = async () => {
     const trimmedBaseUrl = baseUrl.value.trim()
     if (trimmedBaseUrl && !/^https?:\/\//i.test(trimmedBaseUrl)) {
       appStore.showError(t('admin.accounts.grokCustomBaseUrl.invalid'))
+      return
+    }
+    if (targetSelectedPlatforms.value.includes('ollama') && !isValidOllamaBaseUrl(trimmedBaseUrl)) {
+      appStore.showError(t('admin.accounts.ollama.baseUrlInvalid'))
       return
     }
   }

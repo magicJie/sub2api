@@ -637,9 +637,7 @@ func lockAndMergeAccountProbeExtra(
 				AND $2 IN (`+ollamaCloudUsagePlatformsSQL+`)
 				AND type = 'apikey'
 				AND $3 = 'apikey'
-				AND credentials -> 'api_key' IS NOT DISTINCT FROM $4::jsonb -> 'api_key'
-				AND `+ollamaCloudBaseURLMatchesSQL("credentials ->> 'base_url'")+`
-				AND `+ollamaCloudBaseURLMatchesSQL("$4::jsonb ->> 'base_url'")+`,
+				AND credentials -> 'api_key' IS NOT DISTINCT FROM $4::jsonb -> 'api_key',
 				false
 			),
 			proxy_id IS NOT DISTINCT FROM $5,
@@ -868,16 +866,6 @@ func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, cre
 		SET
 			credentials = $1::jsonb,
 			extra = CASE
-				-- 正确性依赖（非防御）：OpenCode 分支必须先于 Ollama 分支求值。两分支
-				-- 的 WHEN 并不互斥：Ollama 分支的守卫是宽谓词——NOT(ollamaMatch(old)
-				-- AND ollamaMatch(new)) 在旧行不匹配 ollama.com 基址时恒真，且两侧
-				-- 平台白名单完全相同，因此挂载行（白名单平台 + 官方 OpenCode Go 基址）
-				-- 会同时满足两分支的 WHEN。若把 Ollama 分支前移，挂载行的 api_key 变化
-				-- 会先命中 Ollama 分支，opencode_go_usage_snapshot /
-				-- opencode_go_usage_auto_refresh 残留，陈旧快照跟着新 api_key 走，
-				-- 造成跨 key 组污染。互斥的只是两侧身份谓词（opencode.ai 基址正则 vs
-				-- ollama.com 基址正则）：Ollama 行不会被 OpenCode 分支遮蔽；
-				-- opencode_go 平台行不在 Ollama 白名单内，与 Ollama 分支真互斥。
 				WHEN type = 'apikey'
 					AND credentials IS DISTINCT FROM $1::jsonb
 					AND (
@@ -911,13 +899,7 @@ func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, cre
 				WHEN platform IN (`+ollamaCloudUsagePlatformsSQL+`)
 					AND type = 'apikey'
 					AND credentials IS DISTINCT FROM $1::jsonb
-					AND (
-						credentials -> 'api_key' IS DISTINCT FROM $1::jsonb -> 'api_key'
-						OR NOT (
-							`+ollamaCloudBaseURLMatchesSQL("credentials ->> 'base_url'")+`
-							AND `+ollamaCloudBaseURLMatchesSQL("$1::jsonb ->> 'base_url'")+`
-						)
-					)
+					AND credentials -> 'api_key' IS DISTINCT FROM $1::jsonb -> 'api_key'
 				THEN COALESCE(extra, '{}'::jsonb)
 					- 'upstream_billing_probe'
 					- 'ollama_cloud_usage_session'
@@ -3089,11 +3071,6 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 	ollamaGroupIdentityChanges := make([]string, 0, 2)
 	if _, ok := updates.Credentials["api_key"]; ok {
 		ollamaGroupIdentityChanges = append(ollamaGroupIdentityChanges, "credentials -> 'api_key' IS DISTINCT FROM "+credentialPlaceholder+"::jsonb -> 'api_key'")
-	}
-	if _, ok := updates.Credentials["base_url"]; ok {
-		ollamaGroupIdentityChanges = append(ollamaGroupIdentityChanges,
-			"NOT ("+ollamaCloudBaseURLMatchesSQL("credentials ->> 'base_url'")+
-				" AND "+ollamaCloudBaseURLMatchesSQL(credentialPlaceholder+"::jsonb ->> 'base_url'")+")")
 	}
 
 	// OpenCode Go 身份清理与 Ollama 同范式但更精确：仅当旧行按新谓词属于 OpenCode

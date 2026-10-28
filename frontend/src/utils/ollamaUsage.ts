@@ -1,5 +1,28 @@
 import type { Account } from '@/types'
 
+export const DEFAULT_OLLAMA_BASE_URL = 'https://ollama.com/v1'
+
+export function isValidOllamaBaseUrl(raw: string | null | undefined): boolean {
+  const trimmed = (raw ?? '').trim()
+  if (!trimmed) return true
+  if (trimmed.includes('?') || trimmed.includes('#')) return false
+  try {
+    const parsed = new URL(trimmed)
+    if (parsed.protocol.toLowerCase() !== 'https:') return false
+    if (parsed.hostname.toLowerCase() !== 'ollama.com') return false
+    if (parsed.port !== '' && parsed.port !== '443') return false
+    if (parsed.username !== '' || parsed.password !== '') return false
+    return (
+      parsed.pathname === '' ||
+      parsed.pathname === '/' ||
+      parsed.pathname === '/v1' ||
+      parsed.pathname === '/v1/'
+    )
+  } catch {
+    return false
+  }
+}
+
 /** Keep rounded upstream refill hints relative instead of inventing a date. */
 export function formatOllamaResetText(
   text: string | undefined,
@@ -17,9 +40,10 @@ export function formatOllamaResetText(
 }
 
 /**
- * 判断账号是否为 Ollama Cloud 账号。目前由后端按 base_url（ollama.com）识别后下发
- * `ollama_cloud_usage.eligible`（service.IsOllamaCloudUsageAccount）；独立 ollama 平台上线后只改这里。
+ * 判断账号是否为 Ollama Cloud 账号（与后端 service.IsOllamaCloudUsageAccount 一致：platform === 'ollama' && type === 'apikey'）。
  */
-export function isOllamaCloudAccount(account: Pick<Account, 'ollama_cloud_usage'> | null | undefined): boolean {
-  return account?.ollama_cloud_usage?.eligible === true
+export function isOllamaCloudAccount(
+  account: Pick<Account, 'platform' | 'type'> | null | undefined
+): boolean {
+  return account?.platform === 'ollama' && account?.type === 'apikey'
 }

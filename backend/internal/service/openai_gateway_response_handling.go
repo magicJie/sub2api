@@ -54,11 +54,11 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		observer = beginUpstreamResponseModelObservation(c)
 	}
 	firstOutputTimeout := time.Duration(0)
-	if account != nil && account.Platform == PlatformOpenAI {
+	if account != nil && account.IsOpenAI() {
 		firstOutputTimeout = s.openAIFirstOutputTimeout(reasoningEffort)
 	}
 	guardFirstOutput := firstOutputTimeout > 0
-	stageFirstOutput := account != nil && account.Platform == PlatformOpenAI
+	stageFirstOutput := account != nil && account.IsOpenAI()
 	var attemptResponseHeaders http.Header
 	if stageFirstOutput {
 		if s.responseHeaderFilter != nil {
@@ -515,7 +515,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				responseID = extractOpenAIResponseIDFromJSONBytes(dataBytes)
 			}
 			forceFlushFailedEvent := false
-			if !capacityFailoverSuppressedLogged && account != nil && account.Platform == PlatformOpenAI &&
+			if !capacityFailoverSuppressedLogged && account != nil && account.IsOpenAI() &&
 				(eventType == "error" || eventType == "response.failed") &&
 				openAIStreamClientOutputStarted(c, clientOutputStarted) &&
 				isOpenAIUpstreamCapacityShedEvent(dataBytes) {
@@ -698,7 +698,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			// shape on /v1/responses (forwardGrokResponses reaches this same
 			// handler), so cover PlatformGrok too — the passthrough-path guard
 			// is already unconditional.
-			if account != nil && (account.Platform == PlatformOpenAI || account.Platform == PlatformGrok) &&
+			if account != nil && (account.IsOpenAI() || account.Platform == PlatformGrok) &&
 				(eventType == "response.completed" || eventType == "response.done") &&
 				!sawFailedEvent && !responsesSemanticOutputSeen && !clientOutputStarted &&
 				openAIResponsesCompletedEventIsEmpty(dataBytes, usage) {
