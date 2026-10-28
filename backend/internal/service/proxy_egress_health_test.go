@@ -285,8 +285,9 @@ func TestProxyEgressHealth_ExternalTransportFailure(t *testing.T) {
 			require.True(t, accRepo.accounts[11].Schedulable)
 			require.Equal(t, p.ID, *accRepo.accounts[10].ProxyID)
 
-			// A healthy listener with a failed landing remains an egress failure.
+			// A healthy listener with a failed landing (also unreachable directly) remains an egress failure.
 			delete(prober.down, upstream.URL())
+			prober.down[p.directURL()] = true
 			for range ProxyEgressDefaultFailThreshold {
 				require.NoError(t, svc.CheckProxy(context.Background(), &p))
 			}
@@ -294,6 +295,35 @@ func TestProxyEgressHealth_ExternalTransportFailure(t *testing.T) {
 			require.False(t, accRepo.accounts[11].Schedulable)
 		})
 	}
+}
+
+func TestProxyEgressHealth_LandingReachableDirectlyIsTransport(t *testing.T) {
+	svc, repo, accRepo, prober := healthFixture(t)
+	p := repo.members[0].Proxy
+	upstream := Proxy{ID: 3, Name: "aio", Protocol: "http", Host: "127.0.0.1", Port: 17890,
+		Status: StatusActive, Role: ProxyRoleTransport}
+	p.UpstreamMode = UpstreamModeProxy
+	p.UpstreamProxyID = &upstream.ID
+	prev := proxyChainState.Load()
+	proxyChainState.Store(&proxyChainSnapshot{byID: map[int64]Proxy{p.ID: p, upstream.ID: upstream}, loaded: true})
+	t.Cleanup(func() { proxyChainState.Store(prev) })
+	// listener 自身可用，但经它到该落地不通；落地直连可用。
+	prober.down = map[string]bool{p.URL(): true}
+
+	for range ProxyEgressDefaultFailThreshold {
+		require.NoError(t, svc.CheckProxy(context.Background(), &p))
+	}
+	require.Equal(t, ProxyIncidentLayerTransport, repo.incidents[p.ID].Layer)
+	require.Empty(t, repo.records)
+	require.True(t, accRepo.accounts[11].Schedulable)
+
+	// 直连也不通才是落地故障。
+	prober.down[p.directURL()] = true
+	for range ProxyEgressDefaultFailThreshold {
+		require.NoError(t, svc.CheckProxy(context.Background(), &p))
+	}
+	require.Equal(t, ProxyIncidentLayerEgress, repo.incidents[p.ID].Layer)
+	require.False(t, accRepo.accounts[11].Schedulable)
 }
 
 func TestReplaceAccountProxy(t *testing.T) {
@@ -442,4 +472,3 @@ func TestProxyEgressHealthRunOnceRespectsConfig(t *testing.T) {
 	svc.runOnce()
 	require.Equal(t, now, svc.lastRun)
 }
-

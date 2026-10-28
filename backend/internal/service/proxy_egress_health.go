@@ -328,6 +328,13 @@ func (s *ProxyEgressHealthService) probe(ctx context.Context, p *Proxy) (string,
 		}
 	}
 	if _, _, err := s.prober.ProbeProxy(ctx, p.URL()); err != nil {
+		// 首跳按落地地址选节点（如 AIO consistent-hashing），上面的 transport 探测可能落在另一个节点上。
+		// 绕过前置直连落地复测：落地本身可用，说明是前置到该落地的路径坏了，按 transport 处理，避免误暂停或换 IP。
+		if len(chain) > 0 {
+			if _, _, directErr := s.prober.ProbeProxy(ctx, p.directURL()); directErr == nil {
+				return ProxyIncidentLayerTransport, fmt.Errorf("landing reachable directly but not via upstream chain: %w", err)
+			}
+		}
 		return ProxyIncidentLayerEgress, err
 	}
 	return "", nil
