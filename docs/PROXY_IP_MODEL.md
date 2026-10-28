@@ -143,5 +143,5 @@
 4. 传输层外置到 AIO（第 2.1 节），以运维变更为主，sub2api 代码基本不动：
    1. 在独立 mihomo 实例验证 `首跳-机场` 改 consistent-hashing：五个落地分散到不同节点、单节点故障只改派部分落地、全挂 fail-closed。通过后再改共享在线订阅（影响 home、laptop、手机）。
    2. testenv：起一个使用同一订阅的 AIO 容器，加 `proxy: 首跳` listener；在后台登记为 transport，替换 bwg-chain-1..5 的首跳组前置（改前快照）；复跑链路测试与 Kiro token 刷新、`/v1/messages`。
-   3. 生产：集群内 `mihomo-hop` 桥接换成同订阅 AIO 容器，整理为运维方案由 Jay 执行（不停机：先并行起新端点并登记 transport，逐个切换前置，观察后下线旧桥接）。
+   3. 生产：集群内 `mihomo-hop` 桥接换成同订阅 AIO 容器，整理为运维方案由 Jay 执行（不停机：先并行起新端点并登记 transport，逐个切换前置，观察后下线旧桥接）。方案在运维中心 `ops-bsj/sub2api-release/changes/20261028-aio-firsthop/PLAN.md`（含生产内网信息，不进本仓库）。
    4. 全部环境稳定后，评估移除内嵌首跳组。
