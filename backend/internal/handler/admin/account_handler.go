@@ -56,6 +56,7 @@ type AccountHandler struct {
 	geminiOAuthService      *service.GeminiOAuthService
 	antigravityOAuthService *service.AntigravityOAuthService
 	grokOAuthService        service.GrokOAuthTokenService
+	kiroOAuthService        *service.KiroOAuthService
 	rateLimitService        *service.RateLimitService
 	accountUsageService     *service.AccountUsageService
 	accountTestService      *service.AccountTestService
@@ -74,6 +75,11 @@ type AccountHandler struct {
 // SetUpstreamBillingProbeService attaches the optional remote billing probe service.
 func (h *AccountHandler) SetUpstreamBillingProbeService(probe *service.UpstreamBillingProbeService) {
 	h.upstreamBillingProbe = probe
+}
+
+// SetKiroOAuthService attaches the Kiro OAuth service used by the generic refresh endpoint.
+func (h *AccountHandler) SetKiroOAuthService(s *service.KiroOAuthService) {
+	h.kiroOAuthService = s
 }
 
 func (h *AccountHandler) SetOllamaCloudUsageService(usage *service.OllamaCloudUsageService) {
@@ -1498,6 +1504,15 @@ func (h *AccountHandler) refreshSingleAccount(ctx context.Context, account *serv
 		if baseURL := strings.TrimSpace(account.GetCredential("base_url")); baseURL != "" {
 			newCredentials["base_url"] = baseURL
 		}
+	} else if account.Platform == service.PlatformKiro {
+		if h.kiroOAuthService == nil {
+			return nil, "", fmt.Errorf("kiro oauth service is not configured")
+		}
+		tokenInfo, err := h.kiroOAuthService.RefreshAccountToken(ctx, account)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to refresh Kiro credentials: %w", err)
+		}
+		newCredentials = service.MergeCredentials(account.Credentials, h.kiroOAuthService.BuildAccountCredentials(tokenInfo))
 	} else {
 		// Use Anthropic/Claude OAuth service to refresh token
 		tokenInfo, err := h.oauthService.RefreshAccountToken(ctx, account)
