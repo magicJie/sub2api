@@ -7,9 +7,6 @@ import (
 )
 
 func init() {
-	legacyDisplayOrder = append(legacyDisplayOrder, PlatformOllama)
-	legacyCompositePrecedence = append(legacyCompositePrecedence, PlatformOllama)
-	legacyOpenAIGateway = append(legacyOpenAIGateway, PlatformOllama)
 	legacyLiteLLMByPlatf[PlatformOllama] = "openai"
 }
 

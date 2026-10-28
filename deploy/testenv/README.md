@@ -141,10 +141,10 @@ corepack pnpm@9 test:run
 - 控制台 `http://127.0.0.1:18083`，核心 API `http://127.0.0.1:19093`，令牌只保存在私有 env/数据中。
   mixed listener 为 `sub2api-testenv-aio:17890`，只在 `sub2api-testenv_testenv` Docker 网络内开放；
   宿主机未发布该代理端口。TUN、DNS 监听及普通代理入站均关闭。
-- 原生 remote profile 订阅同一在线来源，自动使用 `clash.meta` User-Agent，刷新间隔 360 分钟。
-  持久化 script profile 在订阅合成后应用 `isolation.js`：`首跳` 固定选 `首跳-机场`，
-  后者本地覆盖为 `load-balance` + `consistent-hashing` + `empty-fallback: REJECT`。
-  机场 provider 刷新经自身 `首跳`，已完成一次性网络自举和原生 provider 刷新。
+- 当前使用下节的模拟在线订阅，原真实 remote profile 保留供回切，刷新间隔 360 分钟。
+  `isolation.js` 只保留网络隔离、`首跳` selector、专用 listener 与本地 provider 抓取路径；
+  `load-balance` + `consistent-hashing` + `empty-fallback: REJECT` 来自模拟订阅本身。
+  T2 的本地 chash 覆盖及真实来源定义保存在仓库外的迁移前备份。
 
 ### 启动、停止与登记
 
@@ -180,9 +180,9 @@ chain-2 `204.1.110.98`、chain-3 `69.3.236.10`、chain-4 `69.3.236.49`。
 Kiro 账号 7/8/9 已通过外部 transport 刷新成功；使用原有 `T-kiro-smoke` Key，
 模型 `claude-sonnet-4-5-20250929` 的 `/v1/messages` 返回 200、正文 `pong`。
 
-Kiro 手动刷新使用 `/api/v1/admin/kiro/oauth/refresh-token`；返回结果通过标准
-`/api/v1/admin/accounts/:id/apply-oauth-credentials` 合并保存。通用
-`/admin/accounts/:id/refresh` 当前会把 Kiro 送入 Claude OAuth 分支，不用于 Kiro 验收。
+当前通用 `/api/v1/admin/accounts/:id/refresh` 已支持 Kiro 路由；2026-10-28 在
+`d148400aa` 标准构建上对账号 7 调用一次，返回 HTTP 200。
+专属 `/api/v1/admin/kiro/oauth/refresh-token` 与合并凭据接口仍保留原用途。
 首次 provider 刷新后 chain-4 曾返回 EOF，完成健康检查后出口恢复；核心 ready 与链路 ready 分开确认。
 
 巡检对解析出的 `role=transport` 前置先做独立可达性探测，再检查落地：
@@ -198,10 +198,60 @@ Kiro 手动刷新使用 `/api/v1/admin/kiro/oauth/refresh-token`；返回结果�
 本次最小代码修改为 `proxy_egress_health.go` 对 transport 前置增加独立探测，
 对应回归覆盖显式/默认前置失败不误处置账号，以及前置健康时仍按落地失败处置。
 `go test -tags=unit ./internal/service/... ./internal/pkg/proxychain/...` 全部通过。
-当前应用镜像为 `sub2api-testenv:aio-transport-20261028`（也已标记为 `sub2api-testenv:local`），
-旧镜像保存在 `sub2api-testenv:pre-aio-transport-20261028`。
-完整 Docker 构建遇到 Alpine APK TLS 下载失败；最终复用已构建前端、本机 Go 1.27.3 和模块缓存，
-以 `CGO_ENABLED=0`、`-tags embed` 编译后在旧运行镜像中替换二进制，未改仓库构建定义。
+T2 当时使用 `sub2api-testenv:aio-transport-20261028`；此后 testenv 已更新为
+`d148400aa` 的标准构建，当前运行镜像及完整测试结果见下节 T4 报告。
+T2 的 Alpine APK TLS 下载问题与临时本机编译路径仅为历史部署记录。
 
 完整运行定义、验收与故障证据见
 `/data/workspaces/sub2api-testenv/reports/20261028-aio-transport.md`。
+
+## 模拟在线订阅
+
+2026-10-28 的 T4 演练保留真实在线订阅原样，仅在 testenv 使用私有副本：
+
+- 目录 `/data/workspaces/sub2api-testenv/mock-sub/` 为 0700，文件为 0600，不进 Git。
+  `config.yaml` 是主订阅副本，`provider.yaml` 是机场快照；副本内将
+  `首跳-机场` 改为 chash + REJECT，并把 laomao URL 指向本地文件服务器。
+- `compose.yaml` 使用 `nginx:1.28-alpine`，容器 `sub2api-testenv-mock-sub`；
+  UID/GID 1000:1000、只读文件挂载与根文件系统、`restart: unless-stopped`。
+  仅加入 `sub2api-testenv_testenv` 网络，未发布宿主端口，响应类型为 `application/yaml`。
+- 原生 remote profile `testenv mock online subscription` 的 URL 为
+  `http://sub2api-testenv-mock-sub:8080/config.yaml`，provider URL 为同主机的 `/provider.yaml`。
+  隔离脚本的 provider `proxy: DIRECT` 仅用于此 Docker 内部文件抓取；业务 listener 仍为
+  `proxy: 首跳`，空组 `REJECT`，transport 37 与代理 24..28 的前置保持不变。
+
+```bash
+docker compose -f /data/workspaces/sub2api-testenv/mock-sub/compose.yaml up -d
+docker compose -f /data/workspaces/sub2api-testenv/mock-sub/compose.yaml stop
+docker compose -f /data/workspaces/sub2api-testenv/mock-sub/compose.yaml start
+```
+
+修改副本后，在专用 AIO 控制台刷新对应主订阅，或通过核心 API 刷新 laomao provider。
+主订阅“刷新并激活”会重启核心：等待新核心就绪，再执行 provider 健康检查并等待历史结果写入，
+最后测试五条落地；仅看到容器 healthy 尚不足以判定各条业务链就绪。
+成员删增、重排及核心重启均可能改派首跳，落地出口保持原 IP；同一核心与健康成员集合内映射稳定。
+字面 `proxies: []` 被 mihomo 拒绝并保留缓存；有效候选经筛选为空时，API 明确显示
+`all: [REJECT]`、`emptyFallback: REJECT`，五链请求全部失败。
+
+### 切回真实订阅
+
+1. 先导出新数据库快照并备份 AIO `data/`，避免丢失后续状态。
+2. 在 `http://127.0.0.1:18083` 的原生 profiles 中，保留模拟 profile，
+   将隔离 script 的内容恢复为
+   `/data/workspaces/sub2api-testenv/aio/backups/pre-mock-sub-20261028/isolation.js`：
+   其中包含 T2 的本地 chash 覆盖与真实 provider 经首跳抓取配置。
+3. 对保留的原 remote profile `testenv shared online subscription` 执行刷新并激活，
+   等核心就绪并完成 provider 健康检查，确认 listener 仍为 `proxy: 首跳`、五链出口正确。
+4. 验证 Kiro 业务请求成功后再停止模拟文件服务器。此流程只切订阅与隔离脚本，
+   五链仍走 transport 37；需要内嵌首跳组回退时按上节定向修改前置字段。
+
+迁移前数据库快照为 `pre-mock-sub-20261028`；最终模拟基线为
+`baseline-mock-sub-20261028`。两份 AIO 数据备份位于同名 `aio/backups/` 子目录，均为私有状态。
+全库 restore 会回滚后续轮换的 refresh token，订阅回切优先使用原生 profile 操作。
+
+完整流程、映射、故障恢复、回退在途请求影响与发版门禁证据：
+`/data/workspaces/sub2api-testenv/reports/20261028-mock-sub-fullflow.md`。
+
+本次前端全量 unit 在全部断言通过后仍有 `AccountsView.selectAllResults` teardown 未处理拒绝，
+已在 `7e109a756` 复现并保留原样；完整发版门禁继续阻止发布。
+
