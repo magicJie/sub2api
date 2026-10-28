@@ -157,6 +157,8 @@ describe('admin AccountsView select all filtered results', () => {
       etag: null,
       data: null
     })
+    // 上一个用例遗留的表格加载可能在 mockReset 之后才完成，给一个空页避免读取 undefined。
+    listAccounts.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, pages: 0 })
     getBatchTodayStats.mockResolvedValue({ stats: {} })
     getUpstreamBillingProbeSettings.mockResolvedValue({ enabled: true, interval_minutes: 30 })
     getAllProxies.mockResolvedValue([])
