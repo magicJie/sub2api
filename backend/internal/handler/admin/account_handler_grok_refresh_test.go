@@ -97,3 +97,20 @@ func TestRefreshSingleAccountRoutesGrokThroughGrokOAuthService(t *testing.T) {
 	require.Equal(t, "ACTIVE", adminSvc.updatedCredentials["entitlement_status"])
 	require.Equal(t, adminSvc.updatedCredentials, updated.Credentials)
 }
+
+func TestRefreshSingleAccountRoutesKiroAwayFromClaudeOAuth(t *testing.T) {
+	t.Parallel()
+
+	adminSvc := &grokRefreshAdminService{stubAdminService: newStubAdminService()}
+	handler := NewAccountHandler(adminSvc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	account := &service.Account{
+		ID:          7,
+		Platform:    service.PlatformKiro,
+		Type:        service.AccountTypeOAuth,
+		Credentials: map[string]any{"refresh_token": "kiro-refresh"},
+	}
+
+	_, _, err := handler.refreshSingleAccount(context.Background(), account)
+	require.ErrorContains(t, err, "kiro oauth service is not configured")
+	require.Nil(t, adminSvc.updatedCredentials)
+}

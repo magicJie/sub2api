@@ -54,11 +54,13 @@ func ProvideAdminHandlers(
 	ollamaCloudUsage *service.OllamaCloudUsageService,
 	opencodeGoUsage *service.OpenCodeGoUsageService,
 	claudeResetCredits *service.ClaudeResetCreditService,
+	kiroOAuthService *service.KiroOAuthService,
 ) *AdminHandlers {
 	accountHandler.SetUpstreamBillingProbeService(upstreamBillingProbe)
 	accountHandler.SetOllamaCloudUsageService(ollamaCloudUsage)
 	accountHandler.SetOpenCodeGoUsageService(opencodeGoUsage)
 	accountHandler.SetClaudeResetCreditService(claudeResetCredits)
+	accountHandler.SetKiroOAuthService(kiroOAuthService)
 	return &AdminHandlers{
 		Dashboard:              dashboardHandler,
 		User:                   userHandler,
