@@ -66,7 +66,7 @@ var (
 		"OLLAMA_CLOUD_USAGE_UNAVAILABLE", "Ollama Cloud usage is unavailable",
 	)
 	ErrOllamaCloudUsageAccountInvalid = infraerrors.BadRequest(
-		"OLLAMA_CLOUD_USAGE_ACCOUNT_INVALID", "account must be an OpenAI or Anthropic API key account using https://ollama.com",
+		"OLLAMA_CLOUD_USAGE_ACCOUNT_INVALID", "account must be an Ollama Cloud API key account",
 	)
 	ErrOllamaCloudUsageSessionRequired = infraerrors.BadRequest(
 		"OLLAMA_CLOUD_USAGE_SESSION_REQUIRED", "an Ollama web session must be configured first",
@@ -1033,49 +1033,8 @@ func OllamaCloudUsageStateFromAccount(account *Account) *OllamaCloudUsageState {
 	return state
 }
 
-// isOllamaCloudUsagePlatform 收敛 Ollama Cloud 用量窗口的平台白名单。官方
-// ollama.com base_url 除官方两平台外，也允许挂在经 OpenAI 网关转发的国产
-// OpenAI 兼容平台下（用户把 Ollama Cloud key 挂在 kimi/zhipu/deepseek 分组
-// 里跑托管的 glm/kimi/deepseek 模型）。repository 侧 SQL 白名单
-// （ollamaCloudUsagePlatformsSQL）是本列表的镜像，两侧必须同步修改。
-func isOllamaCloudUsagePlatform(platform string) bool {
-	switch platform {
-	case PlatformOpenAI, PlatformAnthropic, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax:
-		return true
-	default:
-		return false
-	}
-}
-
 func IsOllamaCloudUsageAccount(account *Account) bool {
-	if account == nil || account.Type != AccountTypeAPIKey || !isOllamaCloudUsagePlatform(account.Platform) {
-		return false
-	}
-	baseURL, _ := account.Credentials["base_url"].(string)
-	return isOllamaCloudBaseURL(baseURL)
-}
-
-func isOllamaCloudBaseURL(raw string) bool {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || strings.ContainsAny(raw, "?#") {
-		return false
-	}
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Opaque != "" || !strings.EqualFold(parsed.Scheme, "https") || parsed.User != nil || parsed.ForceQuery || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.RawFragment != "" {
-		return false
-	}
-	hostname := strings.ToLower(parsed.Hostname())
-	if hostname != "ollama.com" && hostname != "www.ollama.com" {
-		return false
-	}
-	authority := strings.ToLower(parsed.Host)
-	if authority != hostname && authority != hostname+":443" {
-		return false
-	}
-	if parsed.RawPath != "" {
-		return false
-	}
-	return parsed.Path == "" || parsed.Path == "/v1"
+	return account != nil && account.Platform == PlatformOllama && account.Type == AccountTypeAPIKey
 }
 
 func ollamaCloudUsageIdentity(account *Account) map[string]any {

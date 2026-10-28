@@ -301,7 +301,7 @@ func TestHandleOpenAIUpstreamTransportError_RecordsOllamaActivityOnly(t *testing
 		deferredService: deferred,
 	}
 	ollama := &Account{
-		ID: 501, Name: "ollama-cloud", Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		ID: 501, Name: "ollama-cloud", Platform: PlatformOllama, Type: AccountTypeAPIKey,
 		Credentials: map[string]any{"api_key": "k-ollama", "base_url": "https://ollama.com"},
 	}
 	other := &Account{
@@ -326,7 +326,7 @@ func TestHandleOpenAIUpstreamTransportError_ContextCanceledSkipsOllamaActivity(t
 		deferredService: deferred,
 	}
 	ollama := &Account{
-		ID: 503, Name: "ollama-canceled", Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		ID: 503, Name: "ollama-canceled", Platform: PlatformOllama, Type: AccountTypeAPIKey,
 		Credentials: map[string]any{"api_key": "k-ollama", "base_url": "https://ollama.com"},
 	}
 	c, _ := newOpenAITransportErrTestContext()
@@ -342,7 +342,7 @@ func TestHandleOpenAIAccountUpstreamError_RecordsOllamaActivityOnly(t *testing.T
 	deferred := NewDeferredService(nil, nil, time.Second)
 	svc := &OpenAIGatewayService{deferredService: deferred}
 	ollama := &Account{
-		ID: 504, Name: "ollama-429", Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		ID: 504, Name: "ollama-429", Platform: PlatformOllama, Type: AccountTypeAPIKey,
 		Credentials: map[string]any{"api_key": "k-ollama", "base_url": "https://ollama.com"},
 	}
 	other := &Account{

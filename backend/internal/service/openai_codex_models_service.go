@@ -126,7 +126,7 @@ func (s *OpenAIGatewayService) BuildGroupConfiguredCodexModelsManifest(
 	group *Group,
 	ifNoneMatch string,
 ) (*OpenAIModelsResponse, bool, error) {
-	if s == nil || s.accountRepo == nil || group == nil || group.Platform != PlatformOpenAI {
+	if s == nil || s.accountRepo == nil || group == nil || (group.Platform != PlatformOpenAI && group.Platform != PlatformOllama) {
 		return nil, false, nil
 	}
 
@@ -140,7 +140,7 @@ func (s *OpenAIGatewayService) BuildGroupConfiguredCodexModelsManifest(
 	}
 
 	body, err := buildCodexModelsManifestForAccounts(
-		PlatformOpenAI,
+		group.Platform,
 		configuredModels,
 		catalog,
 		group,
@@ -183,7 +183,7 @@ func (s *OpenAIGatewayService) MergeGroupConfiguredCodexModels(
 	if s == nil || s.accountRepo == nil || group == nil || manifest == nil || manifest.NotModified {
 		return nil
 	}
-	if group.Platform != PlatformOpenAI || len(manifest.Body) == 0 {
+	if (group.Platform != PlatformOpenAI && group.Platform != PlatformOllama) || len(manifest.Body) == 0 {
 		return nil
 	}
 
@@ -250,6 +250,7 @@ func loadCodexGroupCatalogAccounts(ctx context.Context, repo AccountRepository, 
 		[]string{
 			PlatformAnthropic,
 			PlatformOpenAI,
+			PlatformOllama,
 			PlatformGemini,
 			PlatformAntigravity,
 			PlatformGrok,
@@ -272,7 +273,7 @@ func openAIConfiguredCodexModelIDs(accounts []Account) []string {
 	models := make([]string, 0)
 	for i := range accounts {
 		account := &accounts[i]
-		if account.Platform != PlatformOpenAI {
+		if !account.IsOpenAI() {
 			continue
 		}
 		for modelID := range account.GetModelMapping() {
@@ -308,7 +309,7 @@ func openAIConfiguredCodexModelIDsForGroup(accounts []Account, group *Group) []s
 		}
 		for i := range accounts {
 			account := &accounts[i]
-			if account.Platform != PlatformOpenAI {
+			if !account.IsOpenAI() {
 				continue
 			}
 			mappedModel, matched := account.ResolveMappedModel(selectedModel)
@@ -902,13 +903,13 @@ func buildCodexModelsManifestForAccounts(
 	compositeRoutes []CompositeModelRoute,
 	compositeRoutesAvailable bool,
 ) ([]byte, error) {
-	if effectivePlatform == PlatformOpenAI {
+	if effectivePlatform == PlatformOpenAI || effectivePlatform == PlatformOllama {
 		modelIDs = filterRetiredOpenAIModelIDs(accounts, modelIDs)
 	} else if effectivePlatform == PlatformComposite {
 		filtered := make([]string, 0, len(modelIDs))
 		for _, modelID := range modelIDs {
 			platform, target, resolved := resolveCodexCompositeModelTarget(modelID, accounts, compositeRoutes, compositeRoutesAvailable)
-			if resolved && platform == PlatformOpenAI && openAIModelRetiredForAccounts(accounts, target) {
+			if resolved && (platform == PlatformOpenAI || platform == PlatformOllama) && openAIModelRetiredForAccounts(accounts, target) {
 				continue
 			}
 			filtered = append(filtered, modelID)
@@ -1144,7 +1145,7 @@ func groupCodexModelSupportsImageInput(
 			return false
 		}
 	}
-	if platform != PlatformOpenAI && platform != PlatformGrok && platform != PlatformDeepseek && platform != PlatformOpenCodeGo {
+	if platform != PlatformOpenAI && platform != PlatformOllama && platform != PlatformGrok && platform != PlatformDeepseek && platform != PlatformOpenCodeGo {
 		return false
 	}
 
@@ -1190,7 +1191,7 @@ func groupCodexModelSupportsSearchTool(
 			return false
 		}
 	}
-	if platform != PlatformOpenAI {
+	if platform != PlatformOpenAI && platform != PlatformOllama {
 		return false
 	}
 
@@ -1283,7 +1284,7 @@ func accountCodexModelSupportsImageInput(account *Account, upstreamModel string)
 		return false
 	}
 	switch account.Platform {
-	case PlatformOpenAI, PlatformDeepseek, PlatformOpenCodeGo:
+	case PlatformOpenAI, PlatformOllama, PlatformDeepseek, PlatformOpenCodeGo:
 		if metadata, ok := account.GetUpstreamModelMetadata(upstreamModel); ok {
 			if modalities := normalizeCodexInputModalities(metadata.InputModalities); len(modalities) > 0 {
 				// Official GPT-6 Astra metadata briefly shipped with a stale
@@ -1299,7 +1300,7 @@ func accountCodexModelSupportsImageInput(account *Account, upstreamModel string)
 		if strings.EqualFold(strings.TrimSpace(upstreamModel), "deepseek-v4-flash-vision-exp") {
 			return account.Type == AccountTypeAPIKey
 		}
-		if account.Platform != PlatformOpenAI || !isOpenAICodexImageInputModel(upstreamModel) {
+		if !account.IsOpenAI() || !isOpenAICodexImageInputModel(upstreamModel) {
 			return false
 		}
 		if account.IsOpenAIOAuth() {

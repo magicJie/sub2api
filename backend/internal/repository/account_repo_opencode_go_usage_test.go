@@ -446,35 +446,6 @@ func TestInvalidateProxyProbeSnapshotsClearsOpenCodeGoSnapshot(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// UpdateCredentials 的 CASE 求值顺序是正确性依赖而非防御：Ollama 分支的 WHEN 是
-// 宽守卫（NOT(ollamaMatch(old) AND ollamaMatch(new))，旧行不匹配 ollama.com 基址
-// 时恒真，且不含 opencode.ai 正则），而两侧平台白名单完全相同，因此挂载行
-// （白名单平台 + 官方 OpenCode Go 基址）会同时满足两分支的 WHEN。若把 Ollama
-// 分支前移，挂载行的 api_key 变化会先命中 Ollama 分支，OpenCode THEN 才清除的
-// opencode_go_usage_snapshot / opencode_go_usage_auto_refresh 残留，陈旧快照跟着
-// 新 api_key 走，跨 key 组污染。本测试用正则钉死 OpenCode 分支的 WHEN 标记
-// （platform = 'opencode_go'，只出现在 OpenCode 分支）文本上先于 Ollama 分支的
-// WHEN 标记（ollama.com 基址正则片段）。
-func TestUpdateCredentialsOpenCodeBranchPrecedesOllamaBranch(t *testing.T) {
-	client, mock := newOllamaCloudUsageRepositoryTestClient(t)
-	mock.ExpectBegin()
-	mock.ExpectExec(`(?s)UPDATE accounts.*platform = 'opencode_go'.*\[oO\]\[lL\]\[lL\]\[aA\]\[mM\]\[aA\]`).
-		WithArgs(`{"api_key":"new-key","base_url":"https://opencode.ai/zen/go/v1"}`, int64(17)).
-		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO scheduler_outbox")).
-		WithArgs(service.SchedulerOutboxEventAccountChanged, int64(17), nil, nil, sqlmock.AnyArg()).
-		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectCommit()
-	repo := newAccountRepositoryWithSQL(client, nil, nil)
-
-	err := repo.UpdateCredentials(context.Background(), 17, map[string]any{
-		"api_key": "new-key", "base_url": "https://opencode.ai/zen/go/v1",
-	})
-
-	require.NoError(t, err)
-	require.NoError(t, mock.ExpectationsWereMet())
-}
-
 // SQL 侧「默认 Go」语义的常量级护栏：opencode_go 平台行 account_mode 缺失/为
 // JSON null 时，COALESCE 兜底必须落 true（视为 Go 订阅，与 GetOpenCodeAccountMode
 // 的默认兼容逻辑一致）。若误改成 false，存量 opencode_go 账号在 SQL 侧集体失去

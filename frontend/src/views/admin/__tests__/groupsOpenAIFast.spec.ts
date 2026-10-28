@@ -8,14 +8,16 @@ import en from "@/i18n/locales/en/admin/overview";
 import zh from "@/i18n/locales/zh/admin/overview";
 
 describe("groupsOpenAIFast", () => {
-  it("supports OpenAI and composite groups", () => {
+  it("supports OpenAI, Ollama Cloud, and composite groups", () => {
     expect(supportsGroupOpenAIFast("openai")).toBe(true);
+    expect(supportsGroupOpenAIFast("ollama")).toBe(true);
     expect(supportsGroupOpenAIFast("composite")).toBe(true);
     expect(supportsGroupOpenAIFast("anthropic")).toBe(false);
   });
 
   it("clears stale enabled state on unsupported platforms", () => {
     expect(normalizeGroupOpenAIFast("openai", true)).toBe(true);
+    expect(normalizeGroupOpenAIFast("ollama", true)).toBe(true);
     expect(normalizeGroupOpenAIFast("composite", true)).toBe(true);
     expect(normalizeGroupOpenAIFast("anthropic", true)).toBe(false);
     expect(normalizeGroupOpenAIFast("openai", false)).toBe(false);

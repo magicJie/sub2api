@@ -594,9 +594,8 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 		req.Header.Set("Authorization", "Bearer "+authToken)
 	} else {
 		req.Header.Set("anthropic-beta", claude.APIKeyBetaHeader)
-		// Ollama Cloud Anthropic 兼容端点按实际 base_url 强制 Bearer，
-		// 其余保持 extra/default 行为。
-		setAnthropicAPIKeyAuthHeader(req.Header, account, authToken, account.GetBaseURL())
+		// Ollama authentication is owned by its platform.
+		setAnthropicAPIKeyAuthHeader(req.Header, account, authToken)
 	}
 
 	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
@@ -874,7 +873,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		if err != nil {
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 		}
-		if !openai_compat.ShouldUseResponsesAPI(account.Extra) {
+		if account.Platform == PlatformOllama || !openai_compat.ShouldUseResponsesAPI(account.Extra) {
 			return s.testOpenAIChatCompletionsConnection(c, account, testModelID, prompt, normalizedBaseURL, authToken)
 		}
 		apiURL = buildOpenAIResponsesURLForPlatform(credentialAccount.Platform, normalizedBaseURL)

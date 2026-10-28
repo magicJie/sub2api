@@ -11,7 +11,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
-	"github.com/tidwall/gjson"
 )
 
 func gatewayAnthropicBaseURLAccount(apiBaseURLs map[string]any) *Account {
@@ -83,24 +82,23 @@ func TestGatewayService_AdaptiveAnthropicBaseURLRouting(t *testing.T) {
 func TestGatewayService_AnthropicPassthroughAndCountTokensUseSelectedBase(t *testing.T) {
 	svc := &GatewayService{cfg: &config.Config{}}
 	account := gatewayAnthropicBaseURLAccount(map[string]any{
-		APIProtocolAnthropic: "https://ollama.com",
+		APIProtocolAnthropic: "https://anthropic-selected.example",
 	})
 	body := []byte(`{"model":"deepseek-v4-flash","max_tokens":256000,"messages":[{"role":"user","content":"hi"}]}`)
 	c := gatewayAnthropicBaseURLContext(t)
 
-	passthroughReq, wireBody, err := svc.buildUpstreamRequestAnthropicAPIKeyPassthrough(context.Background(), c, account, body, "test-key")
+	passthroughReq, _, err := svc.buildUpstreamRequestAnthropicAPIKeyPassthrough(context.Background(), c, account, body, "test-key")
 	require.NoError(t, err)
-	require.Equal(t, "https://ollama.com/v1/messages?beta=true", passthroughReq.URL.String())
-	require.Equal(t, "Bearer test-key", passthroughReq.Header.Get("Authorization"))
-	require.Equal(t, int64(65535), gjson.GetBytes(wireBody, "max_tokens").Int())
+	require.Equal(t, "https://anthropic-selected.example/v1/messages?beta=true", passthroughReq.URL.String())
+	require.Equal(t, "test-key", passthroughReq.Header.Get("X-Api-Key"))
 
 	countPassthroughReq, err := svc.buildCountTokensRequestAnthropicAPIKeyPassthrough(context.Background(), c, account, body, "test-key")
 	require.NoError(t, err)
-	require.Equal(t, "https://ollama.com/v1/messages/count_tokens?beta=true", countPassthroughReq.URL.String())
-	require.Equal(t, "Bearer test-key", countPassthroughReq.Header.Get("Authorization"))
+	require.Equal(t, "https://anthropic-selected.example/v1/messages/count_tokens?beta=true", countPassthroughReq.URL.String())
+	require.Equal(t, "test-key", countPassthroughReq.Header.Get("X-Api-Key"))
 
 	countReq, _, err := svc.buildCountTokensRequest(context.Background(), c, account, body, "test-key", "apikey", "deepseek-v4-flash", false)
 	require.NoError(t, err)
-	require.Equal(t, "https://ollama.com/v1/messages/count_tokens?beta=true", countReq.URL.String())
-	require.Equal(t, "Bearer test-key", countReq.Header.Get("Authorization"))
+	require.Equal(t, "https://anthropic-selected.example/v1/messages/count_tokens?beta=true", countReq.URL.String())
+	require.Equal(t, "test-key", countReq.Header.Get("X-Api-Key"))
 }

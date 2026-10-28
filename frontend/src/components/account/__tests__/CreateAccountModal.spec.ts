@@ -1097,3 +1097,51 @@ describe('CreateAccountModal Vertex API key auth', () => {
     expect(wrapper.find('[data-testid="vertex-api-key-input"]').exists()).toBe(false)
   })
 })
+
+describe('CreateAccountModal Ollama Cloud platform', () => {
+  beforeEach(() => {
+    authIsSimpleMode.value = true
+    createAccountMock.mockReset().mockResolvedValue({ id: 58, platform: 'ollama', type: 'apikey' })
+    probeUpstreamBillingMock.mockReset().mockResolvedValue({})
+    syncUpstreamModelsMock.mockReset().mockResolvedValue({ models: [], metadata: {} })
+  })
+
+  it('creates an apikey-only Ollama Cloud account with default base_url and force_chat_completions mode', async () => {
+    const wrapper = mountModal()
+    await wrapper.get('[data-testid="platform-button-ollama"]').trigger('click')
+
+    expect(wrapper.find('[data-tour="account-form-type"]').exists()).toBe(false)
+    const baseUrlInput = wrapper.get<HTMLInputElement>('input[placeholder="https://ollama.com/v1"]')
+    expect(baseUrlInput.element.value).toBe('https://ollama.com/v1')
+
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('ollama-cloud-1')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('ollama-secret-key')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    const payload = createAccountMock.mock.calls[0]?.[0]
+    expect(payload?.platform).toBe('ollama')
+    expect(payload?.type).toBe('apikey')
+    expect(payload?.credentials).toMatchObject({
+      base_url: 'https://ollama.com/v1',
+      api_key: 'ollama-secret-key'
+    })
+    expect(payload?.extra?.openai_responses_mode).toBe('force_chat_completions')
+    expect(payload?.upstream_billing_probe_enabled).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('rejects non-official Ollama Cloud base_url before submitting', async () => {
+    const wrapper = mountModal()
+    await wrapper.get('[data-testid="platform-button-ollama"]').trigger('click')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('ollama-bad-url')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('ollama-secret-key')
+    await wrapper.get('input[placeholder="https://ollama.com/v1"]').setValue('https://relay.example.com/v1')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+})

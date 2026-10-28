@@ -164,8 +164,8 @@ func validateBulkOpenAISettingsTargets(
 		}
 
 		if settings.longContextBilling {
-			if account.Platform != PlatformOpenAI || !supportsOpenAILongContextBilling(account.Type) {
-				return 0, invalidBulkOpenAITarget(accountID, "long-context billing requires an OpenAI OAuth, setup-token, or API-key account")
+			if !account.IsOpenAI() || !supportsOpenAILongContextBilling(account.Type) {
+				return 0, invalidBulkOpenAITarget(accountID, "long-context billing requires an OpenAI OAuth, setup-token, API-key, or Ollama API-key account")
 			}
 			if account.IsShadow() {
 				inheritedCount++
@@ -173,8 +173,8 @@ func validateBulkOpenAISettingsTargets(
 		}
 
 		if settings.endpointCapabilities || settings.responsesMode {
-			if account.Platform != PlatformOpenAI || account.Type != AccountTypeAPIKey {
-				return 0, invalidBulkOpenAITarget(accountID, "endpoint capabilities and Responses routing require an OpenAI API-key account")
+			if !account.IsOpenAIApiKey() {
+				return 0, invalidBulkOpenAITarget(accountID, "endpoint capabilities and Responses routing require an OpenAI or Ollama API-key account")
 			}
 		}
 

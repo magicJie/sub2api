@@ -285,6 +285,13 @@
       "gateway": "anthropic",
       "cn_provider": false,
       "litellm_provider": "anthropic"
+    },
+    {
+      "id": "ollama",
+      "display_name": "Ollama Cloud",
+      "gateway": "openai",
+      "cn_provider": false,
+      "litellm_provider": "openai"
     }
   ],
   "composite_precedence": [
@@ -301,6 +308,7 @@
     "typesafe",
     "command_code",
     "cline",
-    "kiro"
+    "kiro",
+    "ollama"
   ]
 }

@@ -1102,6 +1102,9 @@ func (a *Account) GetBaseURL() string {
 	}
 	baseURL := a.GetCredential("base_url")
 	if baseURL == "" {
+		if a.Platform == PlatformOllama {
+			return DefaultOllamaBaseURL
+		}
 		// TypeSafe keys must never fall back to the Anthropic host.
 		if a.Platform == PlatformTypeSafe {
 			return typesafe.DefaultBaseURL
@@ -1455,8 +1458,9 @@ func (a *Account) SupportsAccountQuota() bool {
 	return AccountTypeSupportsQuota(a.Type)
 }
 
+// IsOpenAI includes Ollama API keys, which retain the OpenAI API-key contract.
 func (a *Account) IsOpenAI() bool {
-	return a.Platform == PlatformOpenAI
+	return a != nil && (a.Platform == PlatformOpenAI || (a.Platform == PlatformOllama && a.Type == AccountTypeAPIKey))
 }
 
 func (a *Account) IsOpenAILongContextBillingEnabled() bool {
@@ -1472,14 +1476,14 @@ func (a *Account) IsAnthropic() bool {
 }
 
 func (a *Account) IsOpenAIOAuth() bool {
-	return a.IsOpenAI() && a.Type == AccountTypeOAuth
+	return a != nil && a.Platform == PlatformOpenAI && a.Type == AccountTypeOAuth
 }
 
 // IsOpenAIOAuthLike reports OpenAI credentials that use the ChatGPT/Codex
 // inference protocol. Setup tokens share that forwarding contract but do not
 // participate in the refreshable OAuth credential lifecycle.
 func (a *Account) IsOpenAIOAuthLike() bool {
-	return a != nil && a.IsOpenAI() && (a.Type == AccountTypeOAuth || a.Type == AccountTypeSetupToken)
+	return a != nil && a.Platform == PlatformOpenAI && (a.Type == AccountTypeOAuth || a.Type == AccountTypeSetupToken)
 }
 
 // UsesOpenAICodexProtocol preserves legacy OpenAI gateway OAuth routing for
@@ -1529,6 +1533,9 @@ func (a *Account) GetOpenAIBaseURL() string {
 	if a.Type == AccountTypeAPIKey || a.Type == AccountTypeUpstream {
 		if baseURL := strings.TrimSpace(a.GetCredential("base_url")); baseURL != "" {
 			return baseURL
+		}
+		if a.Platform == PlatformOllama {
+			return DefaultOllamaBaseURL
 		}
 	}
 	// 平台默认 base_url：多协议供应商按 account_mode 查 provider profile。
@@ -1928,7 +1935,7 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 	}
 	if capability == OpenAIEndpointCapabilitySeedance {
 		configured, _ := a.openAIEndpointCapabilitySet()
-		return configured["seedance"] && a.Platform == PlatformOpenAI && a.Type == AccountTypeAPIKey &&
+		return configured["seedance"] && a.IsOpenAIApiKey() &&
 			strings.TrimSpace(a.GetCredential("base_url")) != ""
 	}
 	if capability == "" {
@@ -1964,7 +1971,8 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 		// credentials 能力集。已探测确认不支持 /v1/responses 的 APIKey 上游
 		// 必须排除——否则会在 forward 阶段被静默降级为 Chat Completions，
 		// 无法完成生图（#4417）。未探测/OAuth 账号保留旧行为（不排除）。
-		if a.Type == AccountTypeAPIKey && !openai_compat.ShouldUseResponsesAPI(a.Extra) {
+		// Ollama's default CC routing takes precedence over a positive legacy probe.
+		if a.Type == AccountTypeAPIKey && ((a.Platform == PlatformOllama && shouldForwardOpenAIResponsesViaRawChatCompletions(a)) || !openai_compat.ShouldUseResponsesAPI(a.Extra)) {
 			return false
 		}
 		// 支持 Responses 的上游同样需具备 chat 能力：复用下方 chat_completions
@@ -2422,7 +2430,7 @@ func (a *Account) GetWebSearchEmulationMode() string {
 	// OpenAI API Key accounts reach this via /v1/messages; their upstreams
 	// (DeepSeek etc. over Chat Completions) have no web_search tool.
 	if a == nil || a.Type != AccountTypeAPIKey || a.Extra == nil ||
-		(a.Platform != PlatformAnthropic && a.Platform != PlatformOpenAI) {
+		(a.Platform != PlatformAnthropic && !a.IsOpenAI()) {
 		return WebSearchModeDefault
 	}
 	raw := a.Extra[featureKeyWebSearchEmulation]

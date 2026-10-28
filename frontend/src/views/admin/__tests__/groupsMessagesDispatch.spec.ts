@@ -9,8 +9,9 @@ import {
 } from "../groupsMessagesDispatch";
 
 describe("groupsMessagesDispatch", () => {
-  it("supports OpenAI and composite groups", () => {
+  it("supports OpenAI, Ollama Cloud, and composite groups", () => {
     expect(supportsMessagesDispatchPlatform("openai")).toBe(true);
+    expect(supportsMessagesDispatchPlatform("ollama")).toBe(true);
     expect(supportsMessagesDispatchPlatform("composite")).toBe(true);
     expect(supportsMessagesDispatchPlatform("anthropic")).toBe(false);
   });

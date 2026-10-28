@@ -1,5 +1,5 @@
 export function supportsGroupOpenAIFast(platform: string): boolean {
-  return platform === "openai" || platform === "composite";
+  return platform === "openai" || platform === "ollama" || platform === "composite";
 }
 
 export function normalizeGroupOpenAIFast(

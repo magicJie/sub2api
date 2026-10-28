@@ -141,6 +141,7 @@ interface SimpleAccount {
 
 const props = defineProps<{
   groupId: number;
+  platform?: string;
   modelValue: CodexModelsManifestConfig;
   /** 已选账号 ID → 名称映射；无法解析的 ID 以 #<id> 展示 */
   accountNames?: Record<number, string>;
@@ -193,7 +194,7 @@ const searchRunner = useKeyedDebouncedSearch<SimpleAccount[]>({
       20,
       {
         search: keyword,
-        platform: "openai",
+        platform: props.platform || "openai",
         group: String(props.groupId),
       },
       { signal },

@@ -630,10 +630,10 @@ func (s *UpstreamBillingProbeService) probeLoadedAccount(ctx context.Context, ac
 	if account.RoutesProtocolByInbound() && account.IsAdaptiveAPIProtocol() {
 		baseURL = account.GetCNProtocolBaseURL(APIProtocolChatCompletions)
 	}
-	if account.Platform == PlatformOpenAI {
+	if account.IsOpenAI() {
 		if baseURL == "" {
 			// 保持官方语义：OpenAI 账号无自定义 base 时探官方域（404 → unsupported）。
-			baseURL = "https://api.openai.com"
+			baseURL = account.GetOpenAIBaseURL()
 		}
 	} else if upstreamBillingProbeTargetIsOfficialAPI(baseURL) {
 		// 其他平台 base_url 为空或指向官方 API 根域（前端创建时会把空值
@@ -665,7 +665,7 @@ func (s *UpstreamBillingProbeService) probeLoadedAccount(ctx context.Context, ac
 	}
 	// OpenAI 账号保持官方 openai 传输画像；其他平台探测走默认画像。
 	profile := HTTPUpstreamProfileDefault
-	if account.Platform == PlatformOpenAI {
+	if account.IsOpenAI() {
 		profile = HTTPUpstreamProfileOpenAI
 	}
 	reqCtx := WithHTTPUpstreamProfile(req.Context(), profile)
@@ -1024,11 +1024,9 @@ func isUpstreamBillingProbeAccount(account *Account) bool {
 // subdomain, after stripping the port and a trailing DNS dot — because no
 // third-party sub2api relay can live under these domains, while custom
 // relays (the only targets that can answer /v1/sub2api/billing) always do
-// probe. OpenAI-platform accounts never reach this check: they keep the
-// upstream-official behavior of probing api.openai.com.
-// ollama.com is a first-class configuration here (Ollama Cloud accounts are
-// platform openai/anthropic with base_url https://ollama.com/v1), and it is
-// an official provider API just like the rest, so it belongs on this list.
+// probe. OpenAI-contract accounts keep their legacy probing behavior, including
+// Ollama API keys migrated from OpenAI. Other platform accounts targeting an
+// official Ollama endpoint are short-circuited by the same domain list.
 // CN provider domains (moonshot.cn / kimi.com / bigmodel.cn / deepseek.com)
 // serve the same role: official APIs that can never host /v1/sub2api/billing,
 // so their accounts short-circuit to "unsupported" without a request.

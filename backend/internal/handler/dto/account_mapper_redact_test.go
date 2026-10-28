@@ -66,7 +66,7 @@ func TestAccountFromServiceShallow_RedactsOllamaCloudManagedExtra(t *testing.T) 
 		"data":            map[string]any{"plan": "Pro"},
 	}
 	src := &service.Account{
-		ID: 9, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+		ID: 9, Platform: service.PlatformOllama, Type: service.AccountTypeAPIKey,
 		Credentials: map[string]any{"base_url": "https://ollama.com", "api_key": "secret-key"},
 		Extra: map[string]any{
 			service.OllamaCloudUsageSessionExtraKey:     "ciphertext-secret",

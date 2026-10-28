@@ -979,6 +979,8 @@ export default {
         minimax: 'MiniMax',
         opencode_go: 'OpenCode',
         typesafe: 'TypeSafe / Jev',
+        kiro: 'Kiro',
+        ollama: 'Ollama Cloud',
         composite: 'Composite',
       },
       saving: '保存中...',

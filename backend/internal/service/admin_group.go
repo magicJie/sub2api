@@ -279,7 +279,7 @@ func compositeRouteFromInput(groupID int64, input CompositeRouteInput) (*Composi
 
 func defaultModelsListCandidateIDs(platform string) []string {
 	switch platform {
-	case PlatformOpenAI:
+	case PlatformOpenAI, PlatformOllama:
 		return openai.DefaultModelIDs()
 	case PlatformGemini:
 		ids := make([]string, 0, len(geminicli.DefaultModels))
@@ -364,7 +364,7 @@ func groupSupportsOAuthOnlyFilter(platform string) bool {
 }
 
 func groupSupportsOpenAIFast(platform string) bool {
-	return platform == PlatformOpenAI || platform == PlatformComposite
+	return platform == PlatformOpenAI || platform == PlatformOllama || platform == PlatformComposite
 }
 
 func sanitizeGroupOpenAIFast(group *Group) {
@@ -641,7 +641,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	}
 	sanitizeGroupMessagesDispatchFields(group)
 	sanitizeGroupOpenAIFast(group)
-	if group.Platform != PlatformOpenAI && group.Platform != PlatformComposite {
+	if group.Platform != PlatformOpenAI && group.Platform != PlatformOllama && group.Platform != PlatformComposite {
 		group.AllowLive = false
 	}
 	sanitizeGroupReasoningEffortPolicy(group)
@@ -1063,7 +1063,7 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 	sanitizeGroupMessagesDispatchFields(group)
 	sanitizeGroupOpenAIFast(group)
-	if group.Platform != PlatformOpenAI && group.Platform != PlatformComposite {
+	if group.Platform != PlatformOpenAI && group.Platform != PlatformOllama && group.Platform != PlatformComposite {
 		group.AllowLive = false
 	}
 	sanitizeGroupReasoningEffortPolicy(group)

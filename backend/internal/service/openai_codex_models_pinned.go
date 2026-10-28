@@ -165,7 +165,7 @@ func (s *OpenAIGatewayService) fetchPinnedOpenAIModels(ctx context.Context, grou
 		return nil, ErrNoPinnedCodexModelsAccounts
 	}
 	cfg := group.CodexModelsManifestConfig
-	if group.Platform != PlatformOpenAI || !cfg.Enabled || len(cfg.AccountIDs) == 0 {
+	if (group.Platform != PlatformOpenAI && group.Platform != PlatformOllama) || !cfg.Enabled || len(cfg.AccountIDs) == 0 {
 		return nil, ErrNoPinnedCodexModelsAccounts
 	}
 
@@ -182,7 +182,7 @@ func (s *OpenAIGatewayService) fetchPinnedOpenAIModels(ctx context.Context, grou
 	usable := make([]Account, 0, len(cfg.AccountIDs))
 	for _, id := range cfg.AccountIDs {
 		member, ok := memberByID[id]
-		if !ok || member.Platform != PlatformOpenAI {
+		if !ok || member.Platform != group.Platform || !member.IsOpenAI() {
 			continue
 		}
 		if !isPinnedCodexModelsAccountUsable(&member) {

@@ -1939,7 +1939,7 @@ func (s *OpenAIGatewayService) evaluateOpenAIFastPolicy(ctx context.Context, acc
 // the dedicated "missing" tier matcher; legacy "all" rules continue to apply
 // only to requests that explicitly selected a recognized tier.
 func (s *OpenAIGatewayService) shouldForceOpenAIFastPriorityForMissingTier(ctx context.Context, account *Account, model string) bool {
-	if account == nil || account.Platform != PlatformOpenAI {
+	if account == nil || !account.IsOpenAI() {
 		return false
 	}
 	action, _ := s.evaluateOpenAIFastPolicy(ctx, account, model, OpenAIFastTierMissing)
@@ -2042,7 +2042,7 @@ func openAIFastPolicySettingsFromContext(ctx context.Context) *OpenAIFastPolicyS
 }
 
 func openAIGroupForcesFast(ctx context.Context, account *Account) bool {
-	if ctx == nil || account == nil || account.Platform != PlatformOpenAI {
+	if ctx == nil || account == nil || !account.IsOpenAI() {
 		return false
 	}
 	group, _ := ctx.Value(ctxkey.Group).(*Group)

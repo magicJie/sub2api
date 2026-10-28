@@ -248,6 +248,9 @@ func (s *AccountService) Create(ctx context.Context, req CreateAccountRequest) (
 		Status:      StatusActive,
 		ExpiresAt:   req.ExpiresAt,
 	}
+	if err := normalizeOllamaAccount(account); err != nil {
+		return nil, err
+	}
 	if req.AutoPauseOnExpired != nil {
 		account.AutoPauseOnExpired = *req.AutoPauseOnExpired
 	} else {
@@ -335,6 +338,9 @@ func (s *AccountService) Update(ctx context.Context, id int64, req UpdateAccount
 	previousKiroUsageIdentity := kiroUsageIdentity(account) // Kiro（fork）
 	if req.Credentials != nil {
 		account.Credentials = SanitizeStoredCredentials(account.Platform, *req.Credentials)
+	}
+	if err := normalizeOllamaAccount(account); err != nil {
+		return nil, err
 	}
 
 	if req.Extra != nil {

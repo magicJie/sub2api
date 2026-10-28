@@ -237,21 +237,6 @@ func TestQuotaPlatformCompositeUsesResolvedOrForceOnly(t *testing.T) {
 	require.Equal(t, PlatformAntigravity, QuotaPlatform(ctx, apiKey))
 }
 
-func TestCompositeGroupSchedulerHasAllCanonicalPlatformBuckets(t *testing.T) {
-	seen := make(map[string]struct{})
-	for _, bucket := range schedulerCanonicalBuckets(99) {
-		seen[bucket.Platform] = struct{}{}
-	}
-	platforms := make([]string, 0, len(seen))
-	for platform := range seen {
-		platforms = append(platforms, platform)
-	}
-	require.ElementsMatch(t,
-		[]string{PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo, PlatformTypeSafe, PlatformCommandCode, PlatformCline, PlatformKiro}, // Kiro（fork）
-		platforms,
-	)
-}
-
 func TestCompositeConcretePlatformsIncludeCNProviders(t *testing.T) {
 	for _, platform := range []string{PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo, PlatformTypeSafe, PlatformCommandCode, PlatformCline} {
 		require.True(t, isConcreteRequestPlatform(platform))

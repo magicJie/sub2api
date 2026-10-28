@@ -4,7 +4,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -14,37 +13,7 @@ import (
 // 双向补齐，不改 CC↔Responses / Anthropic / Grok 桥。
 
 func isOllamaCloudRawChatCompletionsAccount(account *Account) bool {
-	if account == nil || account.Platform != PlatformOpenAI || account.Type != AccountTypeAPIKey {
-		return false
-	}
-	mode, _ := account.Extra[openai_compat.ExtraKeyResponsesMode].(string)
-	if openai_compat.NormalizeResponsesSupportMode(mode) != openai_compat.ResponsesSupportModeForceChatCompletions {
-		return false
-	}
-	if accountHasOllamaCloudUsageExtra(account) {
-		return true
-	}
-	if account.Credentials == nil {
-		return false
-	}
-	baseURL, _ := account.Credentials["base_url"].(string)
-	return isOllamaCloudBaseURL(baseURL)
-}
-
-func accountHasOllamaCloudUsageExtra(account *Account) bool {
-	if account == nil || account.Extra == nil {
-		return false
-	}
-	for _, key := range []string{
-		OllamaCloudUsageSessionExtraKey,
-		OllamaCloudUsageAutoRefreshExtraKey,
-		OllamaCloudUsageSnapshotExtraKey,
-	} {
-		if _, ok := account.Extra[key]; ok {
-			return true
-		}
-	}
-	return false
+	return IsOllamaCloudUsageAccount(account)
 }
 
 // applyOllamaCloudRawChatCompletionsRequest 只做 Ollama Cloud reasoning 归一化；

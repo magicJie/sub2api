@@ -25,6 +25,7 @@ export type Platform =
   | 'cline'
   | 'composite'
   | 'kiro'
+  | 'ollama'
 
 // ── Badge (bg + text + border, for inline badges with border) ───────
 const BADGE: Record<Platform, string> = {
@@ -43,6 +44,7 @@ const BADGE: Record<Platform, string> = {
   cline: 'bg-violet-500/10 text-violet-600 border-violet-500/30 dark:text-violet-400',
   composite: 'bg-cyan-500/10 text-cyan-700 border-cyan-500/30 dark:text-cyan-300',
   kiro: kiroColors.badge,
+  ollama: 'bg-slate-500/10 text-slate-700 border-slate-500/30 dark:text-slate-300',
 }
 const BADGE_DEFAULT = 'bg-slate-500/10 text-slate-600 border-slate-500/30 dark:text-slate-400'
 
@@ -63,6 +65,7 @@ const BADGE_LIGHT: Record<Platform, string> = {
   cline: 'bg-violet-500/10 text-violet-600 dark:bg-violet-500/10 dark:text-violet-300',
   composite: 'bg-cyan-500/10 text-cyan-700 dark:bg-cyan-500/10 dark:text-cyan-300',
   kiro: kiroColors.badgeLight,
+  ollama: 'bg-slate-500/10 text-slate-700 dark:bg-slate-500/10 dark:text-slate-300',
 }
 
 // ── Border ──────────────────────────────────────────────────────────
@@ -82,6 +85,7 @@ const BORDER: Record<Platform, string> = {
   cline: 'border-violet-500/20 dark:border-violet-500/20',
   composite: 'border-cyan-500/20 dark:border-cyan-500/20',
   kiro: kiroColors.border,
+  ollama: 'border-slate-500/20 dark:border-slate-500/20',
 }
 const BORDER_DEFAULT = 'border-gray-200 dark:border-dark-700'
 
@@ -102,6 +106,7 @@ const BORDER_STRONG: Record<Platform, string> = {
   cline: 'border-violet-500/35 dark:border-violet-500/30',
   composite: 'border-cyan-500/35 dark:border-cyan-500/30',
   kiro: kiroColors.borderStrong,
+  ollama: 'border-slate-500/35 dark:border-slate-500/30',
 }
 const BORDER_STRONG_DEFAULT = 'border-gray-300 dark:border-dark-600'
 
@@ -123,6 +128,7 @@ const ACCENT: Record<Platform, string> = {
   cline: '#8b5cf6', // violet-500（Cline 品牌紫 #9F58FA）
   composite: '#06b6d4', // cyan-500
   kiro: kiroColors.accent,
+  ollama: '#64748b', // slate-500
 }
 const ACCENT_DEFAULT = '#14b8a6' // primary-500 (teal)
 
@@ -143,6 +149,7 @@ const ACCENT_BAR: Record<Platform, string> = {
   cline: 'bg-gradient-to-r from-violet-400 to-violet-500',
   composite: 'bg-gradient-to-r from-slate-500 to-cyan-500',
   kiro: kiroColors.accentBar,
+  ollama: 'bg-gradient-to-r from-slate-600 to-slate-800',
 }
 const ACCENT_BAR_DEFAULT = 'bg-gradient-to-r from-primary-400 to-primary-500'
 
@@ -163,6 +170,7 @@ const TEXT: Record<Platform, string> = {
   cline: 'text-violet-600 dark:text-violet-400',
   composite: 'text-cyan-700 dark:text-cyan-300',
   kiro: kiroColors.text,
+  ollama: 'text-slate-700 dark:text-slate-200',
 }
 const TEXT_DEFAULT = 'text-primary-600 dark:text-primary-400'
 
@@ -183,6 +191,7 @@ const ICON: Record<Platform, string> = {
   cline: 'text-violet-500 dark:text-violet-400',
   composite: 'text-cyan-600 dark:text-cyan-300',
   kiro: kiroColors.icon,
+  ollama: 'text-slate-700 dark:text-slate-200',
 }
 const ICON_DEFAULT = 'text-primary-500 dark:text-primary-400'
 
@@ -203,6 +212,7 @@ const BUTTON: Record<Platform, string> = {
   cline: 'bg-violet-500 text-white hover:bg-violet-600 active:bg-violet-700 dark:bg-violet-500/80 dark:hover:bg-violet-500',
   composite: 'bg-cyan-700 text-white hover:bg-cyan-800 active:bg-cyan-900 dark:bg-cyan-600 dark:hover:bg-cyan-500',
   kiro: kiroColors.button,
+  ollama: 'bg-slate-800 text-white hover:bg-slate-900 active:bg-slate-950 dark:bg-slate-700 dark:hover:bg-slate-600',
 }
 const BUTTON_DEFAULT = 'bg-primary-500 text-white hover:bg-primary-600 dark:bg-primary-600 dark:hover:bg-primary-500'
 
@@ -223,6 +233,7 @@ const DISCOUNT: Record<Platform, string> = {
   cline: 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300',
   composite: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900/40 dark:text-cyan-300',
   kiro: kiroColors.discount,
+  ollama: 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200',
 }
 const DISCOUNT_DEFAULT = 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
 
@@ -243,6 +254,7 @@ const GRADIENT: Record<Platform, string> = {
   cline: 'from-violet-500 to-violet-600',
   composite: 'from-slate-600 to-cyan-600',
   kiro: kiroColors.gradient,
+  ollama: 'from-slate-700 to-slate-900',
 }
 const GRADIENT_DEFAULT = 'from-primary-500 to-primary-600'
 
@@ -263,6 +275,7 @@ const GRADIENT_TEXT: Record<Platform, string> = {
   cline: 'text-violet-100',
   composite: 'text-cyan-100',
   kiro: kiroColors.gradientText,
+  ollama: 'text-slate-100',
 }
 const GRADIENT_TEXT_DEFAULT = 'text-primary-100'
 
@@ -282,6 +295,7 @@ const GRADIENT_SUBTEXT: Record<Platform, string> = {
   cline: 'text-violet-200',
   composite: 'text-cyan-200',
   kiro: kiroColors.gradientSubtext,
+  ollama: 'text-slate-300',
 }
 const GRADIENT_SUBTEXT_DEFAULT = 'text-primary-200'
 
@@ -303,7 +317,8 @@ function isPlatform(p: string): p is Platform {
     p === 'command_code' ||
     p === 'cline' ||
     p === 'composite' ||
-    p === 'kiro'
+    p === 'kiro' ||
+    p === 'ollama'
   )
 }
 

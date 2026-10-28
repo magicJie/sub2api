@@ -51,7 +51,7 @@ const usageState = (): OllamaCloudUsageState => ({
 const account = (state = usageState()): Account => ({
   id: 7,
   name: 'ollama',
-  platform: 'openai',
+  platform: 'ollama',
   type: 'apikey',
   ollama_cloud_usage: state,
   proxy_id: null,

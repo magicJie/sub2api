@@ -180,6 +180,9 @@ const labelClass = computed(() => {
   if (props.platform === 'composite') {
     return `${base} bg-cyan-200/70 text-cyan-900 dark:bg-cyan-900/50 dark:text-cyan-300`
   }
+  if (props.platform === 'ollama') {
+    return `${base} bg-slate-200/70 text-slate-800 dark:bg-slate-700/60 dark:text-slate-200`
+  }
   return `${base} bg-violet-200/60 text-violet-800 dark:bg-violet-800/40 dark:text-violet-300`
 })
 
@@ -239,6 +242,11 @@ const badgeClass = computed(() => {
     return isSubscription.value
       ? 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-300'
       : 'bg-cyan-50 text-cyan-800 dark:bg-cyan-900/20 dark:text-cyan-300'
+  }
+  if (props.platform === 'ollama') {
+    return isSubscription.value
+      ? 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-100'
+      : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200'
   }
   // Fallback: original colors
   return isSubscription.value
