@@ -33,7 +33,7 @@ deploy/testenv/testenv.sh smoke
 
 | 命令 | 作用 |
 |---|---|
-| `up` | 用当前源码构建镜像并启动；启动前自动导出 `pre-up-<时间>-<提交>` 快照（见下文）；设 `TESTENV_SKIP_BUILD=1` 跳过构建 |
+| `up` | 用当前源码构建镜像并启动；启动前自动导出 `pre-up-<时间>-<提交>` 快照（见下文）；设 `TESTENV_SKIP_BUILD=1` 跳过构建；构建默认用 npmmirror 与阿里云 Alpine 源，可用 `NPM_CONFIG_REGISTRY`、`ALPINE_MIRROR` 覆盖（`ALPINE_MIRROR=` 置空回到官方源）；构建默认 `--network=host`（本机 DNS 指向 127.0.0.1 时 bridge 网络解析失败），可用 `TESTENV_BUILD_NETWORK=default` 改回 |
 | `smoke` | 回归冒烟：健康检查、无效 Key 返回 401，再按 `local.env` 测试 Anthropic Messages（流式/非流式）和 OpenAI Chat/Responses |
 | `e2e` | 用 `local.env` 里的 Key 跑 `backend/internal/integration` 的 e2e 测试，可追加 `-run` 等参数 |
 | `snapshot [name]` / `restore [name]` / `snapshots` | 导出、恢复、列出数据库快照（`<快照目录>/<name>.sql.gz`，默认 `baseline`），恢复时会清空 Redis |

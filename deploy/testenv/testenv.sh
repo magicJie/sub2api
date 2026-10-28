@@ -62,8 +62,10 @@ wait_healthy() {
 # 而发行版自带的 buildx 可能更旧。
 build_image() {
   log "构建 sub2api 镜像（首次需要编译前后端，耗时较长）..."
-  docker build -t "${SUB2API_TESTENV_IMAGE:-sub2api-testenv:local}" \
+  # 本机 DNS 常为 127.0.0.1（宿主机代理），默认 bridge 网络的构建容器解析不到外网，默认用 host 网络。
+  docker build --network="${TESTENV_BUILD_NETWORK:-host}" -t "${SUB2API_TESTENV_IMAGE:-sub2api-testenv:local}" \
     --build-arg NPM_CONFIG_REGISTRY="${NPM_CONFIG_REGISTRY:-https://registry.npmmirror.com}" \
+    --build-arg ALPINE_MIRROR="${ALPINE_MIRROR:-https://mirrors.aliyun.com}" \
     -f "$repo_root/Dockerfile" "$repo_root"
 }
 
