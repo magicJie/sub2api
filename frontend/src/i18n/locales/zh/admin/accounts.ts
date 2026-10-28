@@ -573,6 +573,7 @@ export default {
         kiroRemaining: '剩 {remaining} / {limit}',
         kiroNearlyExhausted: '即将耗尽',
         kiroUpstreamRejected: '已被上游拒绝，{time} 恢复',
+        kiroRetirable: '可退役',
         kiroDaysRemaining: '剩余 {days} 天',
         kiroOverage: '超额 {used}，费用 {charge}',
         kiroUpdatedAgo: '更新于 {time}',

@@ -1358,6 +1358,9 @@ export interface Account {
   kiro_runtime_state?: string
   kiro_runtime_reason?: string
   kiro_runtime_reset_at?: string | null
+  /** Kiro（fork）：上游额度拒绝时写入的「可退役」标记，新周期 reset 后自动清除。 */
+  kiro_quota_rejected_at?: string | null
+  kiro_quota_rejected_reason?: string
 
   // Session window fields (5-hour window)
   session_window_start: string | null

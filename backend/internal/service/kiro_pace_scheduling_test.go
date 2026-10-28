@@ -101,6 +101,7 @@ func TestFilterByKiroPaceCanBeDisabled(t *testing.T) {
 }
 
 func TestKiroStickyAccountSpentReleasesOnlyWithAlternative(t *testing.T) {
+	t.Setenv("SUB2API_KIRO_SCHEDULING_STRATEGY", "pace")
 	setKiroPace(t, 9081, 98.5, 5*24*time.Hour)
 	setKiroPace(t, 9082, 40, 5*24*time.Hour)
 	sticky := &Account{ID: 9081, Platform: PlatformKiro, Status: StatusActive, Schedulable: true}

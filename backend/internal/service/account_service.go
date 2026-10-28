@@ -349,6 +349,7 @@ func (s *AccountService) Update(ctx context.Context, id int64, req UpdateAccount
 		if snapshot, ok := account.Extra[KiroUsageSnapshotExtraKey]; ok {
 			extra[KiroUsageSnapshotExtraKey] = snapshot
 		}
+		kiroPreserveQuotaRejectionExtra(extra, account.Extra) // Kiro（fork）
 		account.Extra = prepareCodexFingerprintExtraForUpdate(account, extra)
 	} else {
 		account.Extra = prepareCodexFingerprintExtraForUpdate(account, account.Extra)

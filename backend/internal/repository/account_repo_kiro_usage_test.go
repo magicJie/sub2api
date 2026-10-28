@@ -88,3 +88,33 @@ func TestRequestKiroUsageRefreshAllMarksExistingSnapshots(t *testing.T) {
 	require.EqualValues(t, 3, n)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+// 「可退役」标记只改 extra 的两个键：不碰 updated_at、不写调度 outbox。
+func TestSetKiroQuotaRejectedOnlyTouchesMarkerKeys(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	at := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	mock.ExpectExec(`(?s)UPDATE accounts\s+SET extra = COALESCE\(extra, '\{\}'::jsonb\) \|\| jsonb_build_object\('kiro_quota_rejected_at', \$1::text, 'kiro_quota_rejected_reason', \$2::text\)\s+WHERE id = \$3`).
+		WithArgs(at.Format(time.RFC3339Nano), "402 payment_required_unknown", int64(7)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	repo := newAccountRepositoryWithSQL(nil, db, nil)
+	require.NoError(t, repo.SetKiroQuotaRejected(context.Background(), 7, at, "402 payment_required_unknown"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestClearKiroQuotaRejectedRemovesMarkerKeys(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	mock.ExpectExec(`(?s)UPDATE accounts\s+SET extra = extra - 'kiro_quota_rejected_at' - 'kiro_quota_rejected_reason'\s+WHERE id = \$1`).
+		WithArgs(int64(7)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	repo := newAccountRepositoryWithSQL(nil, db, nil)
+	require.NoError(t, repo.ClearKiroQuotaRejected(context.Background(), 7))
+	require.NoError(t, mock.ExpectationsWereMet())
+}

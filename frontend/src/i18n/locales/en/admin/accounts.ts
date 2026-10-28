@@ -1764,6 +1764,7 @@ export default {
         kiroRemaining: '{remaining} left / {limit}',
         kiroNearlyExhausted: 'Nearly exhausted',
         kiroUpstreamRejected: 'Rejected by upstream, resets {time}',
+        kiroRetirable: 'Retirable',
         kiroDaysRemaining: '{days}d left',
         kiroOverage: 'Overage {used}, charge {charge}',
         kiroUpdatedAgo: 'Updated {time}',

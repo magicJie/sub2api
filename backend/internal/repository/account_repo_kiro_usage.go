@@ -126,3 +126,31 @@ func (r *accountRepository) RequestKiroUsageRefreshAll(ctx context.Context, at t
 	}
 	return result.RowsAffected()
 }
+
+// SetKiroQuotaRejected 只写 extra 里的「可退役」标记两个键（不改 updated_at、不发调度 outbox）。
+func (r *accountRepository) SetKiroQuotaRejected(ctx context.Context, accountID int64, rejectedAt time.Time, reason string) error {
+	if r == nil || r.sql == nil {
+		return errors.New("account repository SQL executor not configured")
+	}
+	_, err := r.sql.ExecContext(ctx, `
+		UPDATE accounts
+		SET extra = COALESCE(extra, '{}'::jsonb) || jsonb_build_object('kiro_quota_rejected_at', $1::text, 'kiro_quota_rejected_reason', $2::text)
+		WHERE id = $3 AND deleted_at IS NULL AND platform = 'kiro'
+	`, rejectedAt.UTC().Format(time.RFC3339Nano), reason, accountID)
+	return err
+}
+
+// ClearKiroQuotaRejected 删除「可退役」标记（新周期 reset 后由后台额度刷新调用）。
+func (r *accountRepository) ClearKiroQuotaRejected(ctx context.Context, accountID int64) error {
+	if r == nil || r.sql == nil {
+		return errors.New("account repository SQL executor not configured")
+	}
+	_, err := r.sql.ExecContext(ctx, `
+		UPDATE accounts
+		SET extra = extra - 'kiro_quota_rejected_at' - 'kiro_quota_rejected_reason'
+		WHERE id = $1 AND deleted_at IS NULL AND extra ? 'kiro_quota_rejected_at'
+	`, accountID)
+	return err
+}
+
+var _ service.KiroQuotaRejectionRepository = (*accountRepository)(nil)

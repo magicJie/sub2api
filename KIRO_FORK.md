@@ -38,9 +38,23 @@
   - 非流式响应在上游未回报输入用量时，`usage.input_tokens` 用网关估算值填充（与流式一致）。
   - 推理区域：`api_region` 优先，其次 profileArn 中的区域（仅 `us-east-1` / `eu-central-1`），再按登录区域 `eu-*` → `eu-central-1`，否则 `us-east-1`。
     Builder ID 账号列不出 profile 时使用 Kiro 客户端的固定 profileArn。
-- 多账号调度（借鉴 yetone/magpie，MIT）：`service/kiro_pace_scheduling.go`，挂在 `gateway_scheduling.go` Layer 2（优先级之后、负载率之前）与 Layer 1.5 粘性检查。
-  按已用比例分档（<90 / 90–98 / ≥98），正常档按 `pace = (100−used%)/max(距重置小时,1)` 优先，10% 内视为同档；粘住的账号 ≥98% 且有替补时放开粘性。
-  用量来自进程内快照（由下面的额度后台刷新器从落库快照恢复）。`SUB2API_KIRO_PACE_SCHEDULING=off` 关闭。
+- 多账号调度：挂在 `gateway_scheduling.go` Layer 2（优先级之后、负载率之前，入口 `filterKiroCandidates`）与 Layer 1.5 粘性检查。
+  `SUB2API_KIRO_SCHEDULING_STRATEGY=drain|pace` 选择策略（默认 drain）；`SUB2API_KIRO_PACE_SCHEDULING=off` 两种都关，回到原有排序。
+  - drain（集中耗尽，`service/kiro_drain_scheduling.go`）：Kiro 是 churn 平台，号用完就退役、腾出 IP。
+    有可信快照（≤6 小时、未过重置时间）的号先于未知号（未知号排后但不排除）；重置时间越早越先（按分钟比较）；同一重置时间里已用比例越高越先；
+    完全相同时交给负载率 / LRU。显示 100% 但未被上游拒绝的号照常调度。首选号并发满（抢槽失败或 LoadRate=100）或在 429 冷却时，
+    调度循环移除它并重新收窄，溢出到下一个号，不排队等待；不设单号并发上限。粘性只在「已被上游拒绝且未 reset」时解除，不看百分比。
+  - pace（均摊，借鉴 yetone/magpie，MIT，`service/kiro_pace_scheduling.go`）：按已用比例分档（<90 / 90–98 / ≥98），
+    正常档按 `pace = (100−used%)/max(距重置小时,1)` 优先，10% 内视为同档；粘住的账号 ≥98% 且有替补、或已被上游拒绝时放开粘性。
+  - 用量来自进程内快照（由下面的额度后台刷新器从落库快照恢复）。
+- 上游额度拒绝与「可退役」标记：`service/kiro_quota_rejection.go`。只有上游真正拒绝才移出调度，不按显示的百分比提前排除。
+  - 402 `MONTHLY_REQUEST_COUNT`：限流到下月 1 号 UTC（原有行为）。
+  - 402 / 429 的 body 含 quota / credit / overage 类文字（`looksLikeKiroQuotaExhaustedError` / `looksLikeKiroOverageExhaustedError`），或无法识别的 402：
+    `SetRateLimited` 到 reset（优先用快照的 `kiro_reset_at`，没有就下月 1 号 UTC），带 body 摘要记 warn，并跳过通用 `HandleUpstreamError`
+    （否则 402 会被置为 error、429 被覆盖成秒级冷却）。限流性质的 429（Too many requests）仍走冷却逻辑，不标记。
+  - 同时在 extra 写 `kiro_quota_rejected_at` / `kiro_quota_rejected_reason`（专用 repo 方法只改这两个键，不改 `updated_at`、不发调度 outbox；
+    普通编辑不可写），经账号 DTO 的同名字段下发，前端 Kiro 额度块在「已被上游拒绝」旁显示「可退役」。账号状态与 IP 退役流程暂不接。
+  - 后台额度刷新成功后，若限流已过、新快照晚于拒绝时间且用量下降或账期重置时间推进，自动清除标记。
 - 额度后台刷新：`service/kiro_usage_refresher.go`、`kiro_usage_snapshot.go`、`repository/account_repo_kiro_usage.go`。
   只在 leader 实例拉 `getUsageLimits`（全局并发默认 2；默认 15 分钟，已用 ≥90% 或近 30 分钟有请求的号 5 分钟；按账号确定性抖动 ±10%；
   失败指数退避，上限 1 小时），结果只写 `extra.kiro_usage_snapshot`（不改 `updated_at`、不发调度 outbox）。
@@ -60,14 +74,14 @@
 | 文件 | 挂钩 |
 |---|---|
 | `service/gateway_forward*.go` | Kiro 账号转发到 `forwardKiro*` |
-| `service/gateway_scheduling.go` | 冷却中的 Kiro 账号不参与调度；候选为空时尝试恢复冷却池 |
+| `service/gateway_scheduling.go` | 冷却中的 Kiro 账号不参与调度；候选为空时尝试恢复冷却池；Layer 2 `filterKiroCandidates`、Layer 1.5 `kiroStickyAccountSpent` |
 | `service/gateway_usage_billing.go` | 定价失败时 Kiro 保守计费兜底 |
 | `service/gateway_count_tokens.go` | Kiro 不支持 count_tokens |
 | `service/account.go` | 模型映射、请求模型归一化、`KiroAccountRuntime` 嵌入 |
 | `service/account_usage_service.go` | Kiro 用量查询分支、缓存字段、`KiroUsageInfo` 嵌入 |
 | `service/account_test_service.go` | Kiro 连通性测试分支 |
-| `service/admin_account.go` | 更新凭据时保留 Kiro 身份/设备字段（`kiroPreserveCredentialFields`）；`kiro_usage_snapshot` 受管键剥离与身份变化失效 |
-| `service/account_service.go` | `kiro_usage_snapshot` 受管键保留、身份变化失效、删除时清进程内快照 |
+| `service/admin_account.go` | 更新凭据时保留 Kiro 身份/设备字段（`kiroPreserveCredentialFields`）；`kiro_usage_snapshot`、`kiro_quota_rejected_*` 受管键剥离与身份变化失效 |
+| `service/account_service.go` | `kiro_usage_snapshot`、`kiro_quota_rejected_*` 受管键保留、身份变化失效、删除时清进程内快照 |
 | `service/gateway_service.go` | Kiro 依赖字段 |
 | `service/ops_upstream_context.go` | `KiroOpsDiagnostics` 嵌入 |
 | `service/wire.go` | `KiroProviderSet`；TokenRefreshService 注册 Kiro 刷新器 |
