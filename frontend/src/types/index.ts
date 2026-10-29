@@ -957,11 +957,10 @@ export type ProxyProtocol =
   | 'vmess'
   | 'vless'
   | 'trojan'
-/** 前置代理模式：direct=直连；default=跟随全局默认前置代理；proxy=使用 upstream_proxy_id 指定的代理 */
-export type ProxyUpstreamMode = 'direct' | 'default' | 'proxy' | 'hop_group' // 链式代理（fork）
-export type ProxyRole = 'egress' | 'transport' // 代理池（fork）
+/** 前置组（fork）：落地代理的前置只有直连，或经 upstream_group_id 指定的前置组 */
+export type ProxyUpstreamMode = 'direct' | 'group'
 
-/** 链路中的一跳（先拨号的在前，不含代理自身） */
+/** 当前实际前置端点（name 形如「组/槽位/端点」），不含代理自身 */
 export interface ProxyChainHop {
   id: number
   name: string
@@ -1004,18 +1003,15 @@ export interface Proxy {
   backup_proxy_id?: number | null
   expiry_warn_days: number
   upstream_mode?: ProxyUpstreamMode
-  upstream_proxy_id?: number | null
-  upstream_hop_group_id?: number | null // 链式代理（fork）
+  upstream_group_id?: number | null // 前置组（fork）
   /** 加密协议参数（ss/vmess/vless/trojan），可能缺失或为 null */
   options?: Record<string, string> | null
-  /** 已解析的前置链路（先拨号的在前，不含自身；直连时为空） */
+  /** 当前实际前置端点（直连时为空） */
   chain?: ProxyChainHop[]
-  /** 链路无法解析时的错误（前置代理缺失/停用、成环、过深） */
+  /** 前置链路无法解析时的错误（前置组缺失/停用、无可用槽位） */
   chain_error?: string
   /** 代理池（fork）：所属代理池，null 为默认池 */
   pool_id?: number | null
-  /** 代理池（fork）：egress 为静态落地 IP；transport 只做传输（前置/机场/动态代理），不进代理池、不绑账号 */
-  role?: ProxyRole
   created_at: string
   updated_at: string
 }
@@ -1029,11 +1025,6 @@ export interface ParsedProxyLink {
   username?: string | null
   password?: string | null
   options?: Record<string, string> | null
-}
-
-export interface ProxyChainSettings {
-  default_upstream_proxy_id: number | null
-  default_upstream_hop_group_id?: number | null // 链式代理（fork）
 }
 
 export interface ProxyAccountSummary {
@@ -1760,11 +1751,9 @@ export interface CreateProxyRequest {
   backup_proxy_id?: number | null
   expiry_warn_days?: number
   upstream_mode?: ProxyUpstreamMode
-  upstream_proxy_id?: number | null
-  upstream_hop_group_id?: number | null // 链式代理（fork）
+  upstream_group_id?: number | null // 前置组（fork）：更新时 null 清除
   options?: Record<string, string>
   pool_id?: number | null // 代理池（fork）
-  role?: ProxyRole // 代理池（fork）
 }
 
 export interface UpdateProxyRequest {
@@ -1780,11 +1769,9 @@ export interface UpdateProxyRequest {
   backup_proxy_id?: number | null
   expiry_warn_days?: number
   upstream_mode?: ProxyUpstreamMode
-  upstream_proxy_id?: number | null
-  upstream_hop_group_id?: number | null // 链式代理（fork）
+  upstream_group_id?: number | null // 前置组（fork）：更新时 null 清除
   options?: Record<string, string>
   pool_id?: number | null // 代理池（fork）
-  role?: ProxyRole // 代理池（fork）
 }
 
 export interface AdminDataPayload {

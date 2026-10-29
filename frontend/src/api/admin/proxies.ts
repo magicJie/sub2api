@@ -11,7 +11,6 @@ import type {
   CreateProxyRequest,
   UpdateProxyRequest,
   ParsedProxyLink,
-  ProxyChainSettings,
   PaginatedResponse,
   AdminDataPayload,
   AdminDataImportResult
@@ -238,22 +237,6 @@ export async function parseLink(link: string): Promise<ParsedProxyLink> {
   return data
 }
 
-/**
- * Get chain settings (global default upstream proxy)
- */
-export async function getChainSettings(): Promise<ProxyChainSettings> {
-  const { data } = await apiClient.get<ProxyChainSettings>('/admin/proxies/chain-settings')
-  return data
-}
-
-/**
- * Update chain settings; null clears the default upstream proxy
- */
-export async function updateChainSettings(settings: ProxyChainSettings): Promise<ProxyChainSettings> {
-  const { data } = await apiClient.put<ProxyChainSettings>('/admin/proxies/chain-settings', settings)
-  return data
-}
-
 export async function batchDelete(ids: number[]): Promise<{
   deleted_ids: number[]
   skipped: Array<{ id: number; reason: string }>
@@ -313,8 +296,6 @@ export const proxiesAPI = {
   batchCreate,
   batchDelete,
   parseLink,
-  getChainSettings,
-  updateChainSettings,
   exportData,
   importData
 }

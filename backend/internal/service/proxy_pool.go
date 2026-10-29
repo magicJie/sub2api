@@ -26,11 +26,6 @@ import (
 const (
 	ProxyBindingSourceManual = "manual"
 	ProxyBindingSourcePool   = "pool"
-
-	// 代理角色：egress 为静态落地 IP（上游平台看到的 IP），可进代理池、绑定账号；
-	// transport 为前置跳板、机场/自部署加密节点、动态代理等，只做传输，不进代理池、不绑定账号。
-	ProxyRoleEgress    = "egress"
-	ProxyRoleTransport = "transport"
 )
 
 var (
@@ -46,10 +41,6 @@ var (
 	ErrProxyPoolNameRequired       = infraerrors.BadRequest("PROXY_POOL_NAME_REQUIRED", "proxy pool name is required")
 	ErrProxyPoolBindingNotFound    = infraerrors.NotFound("PROXY_POOL_BINDING_NOT_FOUND", "account has no active proxy binding")
 	ErrProxyPoolReferencedByPolicy = infraerrors.Conflict("PROXY_POOL_REFERENCED_BY_POLICY", "proxy pool is referenced by a platform IP policy; remove it from the policy first")
-	ErrProxyRoleInvalid            = infraerrors.BadRequest("PROXY_ROLE_INVALID", "proxy role must be egress or transport")
-	ErrProxyPoolTransportProxy     = infraerrors.BadRequest("PROXY_POOL_TRANSPORT_PROXY", "transport proxy cannot join a proxy pool")
-	ErrProxyRoleInUse              = infraerrors.Conflict("PROXY_ROLE_IN_USE", "proxy is used by accounts; move them to another proxy before marking it transport")
-	ErrAccountTransportProxy       = infraerrors.BadRequest("ACCOUNT_TRANSPORT_PROXY", "transport proxy cannot be bound to accounts; choose an egress proxy")
 	ErrProxyEgressHostExists       = infraerrors.Conflict("PROXY_EGRESS_HOST_EXISTS", "an egress proxy with the same landing IP already exists")
 )
 
@@ -454,53 +445,10 @@ func proxyIDChanged(current, requested *int64) bool {
 	return cur != next
 }
 
-// NormalizeProxyRole 把空值视为 egress。
-func NormalizeProxyRole(role string) string {
-	if role == ProxyRoleTransport {
-		return ProxyRoleTransport
-	}
-	return ProxyRoleEgress
-}
-
-// applyProxyRole 在代理创建/编辑时应用角色（空表示保持不变）。transport 存储上 pool_id 置空、
-// 池查询再按 role 排除，因此也不会落入默认池；poolRequested 表示本次请求显式指定了非默认池，此时报错而不是静默移出。
-func applyProxyRole(p *Proxy, role string, poolRequested bool) error {
-	switch role {
-	case "":
-	case ProxyRoleEgress, ProxyRoleTransport:
-		p.Role = role
-	default:
-		return ErrProxyRoleInvalid
-	}
-	p.Role = NormalizeProxyRole(p.Role)
-	if p.Role == ProxyRoleTransport {
-		if poolRequested && p.PoolID != nil {
-			return ErrProxyPoolTransportProxy
-		}
-		p.PoolID = nil
-	}
-	return nil
-}
-
-// checkProxyRoleConstraints 校验角色相关约束：有账号在用的代理不能改为 transport；
-// egress 的落地 IP（host）不能与其他 egress 重复（仅在新建、改 host 或改回 egress 时校验，存量重复不阻断编辑）。
+// checkProxyEgressHost 校验落地 IP（host）不与其他代理重复（仅在新建或改 host 时校验，存量重复不阻断编辑）。
 // prev 为编辑前的代理（新建时为 nil）。
-func checkProxyRoleConstraints(ctx context.Context, proxyRepo ProxyRepository, p *Proxy, prev *Proxy) error {
-	role := NormalizeProxyRole(p.Role)
-	if role == ProxyRoleTransport {
-		if prev == nil || NormalizeProxyRole(prev.Role) == ProxyRoleTransport {
-			return nil
-		}
-		count, err := proxyRepo.CountAccountsByProxyID(ctx, p.ID)
-		if err != nil {
-			return err
-		}
-		if count > 0 {
-			return ErrProxyRoleInUse
-		}
-		return nil
-	}
-	if prev != nil && NormalizeProxyRole(prev.Role) == ProxyRoleEgress && strings.EqualFold(prev.Host, p.Host) {
+func checkProxyEgressHost(ctx context.Context, p *Proxy, prev *Proxy) error {
+	if prev != nil && strings.EqualFold(prev.Host, p.Host) {
 		return nil
 	}
 	s := activeProxyPoolService.Load()
@@ -513,22 +461,6 @@ func checkProxyRoleConstraints(ctx context.Context, proxyRepo ProxyRepository, p
 	}
 	if taken {
 		return ErrProxyEgressHostExists
-	}
-	return nil
-}
-
-// checkAccountProxyRole 拒绝把账号直接绑定到 transport 代理（账号只能用落地代理）。
-// proxyID 为 nil 或 0 表示不设置/清除，不校验。
-func checkAccountProxyRole(ctx context.Context, repo ProxyRepository, proxyID *int64) error {
-	if repo == nil || proxyID == nil || *proxyID <= 0 {
-		return nil
-	}
-	p, err := repo.GetByID(ctx, *proxyID)
-	if err != nil {
-		return err
-	}
-	if NormalizeProxyRole(p.Role) == ProxyRoleTransport {
-		return ErrAccountTransportProxy
 	}
 	return nil
 }

@@ -45,10 +45,6 @@ func (h *ProxyHandler) ExportData(c *gin.Context) {
 			return
 		}
 	}
-	if proxies, err = appendUpstreamProxies(ctx, h.adminService, proxies); err != nil { // 链式代理（fork）
-		response.ErrorFrom(c, err)
-		return
-	}
 
 	// 构建 id→name 映射，用于导出备用代理 name
 	proxyNameByID := make(map[int64]string, len(proxies))
@@ -84,7 +80,7 @@ func (h *ProxyHandler) ExportData(c *gin.Context) {
 			BackupProxyName: backupProxyName,
 			ExpiryWarnDays:  p.ExpiryWarnDays,
 
-			DataProxyChain: dataProxyChainFromService(&p, proxies), // 链式代理（fork）
+			DataProxyChain: dataProxyChainFromService(&p), // 链式代理（fork）
 		})
 	}
 
@@ -136,8 +132,6 @@ func (h *ProxyHandler) ImportData(c *gin.Context) {
 	}
 
 	latencyProbeIDs := make([]int64, 0, len(req.Data.Proxies))
-	req.Data.Proxies = orderDataProxiesForImport(req.Data.Proxies) // 链式代理（fork）
-	chainRefs := newProxyChainRefs(existingProxies)                // 链式代理（fork）
 	for i := range req.Data.Proxies {
 		item := req.Data.Proxies[i]
 		key := item.ProxyKey
@@ -159,7 +153,7 @@ func (h *ProxyHandler) ImportData(c *gin.Context) {
 		normalizedStatus := normalizeProxyStatus(item.Status)
 		if existing, ok := proxyByKey[key]; ok {
 			result.ProxyReused++
-			if msg := chainRefs.reuse(item, key, &existing); msg != "" { // 链式代理（fork）
+			if msg := reuseProxyChain(item, &existing); msg != "" { // 链式代理（fork）
 				result.Errors = append(result.Errors, DataImportError{Kind: "proxy", Name: item.Name, ProxyKey: key, Message: msg})
 			}
 			if normalizedStatus != "" && normalizedStatus != existing.Status {
@@ -246,8 +240,7 @@ func (h *ProxyHandler) ImportData(c *gin.Context) {
 			BackupProxyID:  backupProxyID,
 			ExpiryWarnDays: item.ExpiryWarnDays,
 
-			ProxyChainInput: item.DataProxyChain.toInput(chainRefs), // 链式代理（fork）
-			Role:            item.Role,                              // 代理池（fork）
+			ProxyChainInput: item.DataProxyChain.toInput(), // 链式代理（fork）
 		})
 		if err != nil {
 			result.ProxyFailed++
@@ -261,7 +254,6 @@ func (h *ProxyHandler) ImportData(c *gin.Context) {
 		}
 		result.ProxyCreated++
 		proxyByKey[key] = *created
-		chainRefs.add(item.Name, key, created.ID) // 链式代理（fork）
 		// 把新建代理的 name 也加入反查表，供后续批内代理引用
 		if created.Name != "" {
 			proxyNameToID[created.Name] = created.ID

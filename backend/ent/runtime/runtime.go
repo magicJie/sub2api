@@ -31,7 +31,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/promocode"
 	"github.com/Wei-Shaw/sub2api/ent/promocodeusage"
 	"github.com/Wei-Shaw/sub2api/ent/proxy"
-	"github.com/Wei-Shaw/sub2api/ent/proxyhopgroup"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
 	"github.com/Wei-Shaw/sub2api/ent/schema"
 	"github.com/Wei-Shaw/sub2api/ent/securitysecret"
@@ -1750,87 +1749,6 @@ func init() {
 	proxy.DefaultUpstreamMode = proxyDescUpstreamMode.Default.(string)
 	// proxy.UpstreamModeValidator is a validator for the "upstream_mode" field. It is called by the builders before save.
 	proxy.UpstreamModeValidator = proxyDescUpstreamMode.Validators[0].(func(string) error)
-	// proxyDescRole is the schema descriptor for role field.
-	proxyDescRole := proxyFields[16].Descriptor()
-	// proxy.DefaultRole holds the default value on creation for the role field.
-	proxy.DefaultRole = proxyDescRole.Default.(string)
-	// proxy.RoleValidator is a validator for the "role" field. It is called by the builders before save.
-	proxy.RoleValidator = proxyDescRole.Validators[0].(func(string) error)
-	proxyhopgroupMixin := schema.ProxyHopGroup{}.Mixin()
-	proxyhopgroupMixinFields0 := proxyhopgroupMixin[0].Fields()
-	_ = proxyhopgroupMixinFields0
-	proxyhopgroupFields := schema.ProxyHopGroup{}.Fields()
-	_ = proxyhopgroupFields
-	// proxyhopgroupDescCreatedAt is the schema descriptor for created_at field.
-	proxyhopgroupDescCreatedAt := proxyhopgroupMixinFields0[0].Descriptor()
-	// proxyhopgroup.DefaultCreatedAt holds the default value on creation for the created_at field.
-	proxyhopgroup.DefaultCreatedAt = proxyhopgroupDescCreatedAt.Default.(func() time.Time)
-	// proxyhopgroupDescUpdatedAt is the schema descriptor for updated_at field.
-	proxyhopgroupDescUpdatedAt := proxyhopgroupMixinFields0[1].Descriptor()
-	// proxyhopgroup.DefaultUpdatedAt holds the default value on creation for the updated_at field.
-	proxyhopgroup.DefaultUpdatedAt = proxyhopgroupDescUpdatedAt.Default.(func() time.Time)
-	// proxyhopgroup.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
-	proxyhopgroup.UpdateDefaultUpdatedAt = proxyhopgroupDescUpdatedAt.UpdateDefault.(func() time.Time)
-	// proxyhopgroupDescName is the schema descriptor for name field.
-	proxyhopgroupDescName := proxyhopgroupFields[0].Descriptor()
-	// proxyhopgroup.NameValidator is a validator for the "name" field. It is called by the builders before save.
-	proxyhopgroup.NameValidator = func() func(string) error {
-		validators := proxyhopgroupDescName.Validators
-		fns := [...]func(string) error{
-			validators[0].(func(string) error),
-			validators[1].(func(string) error),
-		}
-		return func(name string) error {
-			for _, fn := range fns {
-				if err := fn(name); err != nil {
-					return err
-				}
-			}
-			return nil
-		}
-	}()
-	// proxyhopgroupDescStrategy is the schema descriptor for strategy field.
-	proxyhopgroupDescStrategy := proxyhopgroupFields[1].Descriptor()
-	// proxyhopgroup.DefaultStrategy holds the default value on creation for the strategy field.
-	proxyhopgroup.DefaultStrategy = proxyhopgroupDescStrategy.Default.(string)
-	// proxyhopgroup.StrategyValidator is a validator for the "strategy" field. It is called by the builders before save.
-	proxyhopgroup.StrategyValidator = proxyhopgroupDescStrategy.Validators[0].(func(string) error)
-	// proxyhopgroupDescTestURL is the schema descriptor for test_url field.
-	proxyhopgroupDescTestURL := proxyhopgroupFields[2].Descriptor()
-	// proxyhopgroup.DefaultTestURL holds the default value on creation for the test_url field.
-	proxyhopgroup.DefaultTestURL = proxyhopgroupDescTestURL.Default.(string)
-	// proxyhopgroupDescIntervalSeconds is the schema descriptor for interval_seconds field.
-	proxyhopgroupDescIntervalSeconds := proxyhopgroupFields[3].Descriptor()
-	// proxyhopgroup.DefaultIntervalSeconds holds the default value on creation for the interval_seconds field.
-	proxyhopgroup.DefaultIntervalSeconds = proxyhopgroupDescIntervalSeconds.Default.(int)
-	// proxyhopgroup.IntervalSecondsValidator is a validator for the "interval_seconds" field. It is called by the builders before save.
-	proxyhopgroup.IntervalSecondsValidator = proxyhopgroupDescIntervalSeconds.Validators[0].(func(int) error)
-	// proxyhopgroupDescToleranceMs is the schema descriptor for tolerance_ms field.
-	proxyhopgroupDescToleranceMs := proxyhopgroupFields[4].Descriptor()
-	// proxyhopgroup.DefaultToleranceMs holds the default value on creation for the tolerance_ms field.
-	proxyhopgroup.DefaultToleranceMs = proxyhopgroupDescToleranceMs.Default.(int)
-	// proxyhopgroup.ToleranceMsValidator is a validator for the "tolerance_ms" field. It is called by the builders before save.
-	proxyhopgroup.ToleranceMsValidator = proxyhopgroupDescToleranceMs.Validators[0].(func(int) error)
-	// proxyhopgroupDescSubscriptionUrls is the schema descriptor for subscription_urls field.
-	proxyhopgroupDescSubscriptionUrls := proxyhopgroupFields[5].Descriptor()
-	// proxyhopgroup.DefaultSubscriptionUrls holds the default value on creation for the subscription_urls field.
-	proxyhopgroup.DefaultSubscriptionUrls = proxyhopgroupDescSubscriptionUrls.Default.([]string)
-	// proxyhopgroupDescMemberProxyIds is the schema descriptor for member_proxy_ids field.
-	proxyhopgroupDescMemberProxyIds := proxyhopgroupFields[6].Descriptor()
-	// proxyhopgroup.DefaultMemberProxyIds holds the default value on creation for the member_proxy_ids field.
-	proxyhopgroup.DefaultMemberProxyIds = proxyhopgroupDescMemberProxyIds.Default.([]int64)
-	// proxyhopgroupDescSubscriptionUpdateInterval is the schema descriptor for subscription_update_interval field.
-	proxyhopgroupDescSubscriptionUpdateInterval := proxyhopgroupFields[7].Descriptor()
-	// proxyhopgroup.DefaultSubscriptionUpdateInterval holds the default value on creation for the subscription_update_interval field.
-	proxyhopgroup.DefaultSubscriptionUpdateInterval = proxyhopgroupDescSubscriptionUpdateInterval.Default.(int)
-	// proxyhopgroup.SubscriptionUpdateIntervalValidator is a validator for the "subscription_update_interval" field. It is called by the builders before save.
-	proxyhopgroup.SubscriptionUpdateIntervalValidator = proxyhopgroupDescSubscriptionUpdateInterval.Validators[0].(func(int) error)
-	// proxyhopgroupDescStatus is the schema descriptor for status field.
-	proxyhopgroupDescStatus := proxyhopgroupFields[8].Descriptor()
-	// proxyhopgroup.DefaultStatus holds the default value on creation for the status field.
-	proxyhopgroup.DefaultStatus = proxyhopgroupDescStatus.Default.(string)
-	// proxyhopgroup.StatusValidator is a validator for the "status" field. It is called by the builders before save.
-	proxyhopgroup.StatusValidator = proxyhopgroupDescStatus.Validators[0].(func(string) error)
 	redeemcodeFields := schema.RedeemCode{}.Fields()
 	_ = redeemcodeFields
 	// redeemcodeDescCode is the schema descriptor for code field.

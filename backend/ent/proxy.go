@@ -46,18 +46,14 @@ type Proxy struct {
 	BackupProxyID *int64 `json:"backup_proxy_id,omitempty"`
 	// Days before expiry to flag as expiring-soon (per proxy).
 	ExpiryWarnDays int `json:"expiry_warn_days,omitempty"`
-	// Upstream (front) proxy mode: direct | default | proxy | hop_group.
+	// Upstream (front) mode: direct | group.
 	UpstreamMode string `json:"upstream_mode,omitempty"`
-	// Upstream proxy id when upstream_mode=proxy (self-reference, app-level checked).
-	UpstreamProxyID *int64 `json:"upstream_proxy_id,omitempty"`
-	// 链式代理（fork）：first-hop group id when upstream_mode=hop_group.
-	UpstreamHopGroupID *int64 `json:"upstream_hop_group_id,omitempty"`
+	// 链式代理（fork）：upstream group id when upstream_mode=group.
+	UpstreamGroupID *int64 `json:"upstream_group_id,omitempty"`
 	// Protocol/transport options for ss/vmess/vless/trojan (cipher, network, security, sni ...).
 	Options map[string]string `json:"options,omitempty"`
 	// Proxy pool id (proxy_pools, app-level checked). NULL is treated as the default pool.
 	PoolID *int64 `json:"pool_id,omitempty"`
-	// 代理池（fork）：egress（静态落地 IP，可进代理池、绑账号）| transport（前置/机场/动态代理，只做传输）。
-	Role string `json:"role,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the ProxyQuery when eager-loading is set.
 	Edges        ProxyEdges `json:"edges"`
@@ -113,9 +109,9 @@ func (*Proxy) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case proxy.FieldOptions:
 			values[i] = new([]byte)
-		case proxy.FieldID, proxy.FieldPort, proxy.FieldBackupProxyID, proxy.FieldExpiryWarnDays, proxy.FieldUpstreamProxyID, proxy.FieldUpstreamHopGroupID, proxy.FieldPoolID:
+		case proxy.FieldID, proxy.FieldPort, proxy.FieldBackupProxyID, proxy.FieldExpiryWarnDays, proxy.FieldUpstreamGroupID, proxy.FieldPoolID:
 			values[i] = new(sql.NullInt64)
-		case proxy.FieldName, proxy.FieldProtocol, proxy.FieldHost, proxy.FieldUsername, proxy.FieldPassword, proxy.FieldStatus, proxy.FieldFallbackMode, proxy.FieldUpstreamMode, proxy.FieldRole:
+		case proxy.FieldName, proxy.FieldProtocol, proxy.FieldHost, proxy.FieldUsername, proxy.FieldPassword, proxy.FieldStatus, proxy.FieldFallbackMode, proxy.FieldUpstreamMode:
 			values[i] = new(sql.NullString)
 		case proxy.FieldCreatedAt, proxy.FieldUpdatedAt, proxy.FieldDeletedAt, proxy.FieldExpiresAt:
 			values[i] = new(sql.NullTime)
@@ -235,19 +231,12 @@ func (_m *Proxy) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.UpstreamMode = value.String
 			}
-		case proxy.FieldUpstreamProxyID:
+		case proxy.FieldUpstreamGroupID:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field upstream_proxy_id", values[i])
+				return fmt.Errorf("unexpected type %T for field upstream_group_id", values[i])
 			} else if value.Valid {
-				_m.UpstreamProxyID = new(int64)
-				*_m.UpstreamProxyID = value.Int64
-			}
-		case proxy.FieldUpstreamHopGroupID:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field upstream_hop_group_id", values[i])
-			} else if value.Valid {
-				_m.UpstreamHopGroupID = new(int64)
-				*_m.UpstreamHopGroupID = value.Int64
+				_m.UpstreamGroupID = new(int64)
+				*_m.UpstreamGroupID = value.Int64
 			}
 		case proxy.FieldOptions:
 			if value, ok := values[i].(*[]byte); !ok {
@@ -263,12 +252,6 @@ func (_m *Proxy) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.PoolID = new(int64)
 				*_m.PoolID = value.Int64
-			}
-		case proxy.FieldRole:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field role", values[i])
-			} else if value.Valid {
-				_m.Role = value.String
 			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
@@ -376,13 +359,8 @@ func (_m *Proxy) String() string {
 	builder.WriteString("upstream_mode=")
 	builder.WriteString(_m.UpstreamMode)
 	builder.WriteString(", ")
-	if v := _m.UpstreamProxyID; v != nil {
-		builder.WriteString("upstream_proxy_id=")
-		builder.WriteString(fmt.Sprintf("%v", *v))
-	}
-	builder.WriteString(", ")
-	if v := _m.UpstreamHopGroupID; v != nil {
-		builder.WriteString("upstream_hop_group_id=")
+	if v := _m.UpstreamGroupID; v != nil {
+		builder.WriteString("upstream_group_id=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
 	builder.WriteString(", ")
@@ -393,9 +371,6 @@ func (_m *Proxy) String() string {
 		builder.WriteString("pool_id=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
-	builder.WriteString(", ")
-	builder.WriteString("role=")
-	builder.WriteString(_m.Role)
 	builder.WriteByte(')')
 	return builder.String()
 }

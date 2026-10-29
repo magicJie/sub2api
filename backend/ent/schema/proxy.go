@@ -64,16 +64,14 @@ func (Proxy) Fields() []ent.Field {
 		field.Int("expiry_warn_days").
 			Default(7).
 			Comment("Days before expiry to flag as expiring-soon (per proxy)."),
-		// 链式代理（fork）：前置代理与 Xray 协议参数，见 internal/pkg/proxychain。
+		// 链式代理（fork）：前置组与 Xray 协议参数，见 internal/pkg/proxychain 与迁移 257。
+		// upstream_proxy_id / upstream_hop_group_id / role 列保留在库中供回滚，应用不再读写。
 		field.String("upstream_mode").
 			MaxLen(20).Default("direct").
-			Comment("Upstream (front) proxy mode: direct | default | proxy | hop_group."),
-		field.Int64("upstream_proxy_id").
+			Comment("Upstream (front) mode: direct | group."),
+		field.Int64("upstream_group_id").
 			Optional().Nillable().
-			Comment("Upstream proxy id when upstream_mode=proxy (self-reference, app-level checked)."),
-		field.Int64("upstream_hop_group_id").
-			Optional().Nillable().
-			Comment("链式代理（fork）：first-hop group id when upstream_mode=hop_group."),
+			Comment("链式代理（fork）：upstream group id when upstream_mode=group."),
 		field.JSON("options", map[string]string{}).
 			Optional().
 			Comment("Protocol/transport options for ss/vmess/vless/trojan (cipher, network, security, sni ...)."),
@@ -81,9 +79,6 @@ func (Proxy) Fields() []ent.Field {
 		field.Int64("pool_id").
 			Optional().Nillable().
 			Comment("Proxy pool id (proxy_pools, app-level checked). NULL is treated as the default pool."),
-		field.String("role").
-			MaxLen(20).Default("egress").
-			Comment("代理池（fork）：egress（静态落地 IP，可进代理池、绑账号）| transport（前置/机场/动态代理，只做传输）。"),
 	}
 }
 

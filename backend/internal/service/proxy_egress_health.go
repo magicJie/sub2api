@@ -16,8 +16,8 @@ import (
 
 // 代理池（fork）：落地 IP 健康巡检与一键处置，见 docs/PROXY_IP_MODEL.md 第 5 节。
 //
-// 巡检只看有账号在用的落地代理（role=egress）。故障分两层：
-//   - transport：前置链路不可用（首跳组 / 前置代理挂了、链路无法解析）。只告警，不动账号——
+// 巡检只看有账号在用的落地代理。故障分两层：
+//   - transport：前置组没有可用槽位，或前置可用但经它到不了落地而直连可达。只告警，不动账号——
 //     请求本身已 fail-closed，换落地 IP 也没用，而且一个机场挂了不应暂停所有长期账号。
 //   - egress：传输层健康，但经该落地代理不通。按平台策略处置账号：
 //     sticky 或 on_egress_failure=pause → 暂停调度并告警；churn + reassign → 自动换池内其他 IP。
@@ -248,6 +248,55 @@ func (s *ProxyEgressHealthService) runOnce() {
 	if err := s.CheckAll(ctx); err != nil {
 		slog.Warn("proxy_egress_health_check_failed", "error", err)
 	}
+	s.syncUpstreamSlotAlerts(ctx)
+}
+
+// syncUpstreamSlotAlerts 为不可用的前置槽位发 transport P2 告警、恢复后关闭（与巡检同一选主轮次，多实例只发一次）。
+// 单槽位故障时落地已改派到其余槽位，不产生落地故障，也不动账号。
+func (s *ProxyEgressHealthService) syncUpstreamSlotAlerts(ctx context.Context) {
+	chain := activeProxyChainService.Load()
+	if chain == nil || chain.upstreamRepo == nil {
+		return
+	}
+	groups, err := chain.upstreamRepo.ListGroups(ctx)
+	if err != nil {
+		slog.Warn("proxy_upstream_slot_alert_list_failed", "error", err)
+		return
+	}
+	monitoring := s.alerts != nil && s.alerts.IsMonitoringEnabled(ctx)
+	for _, g := range groups {
+		for _, slot := range g.Slots {
+			st := chain.runtime.SlotRuntime(slot.ID)
+			down := g.Status == StatusActive && st != nil && !st.Available
+			switch {
+			case down && slot.AlertEventID == nil:
+				slog.Warn("proxy_upstream_slot_unavailable", "group_id", g.ID, "group", g.Name, "slot_id", slot.ID, "slot", slot.Name)
+				if !monitoring {
+					continue
+				}
+				event, err := s.alerts.CreateAlertEvent(ctx, &OpsAlertEvent{
+					Severity: "P2", Status: OpsAlertStatusFiring,
+					Title:       fmt.Sprintf("前置槽位不可用：%s / %s", g.Name, slot.Name),
+					Description: "槽位内所有前置端点均探测失败。原本走该槽位的落地已改派到组内其他可用槽位（只增并发，不换落地 IP）；组内没有可用槽位时请求 fail-closed。请检查 AIO listener。",
+					Dimensions:  map[string]any{"source": "proxy_upstream", "group_id": g.ID, "slot_id": slot.ID, "layer": ProxyIncidentLayerTransport},
+					FiredAt:     s.now(),
+				})
+				if err != nil {
+					slog.Warn("proxy_upstream_slot_alert_failed", "slot_id", slot.ID, "error", err)
+					continue
+				}
+				_ = chain.upstreamRepo.SetSlotAlertEventID(ctx, slot.ID, &event.ID)
+			case !down && slot.AlertEventID != nil:
+				if monitoring {
+					resolvedAt := s.now()
+					if err := s.alerts.UpdateAlertEventStatus(ctx, *slot.AlertEventID, OpsAlertStatusResolved, &resolvedAt); err != nil {
+						slog.Warn("proxy_upstream_slot_alert_resolve_failed", "slot_id", slot.ID, "error", err)
+					}
+				}
+				_ = chain.upstreamRepo.SetSlotAlertEventID(ctx, slot.ID, nil)
+			}
+		}
+	}
 }
 
 // CheckAll 巡检所有有账号在用的落地代理，以及仍有未恢复故障的代理（以便自动关闭故障）。
@@ -266,7 +315,7 @@ func (s *ProxyEgressHealthService) CheckAll(ctx context.Context) error {
 	}
 	for i := range proxies {
 		p := &proxies[i].Proxy
-		if NormalizeProxyRole(p.Role) != ProxyRoleEgress || (proxies[i].AccountCount == 0 && !openSet[p.ID]) {
+		if proxies[i].AccountCount == 0 && !openSet[p.ID] {
 			continue
 		}
 		delete(openSet, p.ID)
@@ -303,36 +352,19 @@ func (s *ProxyEgressHealthService) CheckProxy(ctx context.Context, p *Proxy) err
 	return s.handleIncident(ctx, p, incident)
 }
 
-// probe 先检查前置链路和 transport 代理，再将落地探测失败归为 egress。
+// probe 先检查前置组，再将落地探测失败归为 egress。
+// 单个槽位故障由组内改派吸收（URL() 解析时已避开），只有整组没有可用槽位才判 transport。
 func (s *ProxyEgressHealthService) probe(ctx context.Context, p *Proxy) (string, error) {
-	chain, chainErr := DescribeProxyChain(p)
+	_, chainErr := DescribeProxyChain(p)
 	if chainErr != "" {
 		return ProxyIncidentLayerTransport, errors.New(chainErr)
 	}
-	if groupID := effectiveHopGroupID(p); groupID != nil {
-		if healthy, err := hopGroupHealthy(*groupID); !healthy {
-			if err == nil {
-				err = errors.New("first-hop group has no healthy member")
-			}
-			return ProxyIncidentLayerTransport, err
-		}
-	}
-	snapshot := currentProxyChainSnapshot()
-	for _, hop := range chain {
-		upstream, ok := snapshot.byID[hop.ID]
-		if !ok || NormalizeProxyRole(upstream.Role) != ProxyRoleTransport {
-			continue
-		}
-		if _, _, err := s.prober.ProbeProxy(ctx, upstream.URL()); err != nil {
-			return ProxyIncidentLayerTransport, err
-		}
-	}
 	if _, _, err := s.prober.ProbeProxy(ctx, p.URL()); err != nil {
-		// 首跳按落地地址选节点（如 AIO consistent-hashing），上面的 transport 探测可能落在另一个节点上。
-		// 绕过前置直连落地复测：落地本身可用，说明是前置到该落地的路径坏了，按 transport 处理，避免误暂停或换 IP。
-		if len(chain) > 0 {
+		// 前置端点健康但经它到落地失败：绕过前置直连落地复测。落地本身可用，
+		// 说明是前置到该落地的路径坏了，按 transport 处理，避免误暂停或换 IP。
+		if NormalizeUpstreamMode(p.UpstreamMode) == UpstreamModeGroup {
 			if _, _, directErr := s.prober.ProbeProxy(ctx, p.directURL()); directErr == nil {
-				return ProxyIncidentLayerTransport, fmt.Errorf("landing reachable directly but not via upstream chain: %w", err)
+				return ProxyIncidentLayerTransport, fmt.Errorf("landing reachable directly but not via upstream group: %w", err)
 			}
 		}
 		return ProxyIncidentLayerEgress, err
@@ -340,27 +372,10 @@ func (s *ProxyEgressHealthService) probe(ctx context.Context, p *Proxy) (string,
 	return "", nil
 }
 
-// effectiveHopGroupID 返回落地代理直接使用的首跳组（hop_group 模式或跟随默认首跳组）。
-func effectiveHopGroupID(p *Proxy) *int64 {
-	switch NormalizeUpstreamMode(p.UpstreamMode) {
-	case UpstreamModeHopGroup:
-		return p.UpstreamHopGroupID
-	case UpstreamModeDefault:
-		return DefaultUpstreamHopGroupID()
-	}
-	return nil
-}
-
-var hopGroupHealthy = func(groupID int64) (bool, error) {
-	svc := activeProxyChainService.Load()
-	if svc == nil {
-		return true, nil // 没有首跳组运行时（测试/未启用）：不判定为传输层故障
-	}
-	status, err := svc.HopGroupStatus(groupID)
-	if err != nil {
-		return false, err
-	}
-	return status.Selected != "", nil
+func upstreamGroupAllSlotsDown(p *Proxy) bool {
+	rt := activeUpstreamRuntime()
+	return rt != nil && NormalizeUpstreamMode(p.UpstreamMode) == UpstreamModeGroup && p.UpstreamGroupID != nil &&
+		rt.GroupAllSlotsDown(*p.UpstreamGroupID)
 }
 
 func truncateIncidentError(msg string) string {
@@ -456,6 +471,10 @@ func (s *ProxyEgressHealthService) raiseAlert(ctx context.Context, p *Proxy, inc
 	slog.Warn("proxy_egress_incident", "proxy_id", p.ID, "proxy_name", p.Name, "layer", incident.Layer,
 		"paused", paused, "reassigned", reassigned, "alert_only", alertOnly, "error", incident.LastError)
 	if s.alerts == nil || !s.alerts.IsMonitoringEnabled(ctx) {
+		return nil
+	}
+	if incident.Layer == ProxyIncidentLayerTransport && upstreamGroupAllSlotsDown(p) {
+		// 整组没有可用槽位：同一故障已由槽位告警（syncUpstreamSlotAlerts）报出，不再按落地逐条告警。
 		return nil
 	}
 	severity, title := "P1", fmt.Sprintf("落地 IP 故障：%s（%s）", p.Name, p.Host)
@@ -740,9 +759,6 @@ func (s *ProxyPoolService) CheckProxyHealth(ctx context.Context, proxyID int64) 
 	p, err := health.proxyRepo.GetByID(ctx, proxyID)
 	if err != nil {
 		return nil, err
-	}
-	if NormalizeProxyRole(p.Role) != ProxyRoleEgress {
-		return nil, ErrProxyPoolTransportProxy
 	}
 	if err := health.CheckProxy(ctx, p); err != nil {
 		return nil, err

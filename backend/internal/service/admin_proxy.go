@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -90,13 +91,10 @@ func (s *adminServiceImpl) CreateProxy(ctx context.Context, input *CreateProxyIn
 		return nil, err
 	}
 	proxy.PoolID = poolID
-	if err := applyProxyRole(proxy, input.Role, true); err != nil { // 代理池（fork）
+	if err := checkProxyEgressHost(ctx, proxy, nil); err != nil { // 代理池（fork）
 		return nil, err
 	}
-	if err := checkProxyRoleConstraints(ctx, s.proxyRepo, proxy, nil); err != nil { // 代理池（fork）
-		return nil, err
-	}
-	if err := applyProxyChainCreate(ctx, s.proxyRepo, s.proxyChainSettingRepo(), proxy, &input.ProxyChainInput); err != nil { // 链式代理（fork）
+	if err := applyProxyChainCreate(ctx, proxy, &input.ProxyChainInput); err != nil { // 链式代理（fork）
 		return nil, err
 	}
 	if err := s.proxyRepo.Create(ctx, proxy); err != nil {
@@ -172,13 +170,10 @@ func (s *adminServiceImpl) UpdateProxy(ctx context.Context, id int64, input *Upd
 			return nil, err
 		}
 	}
-	if err := applyProxyRole(proxy, input.Role, input.PoolIDSet); err != nil { // 代理池（fork）
+	if err := checkProxyEgressHost(ctx, proxy, &prev); err != nil { // 代理池（fork）
 		return nil, err
 	}
-	if err := checkProxyRoleConstraints(ctx, s.proxyRepo, proxy, &prev); err != nil { // 代理池（fork）
-		return nil, err
-	}
-	if err := applyProxyChainUpdate(ctx, s.proxyRepo, s.proxyChainSettingRepo(), proxy, &input.ProxyChainUpdateInput); err != nil { // 链式代理（fork）
+	if err := applyProxyChainUpdate(ctx, proxy, &input.ProxyChainUpdateInput); err != nil { // 链式代理（fork）
 		return nil, err
 	}
 
@@ -196,9 +191,6 @@ func (s *adminServiceImpl) DeleteProxy(ctx context.Context, id int64) error {
 	}
 	if count > 0 {
 		return ErrProxyInUse
-	}
-	if err := checkProxyUpstreamInUse(ctx, s.proxyRepo, s.proxyChainSettingRepo(), id); err != nil { // 链式代理（fork）
-		return err
 	}
 	if err := s.proxyRepo.Delete(ctx, id); err != nil {
 		return err
@@ -229,10 +221,6 @@ func (s *adminServiceImpl) BatchDeleteProxies(ctx context.Context, ids []int64) 
 			})
 			continue
 		}
-		if err := checkProxyUpstreamInUse(ctx, s.proxyRepo, s.proxyChainSettingRepo(), id); err != nil { // 链式代理（fork）
-			result.Skipped = append(result.Skipped, ProxyBatchDeleteSkipped{ID: id, Reason: err.Error()})
-			continue
-		}
 		if err := s.proxyRepo.Delete(ctx, id); err != nil {
 			result.Skipped = append(result.Skipped, ProxyBatchDeleteSkipped{
 				ID:     id,
@@ -255,14 +243,22 @@ func (s *adminServiceImpl) CheckProxyExists(ctx context.Context, host string, po
 	return s.proxyRepo.ExistsByHostPortAuth(ctx, host, port, username, password)
 }
 
+// probeProxyChain 探测代理出口。前置链路解析失败（如前置组没有可用槽位）时直接返回原因，
+// 不去拨 fail-closed 的占位地址（否则报错只有 unsupported proxy scheme）。
+func (s *adminServiceImpl) probeProxyChain(ctx context.Context, proxy *Proxy) (*ProxyExitInfo, int64, error) {
+	if _, chainErr := DescribeProxyChain(proxy); chainErr != "" {
+		return nil, 0, errors.New(chainErr)
+	}
+	return s.proxyProber.ProbeProxy(ctx, proxy.URL())
+}
+
 func (s *adminServiceImpl) TestProxy(ctx context.Context, id int64) (*ProxyTestResult, error) {
 	proxy, err := s.proxyRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 
-	proxyURL := proxy.URL()
-	exitInfo, latencyMs, err := s.proxyProber.ProbeProxy(ctx, proxyURL)
+	exitInfo, latencyMs, err := s.probeProxyChain(ctx, proxy)
 	if err != nil {
 		s.saveProxyLatency(ctx, id, &ProxyLatencyInfo{
 			Success:   false,
@@ -326,7 +322,7 @@ func (s *adminServiceImpl) CheckProxyQuality(ctx context.Context, id int64) (*Pr
 		return result, nil
 	}
 
-	exitInfo, latencyMs, err := s.proxyProber.ProbeProxy(ctx, proxyURL)
+	exitInfo, latencyMs, err := s.probeProxyChain(ctx, proxy)
 	if err != nil {
 		result.Items = append(result.Items, ProxyQualityCheckItem{
 			Target:    "base_connectivity",

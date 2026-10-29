@@ -542,7 +542,6 @@ type CreateProxyInput struct {
 
 	ProxyChainInput        // 链式代理（fork）
 	PoolID          *int64 // 代理池（fork）
-	Role            string // 代理池（fork）：空为 egress
 }
 
 // UpdateProxyInput preserves omitted expiry/backup values; Clear flags explicitly
@@ -565,7 +564,6 @@ type UpdateProxyInput struct {
 	ProxyChainUpdateInput        // 链式代理（fork）
 	PoolID                *int64 // 代理池（fork）：配合 PoolIDSet，nil 表示移回默认池
 	PoolIDSet             bool
-	Role                  string // 代理池（fork）：空表示保持不变
 }
 
 type GenerateRedeemCodesInput struct {

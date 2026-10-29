@@ -16,11 +16,12 @@
 ## 2. 分层
 
 ```
-账号 ──绑定──▶ 落地代理 egress（host = 静态落地 IP，业务池库存）
-                 │ 前置链路（upstream_mode）
-              传输层：外部 AIO 的首跳 listener（登记为 transport，推荐）
-                     / sub2api 内嵌首跳组（迁移 249，过渡与回退）
-                     / 单个 transport 代理 / 直连
+账号 ──绑定──▶ 落地代理 egress（proxies 只放静态落地 IP，业务池库存）
+                 │ 前置：直连 / 前置组
+              前置组 ──▶ 槽位 1：[端点 A(主), 端点 C(备)]
+                      ──▶ 槽位 2：[端点 B]
+                              │
+              前置端点 = 外部 AIO 的一个 listener（自建节点或机场组）
 ```
 
 ### 2.1 传输层归属（2026-10-28 决定）
@@ -37,11 +38,27 @@
 - **延迟**：切换只发生在节点故障时，且只影响新连接，已有 keep-alive 连接不受影响。主要因素是首跳与落地的地理搭配；url-test 只测「节点→测速 URL」，测不到「节点→落地」，必要时按地区筛选首跳成员。
 - **约束**：若静态 IP 供应商按来源 IP 白名单认证，首跳出口必须固定，负载策略失效；这类供应商改用账号密码认证或单独固定首跳。
 - **内嵌首跳组**（迁移 249）保留为过渡与回退；各环境切到 AIO 并验收后，再决定是否移除（可去掉约 10MB 体积及 mihomo 全局状态、日志接管等绕行处理）。
+- 2026-10-28 晚更新：内嵌首跳组由第 2.2 节的前置组取代（第 5 期），sub2api 不再带 mihomo 内核、不再配订阅。
+
+### 2.2 前置组（2026-10-28 晚决定，第 5 期）
+
+- **前置端点**：外部 AIO 的一个 listener，只存名称、`host:port`、协议（socks5 / http）、认证。listener 后面是一个自建节点，还是一个机场组（机场内部怎么选节点由 AIO 决定），sub2api 不感知。端点是独立资源，不在 proxies 表里，不进池、不绑账号。
+- **槽位**：前置组里的一条有序端点列表，第一个为主，其余为备，备用可不配。同一端点可出现在多个槽位、多个前置组中。槽位数就是该组的前置并发数。
+- **前置组**：槽位的集合，原「首跳组」改名而来。落地代理的前置只有两种：直连，或指向一个前置组。不再有「默认前置代理」，也不再有「落地串在另一条代理后面」。
+- **黏滞**：落地按 rendezvous hash（落地 id × 槽位 id，取最大者）在组内**可用槽位**中选一个，不存状态。增删一个槽位只改派约 1/N 的落地。
+- **健康**：每个实例定时经每个端点请求固定探测地址（默认 `generate_204`），端点共享时只探一次。连续失败达到阈值才判不可用；不可用后要连续成功才判恢复。
+- **切换**：槽位当前端点不可用时，切到列表中下一个可用端点；靠前的端点（含主端点）连续健康满 failback 时长（默认 300 秒）后切回。只影响新连接，已有 keep-alive 连接不受影响。
+- **槽位故障**：槽位内所有端点都不可用即槽位不可用（只有一个端点的槽位即「端点故障 = 槽位故障」）。原本落在该槽位的落地按 rendezvous hash 自动改到其余可用槽位，其他落地不动；代价只是正常槽位并发变高，落地 IP 不变，账号与代理池不受影响。槽位故障发 transport P2 告警。
+- **槽位恢复**：槽位连续健康满 failback 时长后重新参与选择，改走的落地回到原槽位。
+- **整组全挂**：组内没有可用槽位时 fail-closed（不直连），巡检判为 transport 故障，只告警，不动账号。
+- **拨号**：沿用 Xray 链，「当前端点（socks5 / http）→ 落地」。切换端点时只换链的第一跳，落地 IP 不变。
+- **多实例**：探测与切换状态在每个实例内存中各自维护，不跨实例同步；各实例网络一致时结果相同，短暂不一致只影响首跳选择，不影响落地 IP。
+- **AIO 侧约定**：每个 listener 对应一个可辨识的出站来源，例如 `upstream-a`、`upstream-b`、`upstream-c`。应用只依赖协议、地址与认证，不依赖外部订阅结构或节点名称。跨来源备用关系由 sub2api 槽位表达；外部入口的认证与网络隔离由部署方配置。
 
 | 概念 | 说明 | 与账号的关系 |
 |---|---|---|
-| 传输代理 transport | 机场节点、自部署 ss/vless/trojan、动态代理、桥接 socks5 | 从不绑定账号 |
-| 首跳组 hop group | 已有（迁移 249），transport 的自动切换组 | 从不绑定账号 |
+| 前置端点 upstream endpoint | AIO listener（自建节点 / 机场组），第 5 期起替代 transport 代理 | 从不绑定账号 |
+| 前置组 upstream group | 槽位集合，原首跳组（迁移 249）改名 | 从不绑定账号 |
 | 落地代理 egress | 静态落地 IP，可配前置链路；绑定与计数的主体 | 绑定 |
 | 业务池 pool | 出口 IP 的库存分组，不含平台规则 | — |
 | 平台策略 policy | 某平台如何使用 IP（消耗型/长期型） | 决定分配、退役、故障处理 |
@@ -78,6 +95,14 @@
 - 新增 `unbind_reason` 取值：`egress_replaced`（人工一键换 IP）、`egress_reassigned`（churn 自动换）。
 - 锁定语义不变：从池分配的绑定都锁定，sticky 绑定只能通过「换 IP」操作改变。
 
+### 3.4 前置组（第 5 期，迁移 257）
+
+- `proxy_upstream_endpoints`：`name`、`protocol`（socks5 / http）、`host`、`port`、`username`、`password`、`status`。被槽位引用时不能删除。
+- `proxy_upstream_groups`：`name`、`status`、`probe_url`、`probe_interval_seconds`（默认 30）、`fail_threshold`（默认 3）、`recover_threshold`（默认 2）、`failback_seconds`（默认 300）。被落地引用时不能删除。
+- `proxy_upstream_slots`：`group_id`、`name`、`position`、`endpoint_ids`（JSONB 有序数组，至少 1 个，同一槽位内不重复）。
+- `proxies`：`upstream_mode` 只剩 `direct` / `group`，新增 `upstream_group_id`。`upstream_proxy_id`、`upstream_hop_group_id` 与 `role` 列保留供回滚，应用不再读写；`role=transport` 的记录迁成端点后软删除。
+- `proxy_hop_groups` 表保留供回滚，应用不再读写；settings 中 `proxy_chain_default_upstream_proxy_id`、`proxy_chain_default_upstream_hop_group_id` 不再读取。
+
 ## 4. 分配规则
 
 候选 = 策略允许的池内、`role=egress`、代理 active 未过期、对该平台未退役、该平台在用数 < `max_active_accounts`。
@@ -99,7 +124,7 @@
 
 - 巡检有账号在用的 egress 代理（Redis 选主，单实例执行），连续失败达到阈值才处置，避免抖动误伤；故障层级变化时重新计数、重新处置。
 - 巡检配置存于 settings `proxy_egress_health_config`：开关、间隔（30–3600 秒，默认 120）、失败阈值（1–20，默认 3）。在代理池页故障列表上方修改，下一轮生效；配置损坏时回退默认值。
-- 判层：链路无法解析或首跳组没有健康节点 → transport；否则经该代理探测失败 → egress。前置为 AIO listener 时，经该 transport 访问固定探测地址失败即判 transport；哪个首跳节点坏了由 AIO 自己处理，sub2api 不感知。
+- 判层：链路无法解析或首跳组没有健康节点 → transport；否则经该代理探测失败 → egress。前置为 AIO listener 时，经该 transport 访问固定探测地址失败即判 transport；哪个首跳节点坏了由 AIO 自己处理，sub2api 不感知。第 5 期起：前置组没有可用槽位 → transport；单个槽位故障由组内改派吸收，不产生落地故障；端点可用但经落地失败、直连复测可达 → transport；否则 egress。
 - 暂停用账号的 `schedulable=false`，处置记录在 `proxy_egress_incident_accounts`。原本就不可调度的账号只记 `alert_only`，恢复时不会被误打开。
 - 告警写入运维告警（`ops_alert_events`，egress P1、transport P2），走现有告警页面与邮件；运维监控关闭时只写日志。
 - 探测恢复后故障与告警自动关闭，但暂停的账号不自动恢复。代理被删除时故障自动关闭。
@@ -116,7 +141,7 @@
 
 - 策略维度目前是 `platform`。ollama-cloud 与 codex 都挂在 `openai` 等平台下会共用一条策略；需要分开配时，把策略细化到「平台 + 上游（base_url）」。
 
-- 传输层切到 AIO 后，评估移除内嵌首跳组（迁移 249 相关代码与表）。
+- 第 5 期稳定后，另起迁移删除 `proxy_hop_groups` 表及 proxies 上的回滚列。
 
 ## 6. 参考
 
@@ -132,6 +157,12 @@
 - `proxy_pools.platform_limits` 中每个平台 → `platform_ip_policies`（`mode=churn`，`max_lifetime_accounts` 取各池中的最小值，`pool_ids` 为空即全部池，不放宽任何原有限制）。`platform_limits` 列保留供回滚，应用不再读写。
 - 现有未删除账号或绑定记录涉及、但没有 `platform_limits` 的平台 → 生成策略：kiro 为 churn 不限上限，其余为 sticky（`max_active_accounts` 不限，保持原有共用关系）。之后由人工收紧。
 - 已有绑定、锁定状态原样保留；存量重复登记的同一落地 IP 只标出，不自动合并。
+- 第 5 期（迁移 257）前置组转换，同样不改变任何落地当前实际走的路径：
+  - `role=transport` 的代理 → 端点（同名、同地址与认证）。协议不是 socks5 / http、或自身还有前置的 transport，迁移拒绝执行并列出。
+  - 首跳组 → 同 id 的前置组：`fallback` / `url-test` 组生成一个槽位，端点顺序同成员顺序；`load-balance` 组每个成员生成一个单端点槽位。带订阅 URL 且仍被引用的组，迁移拒绝执行并列出，需先在后台把落地改到 AIO 端点。
+  - `upstream_mode=proxy` 指向 transport 的落地 → 每个被引用的 transport 生成一个前置组 `<代理名>`（一个槽位、一个端点）；指向 egress 的落地（落地串落地）迁移拒绝执行并列出。
+  - `upstream_mode=default`：默认首跳组 → 该组；否则默认前置代理 → 上一条生成的组；都没有配置的落地原本就 fail-closed，改为 direct 前先拒绝并列出。
+  - `upstream_mode=hop_group` → `group`，组 id 不变。
 - 升级前按迁移 SQL 的只读预览确认影响范围；备份、环境演练与发布操作由仓库外的运维流程负责。
 
 ## 8. 实施分期
@@ -140,3 +171,8 @@
 2. 平台策略：`platform_ip_policies` 替代 `platform_limits`，实现 churn/sticky 分配与跨平台复用。
 3. 健康与运维：分层故障判定、暂停与告警、一键换 IP / 恢复 / 批量迁移（迁移 252）。
 4. 传输层外置到 AIO（第 2.1 节）：应用只登记端点与前置组；外部代理配置、实例切换、备份和发布流程由仓库外的运维工作区维护。
+5. 前置组（第 2.2 节、第 3.4 节，迁移 257）：
+   1. 后端：端点 / 前置组 / 槽位的表、仓储、CRUD 与引用保护；端点探测与槽位切换运行时；链路解析改为「当前端点 → 落地」；巡检判层接槽位状态；去掉默认前置、`proxy` 模式与 transport 角色。
+   2. 删除 `internal/pkg/mihomohop`、`internal/pkg/hopgroup`、只为 mihomo 服务的 SOCKS 桥接，`go.mod` 去掉 mihomo。
+   3. 前端：首跳组改名前置组，新增端点与槽位编辑、槽位当前端点与端点健康展示；代理页去掉 transport 与默认前置。
+   4. 自动化回归覆盖迁移预检、链路解析、端点故障切换、failback，以及槽位全挂时的 fail-closed 行为。

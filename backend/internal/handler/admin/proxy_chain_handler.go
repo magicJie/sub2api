@@ -12,42 +12,37 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// 链式代理（fork）：前置代理、加密协议参数、分享链接解析与默认前置代理设置。
+// 链式代理（fork）：前置组、加密协议参数与分享链接解析。
 
 // ProxyChainRequest 是创建代理请求中的链式代理字段。
 type ProxyChainRequest struct {
-	UpstreamMode       string            `json:"upstream_mode" binding:"omitempty,oneof=direct default proxy hop_group"`
-	UpstreamProxyID    *int64            `json:"upstream_proxy_id"`
-	UpstreamHopGroupID *int64            `json:"upstream_hop_group_id"`
-	Options            map[string]string `json:"options"`
+	UpstreamMode    string            `json:"upstream_mode" binding:"omitempty,oneof=direct group"`
+	UpstreamGroupID *int64            `json:"upstream_group_id"`
+	Options         map[string]string `json:"options"`
 }
 
 func (r ProxyChainRequest) toInput() service.ProxyChainInput {
 	return service.ProxyChainInput{
-		UpstreamMode:       strings.TrimSpace(r.UpstreamMode),
-		UpstreamProxyID:    r.UpstreamProxyID,
-		UpstreamHopGroupID: r.UpstreamHopGroupID,
-		Options:            r.Options,
+		UpstreamMode:    strings.TrimSpace(r.UpstreamMode),
+		UpstreamGroupID: r.UpstreamGroupID,
+		Options:         r.Options,
 	}
 }
 
 // ProxyChainUpdateRequest 是更新代理请求中的链式代理字段；省略的字段保持不变。
 type ProxyChainUpdateRequest struct {
-	UpstreamMode       string                 `json:"upstream_mode" binding:"omitempty,oneof=direct default proxy hop_group"`
-	UpstreamProxyID    dto.NullableInt64Field `json:"upstream_proxy_id"`
-	UpstreamHopGroupID dto.NullableInt64Field `json:"upstream_hop_group_id"`
-	Options            nullableStringMap      `json:"options"`
+	UpstreamMode    string                 `json:"upstream_mode" binding:"omitempty,oneof=direct group"`
+	UpstreamGroupID dto.NullableInt64Field `json:"upstream_group_id"`
+	Options         nullableStringMap      `json:"options"`
 }
 
 func (r ProxyChainUpdateRequest) toInput() service.ProxyChainUpdateInput {
 	return service.ProxyChainUpdateInput{
-		UpstreamMode:            strings.TrimSpace(r.UpstreamMode),
-		UpstreamProxyID:         r.UpstreamProxyID.Value,
-		ClearUpstreamProxyID:    r.UpstreamProxyID.Set && r.UpstreamProxyID.Value == nil,
-		UpstreamHopGroupID:      r.UpstreamHopGroupID.Value,
-		ClearUpstreamHopGroupID: r.UpstreamHopGroupID.Set && r.UpstreamHopGroupID.Value == nil,
-		Options:                 r.Options.Value,
-		OptionsSet:              r.Options.Set,
+		UpstreamMode:         strings.TrimSpace(r.UpstreamMode),
+		UpstreamGroupID:      r.UpstreamGroupID.Value,
+		ClearUpstreamGroupID: r.UpstreamGroupID.Set && r.UpstreamGroupID.Value == nil,
+		Options:              r.Options.Value,
+		OptionsSet:           r.Options.Set,
 	}
 }
 
@@ -88,7 +83,7 @@ func (h *ProxyHandler) batchCreateFromLink(ctx context.Context, link string) boo
 	return err == nil
 }
 
-// ProxyChainHandler 处理链式代理设置与分享链接解析。
+// ProxyChainHandler 处理分享链接解析与前置端点 / 前置组管理。
 type ProxyChainHandler struct {
 	chainService *service.ProxyChainService
 }
@@ -116,46 +111,4 @@ func (h *ProxyChainHandler) ParseLink(c *gin.Context) {
 		parsed.Options = map[string]string{}
 	}
 	response.Success(c, parsed)
-}
-
-type proxyChainSettingsBody struct {
-	DefaultUpstreamProxyID    *int64 `json:"default_upstream_proxy_id"`
-	DefaultUpstreamHopGroupID *int64 `json:"default_upstream_hop_group_id"`
-}
-
-// GetSettings 读取默认前置代理
-// GET /api/v1/admin/proxies/chain-settings
-func (h *ProxyChainHandler) GetSettings(c *gin.Context) {
-	id, err := h.chainService.GetDefaultUpstreamProxyID(c.Request.Context())
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-	groupID, err := h.chainService.GetDefaultUpstreamHopGroupID(c.Request.Context())
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-	response.Success(c, proxyChainSettingsBody{DefaultUpstreamProxyID: id, DefaultUpstreamHopGroupID: groupID})
-}
-
-// UpdateSettings 设置默认前置代理（null 清除）
-// PUT /api/v1/admin/proxies/chain-settings
-func (h *ProxyChainHandler) UpdateSettings(c *gin.Context) {
-	var req proxyChainSettingsBody
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request: "+err.Error())
-		return
-	}
-	if req.DefaultUpstreamProxyID != nil && *req.DefaultUpstreamProxyID <= 0 {
-		req.DefaultUpstreamProxyID = nil
-	}
-	if req.DefaultUpstreamHopGroupID != nil && *req.DefaultUpstreamHopGroupID <= 0 {
-		req.DefaultUpstreamHopGroupID = nil
-	}
-	if err := h.chainService.SetDefaultUpstream(c.Request.Context(), req.DefaultUpstreamProxyID, req.DefaultUpstreamHopGroupID); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-	response.Success(c, req)
 }

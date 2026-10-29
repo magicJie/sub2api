@@ -39,7 +39,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/promocode"
 	"github.com/Wei-Shaw/sub2api/ent/promocodeusage"
 	"github.com/Wei-Shaw/sub2api/ent/proxy"
-	"github.com/Wei-Shaw/sub2api/ent/proxyhopgroup"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
 	"github.com/Wei-Shaw/sub2api/ent/securitysecret"
 	"github.com/Wei-Shaw/sub2api/ent/setting"
@@ -91,7 +90,6 @@ const (
 	TypePromoCode                     = "PromoCode"
 	TypePromoCodeUsage                = "PromoCodeUsage"
 	TypeProxy                         = "Proxy"
-	TypeProxyHopGroup                 = "ProxyHopGroup"
 	TypeRedeemCode                    = "RedeemCode"
 	TypeSecuritySecret                = "SecuritySecret"
 	TypeSetting                       = "Setting"
@@ -37563,45 +37561,42 @@ func (m *PromoCodeUsageMutation) ResetEdge(name string) error {
 // ProxyMutation represents an operation that mutates the Proxy nodes in the graph.
 type ProxyMutation struct {
 	config
-	op                       Op
-	typ                      string
-	id                       *int64
-	created_at               *time.Time
-	updated_at               *time.Time
-	deleted_at               *time.Time
-	name                     *string
-	protocol                 *string
-	host                     *string
-	port                     *int
-	addport                  *int
-	username                 *string
-	password                 *string
-	status                   *string
-	expires_at               *time.Time
-	fallback_mode            *string
-	expiry_warn_days         *int
-	addexpiry_warn_days      *int
-	upstream_mode            *string
-	upstream_proxy_id        *int64
-	addupstream_proxy_id     *int64
-	upstream_hop_group_id    *int64
-	addupstream_hop_group_id *int64
-	options                  *map[string]string
-	pool_id                  *int64
-	addpool_id               *int64
-	role                     *string
-	clearedFields            map[string]struct{}
-	accounts                 map[int64]struct{}
-	removedaccounts          map[int64]struct{}
-	clearedaccounts          bool
-	primary_proxies          map[int64]struct{}
-	removedprimary_proxies   map[int64]struct{}
-	clearedprimary_proxies   bool
-	backup_proxy             *int64
-	clearedbackup_proxy      bool
-	done                     bool
-	oldValue                 func(context.Context) (*Proxy, error)
-	predicates               []predicate.Proxy
+	op                     Op
+	typ                    string
+	id                     *int64
+	created_at             *time.Time
+	updated_at             *time.Time
+	deleted_at             *time.Time
+	name                   *string
+	protocol               *string
+	host                   *string
+	port                   *int
+	addport                *int
+	username               *string
+	password               *string
+	status                 *string
+	expires_at             *time.Time
+	fallback_mode          *string
+	expiry_warn_days       *int
+	addexpiry_warn_days    *int
+	upstream_mode          *string
+	upstream_group_id      *int64
+	addupstream_group_id   *int64
+	options                *map[string]string
+	pool_id                *int64
+	addpool_id             *int64
+	clearedFields          map[string]struct{}
+	accounts               map[int64]struct{}
+	removedaccounts        map[int64]struct{}
+	clearedaccounts        bool
+	primary_proxies        map[int64]struct{}
+	removedprimary_proxies map[int64]struct{}
+	clearedprimary_proxies bool
+	backup_proxy           *int64
+	clearedbackup_proxy    bool
+	done                   bool
+	oldValue               func(context.Context) (*Proxy, error)
+	predicates             []predicate.Proxy
 }
 
 var _ ent.Mutation = (*ProxyMutation)(nil)
@@ -38347,144 +38342,74 @@ func (m *ProxyMutation) ResetUpstreamMode() {
 	m.upstream_mode = nil
 }
 
-// SetUpstreamProxyID sets the "upstream_proxy_id" field.
-func (m *ProxyMutation) SetUpstreamProxyID(i int64) {
-	m.upstream_proxy_id = &i
-	m.addupstream_proxy_id = nil
+// SetUpstreamGroupID sets the "upstream_group_id" field.
+func (m *ProxyMutation) SetUpstreamGroupID(i int64) {
+	m.upstream_group_id = &i
+	m.addupstream_group_id = nil
 }
 
-// UpstreamProxyID returns the value of the "upstream_proxy_id" field in the mutation.
-func (m *ProxyMutation) UpstreamProxyID() (r int64, exists bool) {
-	v := m.upstream_proxy_id
+// UpstreamGroupID returns the value of the "upstream_group_id" field in the mutation.
+func (m *ProxyMutation) UpstreamGroupID() (r int64, exists bool) {
+	v := m.upstream_group_id
 	if v == nil {
 		return
 	}
 	return *v, true
 }
 
-// OldUpstreamProxyID returns the old "upstream_proxy_id" field's value of the Proxy entity.
+// OldUpstreamGroupID returns the old "upstream_group_id" field's value of the Proxy entity.
 // If the Proxy object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ProxyMutation) OldUpstreamProxyID(ctx context.Context) (v *int64, err error) {
+func (m *ProxyMutation) OldUpstreamGroupID(ctx context.Context) (v *int64, err error) {
 	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUpstreamProxyID is only allowed on UpdateOne operations")
+		return v, errors.New("OldUpstreamGroupID is only allowed on UpdateOne operations")
 	}
 	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUpstreamProxyID requires an ID field in the mutation")
+		return v, errors.New("OldUpstreamGroupID requires an ID field in the mutation")
 	}
 	oldValue, err := m.oldValue(ctx)
 	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUpstreamProxyID: %w", err)
+		return v, fmt.Errorf("querying old value for OldUpstreamGroupID: %w", err)
 	}
-	return oldValue.UpstreamProxyID, nil
+	return oldValue.UpstreamGroupID, nil
 }
 
-// AddUpstreamProxyID adds i to the "upstream_proxy_id" field.
-func (m *ProxyMutation) AddUpstreamProxyID(i int64) {
-	if m.addupstream_proxy_id != nil {
-		*m.addupstream_proxy_id += i
+// AddUpstreamGroupID adds i to the "upstream_group_id" field.
+func (m *ProxyMutation) AddUpstreamGroupID(i int64) {
+	if m.addupstream_group_id != nil {
+		*m.addupstream_group_id += i
 	} else {
-		m.addupstream_proxy_id = &i
+		m.addupstream_group_id = &i
 	}
 }
 
-// AddedUpstreamProxyID returns the value that was added to the "upstream_proxy_id" field in this mutation.
-func (m *ProxyMutation) AddedUpstreamProxyID() (r int64, exists bool) {
-	v := m.addupstream_proxy_id
+// AddedUpstreamGroupID returns the value that was added to the "upstream_group_id" field in this mutation.
+func (m *ProxyMutation) AddedUpstreamGroupID() (r int64, exists bool) {
+	v := m.addupstream_group_id
 	if v == nil {
 		return
 	}
 	return *v, true
 }
 
-// ClearUpstreamProxyID clears the value of the "upstream_proxy_id" field.
-func (m *ProxyMutation) ClearUpstreamProxyID() {
-	m.upstream_proxy_id = nil
-	m.addupstream_proxy_id = nil
-	m.clearedFields[proxy.FieldUpstreamProxyID] = struct{}{}
+// ClearUpstreamGroupID clears the value of the "upstream_group_id" field.
+func (m *ProxyMutation) ClearUpstreamGroupID() {
+	m.upstream_group_id = nil
+	m.addupstream_group_id = nil
+	m.clearedFields[proxy.FieldUpstreamGroupID] = struct{}{}
 }
 
-// UpstreamProxyIDCleared returns if the "upstream_proxy_id" field was cleared in this mutation.
-func (m *ProxyMutation) UpstreamProxyIDCleared() bool {
-	_, ok := m.clearedFields[proxy.FieldUpstreamProxyID]
+// UpstreamGroupIDCleared returns if the "upstream_group_id" field was cleared in this mutation.
+func (m *ProxyMutation) UpstreamGroupIDCleared() bool {
+	_, ok := m.clearedFields[proxy.FieldUpstreamGroupID]
 	return ok
 }
 
-// ResetUpstreamProxyID resets all changes to the "upstream_proxy_id" field.
-func (m *ProxyMutation) ResetUpstreamProxyID() {
-	m.upstream_proxy_id = nil
-	m.addupstream_proxy_id = nil
-	delete(m.clearedFields, proxy.FieldUpstreamProxyID)
-}
-
-// SetUpstreamHopGroupID sets the "upstream_hop_group_id" field.
-func (m *ProxyMutation) SetUpstreamHopGroupID(i int64) {
-	m.upstream_hop_group_id = &i
-	m.addupstream_hop_group_id = nil
-}
-
-// UpstreamHopGroupID returns the value of the "upstream_hop_group_id" field in the mutation.
-func (m *ProxyMutation) UpstreamHopGroupID() (r int64, exists bool) {
-	v := m.upstream_hop_group_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUpstreamHopGroupID returns the old "upstream_hop_group_id" field's value of the Proxy entity.
-// If the Proxy object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ProxyMutation) OldUpstreamHopGroupID(ctx context.Context) (v *int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUpstreamHopGroupID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUpstreamHopGroupID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUpstreamHopGroupID: %w", err)
-	}
-	return oldValue.UpstreamHopGroupID, nil
-}
-
-// AddUpstreamHopGroupID adds i to the "upstream_hop_group_id" field.
-func (m *ProxyMutation) AddUpstreamHopGroupID(i int64) {
-	if m.addupstream_hop_group_id != nil {
-		*m.addupstream_hop_group_id += i
-	} else {
-		m.addupstream_hop_group_id = &i
-	}
-}
-
-// AddedUpstreamHopGroupID returns the value that was added to the "upstream_hop_group_id" field in this mutation.
-func (m *ProxyMutation) AddedUpstreamHopGroupID() (r int64, exists bool) {
-	v := m.addupstream_hop_group_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ClearUpstreamHopGroupID clears the value of the "upstream_hop_group_id" field.
-func (m *ProxyMutation) ClearUpstreamHopGroupID() {
-	m.upstream_hop_group_id = nil
-	m.addupstream_hop_group_id = nil
-	m.clearedFields[proxy.FieldUpstreamHopGroupID] = struct{}{}
-}
-
-// UpstreamHopGroupIDCleared returns if the "upstream_hop_group_id" field was cleared in this mutation.
-func (m *ProxyMutation) UpstreamHopGroupIDCleared() bool {
-	_, ok := m.clearedFields[proxy.FieldUpstreamHopGroupID]
-	return ok
-}
-
-// ResetUpstreamHopGroupID resets all changes to the "upstream_hop_group_id" field.
-func (m *ProxyMutation) ResetUpstreamHopGroupID() {
-	m.upstream_hop_group_id = nil
-	m.addupstream_hop_group_id = nil
-	delete(m.clearedFields, proxy.FieldUpstreamHopGroupID)
+// ResetUpstreamGroupID resets all changes to the "upstream_group_id" field.
+func (m *ProxyMutation) ResetUpstreamGroupID() {
+	m.upstream_group_id = nil
+	m.addupstream_group_id = nil
+	delete(m.clearedFields, proxy.FieldUpstreamGroupID)
 }
 
 // SetOptions sets the "options" field.
@@ -38604,42 +38529,6 @@ func (m *ProxyMutation) ResetPoolID() {
 	m.pool_id = nil
 	m.addpool_id = nil
 	delete(m.clearedFields, proxy.FieldPoolID)
-}
-
-// SetRole sets the "role" field.
-func (m *ProxyMutation) SetRole(s string) {
-	m.role = &s
-}
-
-// Role returns the value of the "role" field in the mutation.
-func (m *ProxyMutation) Role() (r string, exists bool) {
-	v := m.role
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldRole returns the old "role" field's value of the Proxy entity.
-// If the Proxy object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ProxyMutation) OldRole(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldRole is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldRole requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldRole: %w", err)
-	}
-	return oldValue.Role, nil
-}
-
-// ResetRole resets all changes to the "role" field.
-func (m *ProxyMutation) ResetRole() {
-	m.role = nil
 }
 
 // AddAccountIDs adds the "accounts" edge to the Account entity by ids.
@@ -38811,7 +38700,7 @@ func (m *ProxyMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ProxyMutation) Fields() []string {
-	fields := make([]string, 0, 20)
+	fields := make([]string, 0, 18)
 	if m.created_at != nil {
 		fields = append(fields, proxy.FieldCreatedAt)
 	}
@@ -38857,20 +38746,14 @@ func (m *ProxyMutation) Fields() []string {
 	if m.upstream_mode != nil {
 		fields = append(fields, proxy.FieldUpstreamMode)
 	}
-	if m.upstream_proxy_id != nil {
-		fields = append(fields, proxy.FieldUpstreamProxyID)
-	}
-	if m.upstream_hop_group_id != nil {
-		fields = append(fields, proxy.FieldUpstreamHopGroupID)
+	if m.upstream_group_id != nil {
+		fields = append(fields, proxy.FieldUpstreamGroupID)
 	}
 	if m.options != nil {
 		fields = append(fields, proxy.FieldOptions)
 	}
 	if m.pool_id != nil {
 		fields = append(fields, proxy.FieldPoolID)
-	}
-	if m.role != nil {
-		fields = append(fields, proxy.FieldRole)
 	}
 	return fields
 }
@@ -38910,16 +38793,12 @@ func (m *ProxyMutation) Field(name string) (ent.Value, bool) {
 		return m.ExpiryWarnDays()
 	case proxy.FieldUpstreamMode:
 		return m.UpstreamMode()
-	case proxy.FieldUpstreamProxyID:
-		return m.UpstreamProxyID()
-	case proxy.FieldUpstreamHopGroupID:
-		return m.UpstreamHopGroupID()
+	case proxy.FieldUpstreamGroupID:
+		return m.UpstreamGroupID()
 	case proxy.FieldOptions:
 		return m.Options()
 	case proxy.FieldPoolID:
 		return m.PoolID()
-	case proxy.FieldRole:
-		return m.Role()
 	}
 	return nil, false
 }
@@ -38959,16 +38838,12 @@ func (m *ProxyMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldExpiryWarnDays(ctx)
 	case proxy.FieldUpstreamMode:
 		return m.OldUpstreamMode(ctx)
-	case proxy.FieldUpstreamProxyID:
-		return m.OldUpstreamProxyID(ctx)
-	case proxy.FieldUpstreamHopGroupID:
-		return m.OldUpstreamHopGroupID(ctx)
+	case proxy.FieldUpstreamGroupID:
+		return m.OldUpstreamGroupID(ctx)
 	case proxy.FieldOptions:
 		return m.OldOptions(ctx)
 	case proxy.FieldPoolID:
 		return m.OldPoolID(ctx)
-	case proxy.FieldRole:
-		return m.OldRole(ctx)
 	}
 	return nil, fmt.Errorf("unknown Proxy field %s", name)
 }
@@ -39083,19 +38958,12 @@ func (m *ProxyMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetUpstreamMode(v)
 		return nil
-	case proxy.FieldUpstreamProxyID:
+	case proxy.FieldUpstreamGroupID:
 		v, ok := value.(int64)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
-		m.SetUpstreamProxyID(v)
-		return nil
-	case proxy.FieldUpstreamHopGroupID:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUpstreamHopGroupID(v)
+		m.SetUpstreamGroupID(v)
 		return nil
 	case proxy.FieldOptions:
 		v, ok := value.(map[string]string)
@@ -39111,13 +38979,6 @@ func (m *ProxyMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetPoolID(v)
 		return nil
-	case proxy.FieldRole:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetRole(v)
-		return nil
 	}
 	return fmt.Errorf("unknown Proxy field %s", name)
 }
@@ -39132,11 +38993,8 @@ func (m *ProxyMutation) AddedFields() []string {
 	if m.addexpiry_warn_days != nil {
 		fields = append(fields, proxy.FieldExpiryWarnDays)
 	}
-	if m.addupstream_proxy_id != nil {
-		fields = append(fields, proxy.FieldUpstreamProxyID)
-	}
-	if m.addupstream_hop_group_id != nil {
-		fields = append(fields, proxy.FieldUpstreamHopGroupID)
+	if m.addupstream_group_id != nil {
+		fields = append(fields, proxy.FieldUpstreamGroupID)
 	}
 	if m.addpool_id != nil {
 		fields = append(fields, proxy.FieldPoolID)
@@ -39153,10 +39011,8 @@ func (m *ProxyMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedPort()
 	case proxy.FieldExpiryWarnDays:
 		return m.AddedExpiryWarnDays()
-	case proxy.FieldUpstreamProxyID:
-		return m.AddedUpstreamProxyID()
-	case proxy.FieldUpstreamHopGroupID:
-		return m.AddedUpstreamHopGroupID()
+	case proxy.FieldUpstreamGroupID:
+		return m.AddedUpstreamGroupID()
 	case proxy.FieldPoolID:
 		return m.AddedPoolID()
 	}
@@ -39182,19 +39038,12 @@ func (m *ProxyMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddExpiryWarnDays(v)
 		return nil
-	case proxy.FieldUpstreamProxyID:
+	case proxy.FieldUpstreamGroupID:
 		v, ok := value.(int64)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
-		m.AddUpstreamProxyID(v)
-		return nil
-	case proxy.FieldUpstreamHopGroupID:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddUpstreamHopGroupID(v)
+		m.AddUpstreamGroupID(v)
 		return nil
 	case proxy.FieldPoolID:
 		v, ok := value.(int64)
@@ -39226,11 +39075,8 @@ func (m *ProxyMutation) ClearedFields() []string {
 	if m.FieldCleared(proxy.FieldBackupProxyID) {
 		fields = append(fields, proxy.FieldBackupProxyID)
 	}
-	if m.FieldCleared(proxy.FieldUpstreamProxyID) {
-		fields = append(fields, proxy.FieldUpstreamProxyID)
-	}
-	if m.FieldCleared(proxy.FieldUpstreamHopGroupID) {
-		fields = append(fields, proxy.FieldUpstreamHopGroupID)
+	if m.FieldCleared(proxy.FieldUpstreamGroupID) {
+		fields = append(fields, proxy.FieldUpstreamGroupID)
 	}
 	if m.FieldCleared(proxy.FieldOptions) {
 		fields = append(fields, proxy.FieldOptions)
@@ -39267,11 +39113,8 @@ func (m *ProxyMutation) ClearField(name string) error {
 	case proxy.FieldBackupProxyID:
 		m.ClearBackupProxyID()
 		return nil
-	case proxy.FieldUpstreamProxyID:
-		m.ClearUpstreamProxyID()
-		return nil
-	case proxy.FieldUpstreamHopGroupID:
-		m.ClearUpstreamHopGroupID()
+	case proxy.FieldUpstreamGroupID:
+		m.ClearUpstreamGroupID()
 		return nil
 	case proxy.FieldOptions:
 		m.ClearOptions()
@@ -39332,20 +39175,14 @@ func (m *ProxyMutation) ResetField(name string) error {
 	case proxy.FieldUpstreamMode:
 		m.ResetUpstreamMode()
 		return nil
-	case proxy.FieldUpstreamProxyID:
-		m.ResetUpstreamProxyID()
-		return nil
-	case proxy.FieldUpstreamHopGroupID:
-		m.ResetUpstreamHopGroupID()
+	case proxy.FieldUpstreamGroupID:
+		m.ResetUpstreamGroupID()
 		return nil
 	case proxy.FieldOptions:
 		m.ResetOptions()
 		return nil
 	case proxy.FieldPoolID:
 		m.ResetPoolID()
-		return nil
-	case proxy.FieldRole:
-		m.ResetRole()
 		return nil
 	}
 	return fmt.Errorf("unknown Proxy field %s", name)
@@ -39477,1006 +39314,6 @@ func (m *ProxyMutation) ResetEdge(name string) error {
 		return nil
 	}
 	return fmt.Errorf("unknown Proxy edge %s", name)
-}
-
-// ProxyHopGroupMutation represents an operation that mutates the ProxyHopGroup nodes in the graph.
-type ProxyHopGroupMutation struct {
-	config
-	op                              Op
-	typ                             string
-	id                              *int64
-	created_at                      *time.Time
-	updated_at                      *time.Time
-	name                            *string
-	strategy                        *string
-	test_url                        *string
-	interval_seconds                *int
-	addinterval_seconds             *int
-	tolerance_ms                    *int
-	addtolerance_ms                 *int
-	subscription_urls               *[]string
-	appendsubscription_urls         []string
-	member_proxy_ids                *[]int64
-	appendmember_proxy_ids          []int64
-	subscription_update_interval    *int
-	addsubscription_update_interval *int
-	status                          *string
-	clearedFields                   map[string]struct{}
-	done                            bool
-	oldValue                        func(context.Context) (*ProxyHopGroup, error)
-	predicates                      []predicate.ProxyHopGroup
-}
-
-var _ ent.Mutation = (*ProxyHopGroupMutation)(nil)
-
-// proxyhopgroupOption allows management of the mutation configuration using functional options.
-type proxyhopgroupOption func(*ProxyHopGroupMutation)
-
-// newProxyHopGroupMutation creates new mutation for the ProxyHopGroup entity.
-func newProxyHopGroupMutation(c config, op Op, opts ...proxyhopgroupOption) *ProxyHopGroupMutation {
-	m := &ProxyHopGroupMutation{
-		config:        c,
-		op:            op,
-		typ:           TypeProxyHopGroup,
-		clearedFields: make(map[string]struct{}),
-	}
-	for _, opt := range opts {
-		opt(m)
-	}
-	return m
-}
-
-// withProxyHopGroupID sets the ID field of the mutation.
-func withProxyHopGroupID(id int64) proxyhopgroupOption {
-	return func(m *ProxyHopGroupMutation) {
-		var (
-			err   error
-			once  sync.Once
-			value *ProxyHopGroup
-		)
-		m.oldValue = func(ctx context.Context) (*ProxyHopGroup, error) {
-			once.Do(func() {
-				if m.done {
-					err = errors.New("querying old values post mutation is not allowed")
-				} else {
-					value, err = m.Client().ProxyHopGroup.Get(ctx, id)
-				}
-			})
-			return value, err
-		}
-		m.id = &id
-	}
-}
-
-// withProxyHopGroup sets the old ProxyHopGroup of the mutation.
-func withProxyHopGroup(node *ProxyHopGroup) proxyhopgroupOption {
-	return func(m *ProxyHopGroupMutation) {
-		m.oldValue = func(context.Context) (*ProxyHopGroup, error) {
-			return node, nil
-		}
-		m.id = &node.ID
-	}
-}
-
-// Client returns a new `ent.Client` from the mutation. If the mutation was
-// executed in a transaction (ent.Tx), a transactional client is returned.
-func (m ProxyHopGroupMutation) Client() *Client {
-	client := &Client{config: m.config}
-	client.init()
-	return client
-}
-
-// Tx returns an `ent.Tx` for mutations that were executed in transactions;
-// it returns an error otherwise.
-func (m ProxyHopGroupMutation) Tx() (*Tx, error) {
-	if _, ok := m.driver.(*txDriver); !ok {
-		return nil, errors.New("ent: mutation is not running in a transaction")
-	}
-	tx := &Tx{config: m.config}
-	tx.init()
-	return tx, nil
-}
-
-// ID returns the ID value in the mutation. Note that the ID is only available
-// if it was provided to the builder or after it was returned from the database.
-func (m *ProxyHopGroupMutation) ID() (id int64, exists bool) {
-	if m.id == nil {
-		return
-	}
-	return *m.id, true
-}
-
-// IDs queries the database and returns the entity ids that match the mutation's predicate.
-// That means, if the mutation is applied within a transaction with an isolation level such
-// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
-// or updated by the mutation.
-func (m *ProxyHopGroupMutation) IDs(ctx context.Context) ([]int64, error) {
-	switch {
-	case m.op.Is(OpUpdateOne | OpDeleteOne):
-		id, exists := m.ID()
-		if exists {
-			return []int64{id}, nil
-		}
-		fallthrough
-	case m.op.Is(OpUpdate | OpDelete):
-		return m.Client().ProxyHopGroup.Query().Where(m.predicates...).IDs(ctx)
-	default:
-		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
-	}
-}
-
-// SetCreatedAt sets the "created_at" field.
-func (m *ProxyHopGroupMutation) SetCreatedAt(t time.Time) {
-	m.created_at = &t
-}
-
-// CreatedAt returns the value of the "created_at" field in the mutation.
-func (m *ProxyHopGroupMutation) CreatedAt() (r time.Time, exists bool) {
-	v := m.created_at
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldCreatedAt returns the old "created_at" field's value of the ProxyHopGroup entity.
-// If the ProxyHopGroup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ProxyHopGroupMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
-	}
-	return oldValue.CreatedAt, nil
-}
-
-// ResetCreatedAt resets all changes to the "created_at" field.
-func (m *ProxyHopGroupMutation) ResetCreatedAt() {
-	m.created_at = nil
-}
-
-// SetUpdatedAt sets the "updated_at" field.
-func (m *ProxyHopGroupMutation) SetUpdatedAt(t time.Time) {
-	m.updated_at = &t
-}
-
-// UpdatedAt returns the value of the "updated_at" field in the mutation.
-func (m *ProxyHopGroupMutation) UpdatedAt() (r time.Time, exists bool) {
-	v := m.updated_at
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUpdatedAt returns the old "updated_at" field's value of the ProxyHopGroup entity.
-// If the ProxyHopGroup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ProxyHopGroupMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
-	}
-	return oldValue.UpdatedAt, nil
-}
-
-// ResetUpdatedAt resets all changes to the "updated_at" field.
-func (m *ProxyHopGroupMutation) ResetUpdatedAt() {
-	m.updated_at = nil
-}
-
-// SetName sets the "name" field.
-func (m *ProxyHopGroupMutation) SetName(s string) {
-	m.name = &s
-}
-
-// Name returns the value of the "name" field in the mutation.
-func (m *ProxyHopGroupMutation) Name() (r string, exists bool) {
-	v := m.name
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldName returns the old "name" field's value of the ProxyHopGroup entity.
-// If the ProxyHopGroup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ProxyHopGroupMutation) OldName(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldName is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldName requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldName: %w", err)
-	}
-	return oldValue.Name, nil
-}
-
-// ResetName resets all changes to the "name" field.
-func (m *ProxyHopGroupMutation) ResetName() {
-	m.name = nil
-}
-
-// SetStrategy sets the "strategy" field.
-func (m *ProxyHopGroupMutation) SetStrategy(s string) {
-	m.strategy = &s
-}
-
-// Strategy returns the value of the "strategy" field in the mutation.
-func (m *ProxyHopGroupMutation) Strategy() (r string, exists bool) {
-	v := m.strategy
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldStrategy returns the old "strategy" field's value of the ProxyHopGroup entity.
-// If the ProxyHopGroup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ProxyHopGroupMutation) OldStrategy(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldStrategy is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldStrategy requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldStrategy: %w", err)
-	}
-	return oldValue.Strategy, nil
-}
-
-// ResetStrategy resets all changes to the "strategy" field.
-func (m *ProxyHopGroupMutation) ResetStrategy() {
-	m.strategy = nil
-}
-
-// SetTestURL sets the "test_url" field.
-func (m *ProxyHopGroupMutation) SetTestURL(s string) {
-	m.test_url = &s
-}
-
-// TestURL returns the value of the "test_url" field in the mutation.
-func (m *ProxyHopGroupMutation) TestURL() (r string, exists bool) {
-	v := m.test_url
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldTestURL returns the old "test_url" field's value of the ProxyHopGroup entity.
-// If the ProxyHopGroup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ProxyHopGroupMutation) OldTestURL(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldTestURL is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldTestURL requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldTestURL: %w", err)
-	}
-	return oldValue.TestURL, nil
-}
-
-// ResetTestURL resets all changes to the "test_url" field.
-func (m *ProxyHopGroupMutation) ResetTestURL() {
-	m.test_url = nil
-}
-
-// SetIntervalSeconds sets the "interval_seconds" field.
-func (m *ProxyHopGroupMutation) SetIntervalSeconds(i int) {
-	m.interval_seconds = &i
-	m.addinterval_seconds = nil
-}
-
-// IntervalSeconds returns the value of the "interval_seconds" field in the mutation.
-func (m *ProxyHopGroupMutation) IntervalSeconds() (r int, exists bool) {
-	v := m.interval_seconds
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldIntervalSeconds returns the old "interval_seconds" field's value of the ProxyHopGroup entity.
-// If the ProxyHopGroup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ProxyHopGroupMutation) OldIntervalSeconds(ctx context.Context) (v int, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldIntervalSeconds is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldIntervalSeconds requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldIntervalSeconds: %w", err)
-	}
-	return oldValue.IntervalSeconds, nil
-}
-
-// AddIntervalSeconds adds i to the "interval_seconds" field.
-func (m *ProxyHopGroupMutation) AddIntervalSeconds(i int) {
-	if m.addinterval_seconds != nil {
-		*m.addinterval_seconds += i
-	} else {
-		m.addinterval_seconds = &i
-	}
-}
-
-// AddedIntervalSeconds returns the value that was added to the "interval_seconds" field in this mutation.
-func (m *ProxyHopGroupMutation) AddedIntervalSeconds() (r int, exists bool) {
-	v := m.addinterval_seconds
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetIntervalSeconds resets all changes to the "interval_seconds" field.
-func (m *ProxyHopGroupMutation) ResetIntervalSeconds() {
-	m.interval_seconds = nil
-	m.addinterval_seconds = nil
-}
-
-// SetToleranceMs sets the "tolerance_ms" field.
-func (m *ProxyHopGroupMutation) SetToleranceMs(i int) {
-	m.tolerance_ms = &i
-	m.addtolerance_ms = nil
-}
-
-// ToleranceMs returns the value of the "tolerance_ms" field in the mutation.
-func (m *ProxyHopGroupMutation) ToleranceMs() (r int, exists bool) {
-	v := m.tolerance_ms
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldToleranceMs returns the old "tolerance_ms" field's value of the ProxyHopGroup entity.
-// If the ProxyHopGroup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ProxyHopGroupMutation) OldToleranceMs(ctx context.Context) (v int, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldToleranceMs is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldToleranceMs requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldToleranceMs: %w", err)
-	}
-	return oldValue.ToleranceMs, nil
-}
-
-// AddToleranceMs adds i to the "tolerance_ms" field.
-func (m *ProxyHopGroupMutation) AddToleranceMs(i int) {
-	if m.addtolerance_ms != nil {
-		*m.addtolerance_ms += i
-	} else {
-		m.addtolerance_ms = &i
-	}
-}
-
-// AddedToleranceMs returns the value that was added to the "tolerance_ms" field in this mutation.
-func (m *ProxyHopGroupMutation) AddedToleranceMs() (r int, exists bool) {
-	v := m.addtolerance_ms
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetToleranceMs resets all changes to the "tolerance_ms" field.
-func (m *ProxyHopGroupMutation) ResetToleranceMs() {
-	m.tolerance_ms = nil
-	m.addtolerance_ms = nil
-}
-
-// SetSubscriptionUrls sets the "subscription_urls" field.
-func (m *ProxyHopGroupMutation) SetSubscriptionUrls(s []string) {
-	m.subscription_urls = &s
-	m.appendsubscription_urls = nil
-}
-
-// SubscriptionUrls returns the value of the "subscription_urls" field in the mutation.
-func (m *ProxyHopGroupMutation) SubscriptionUrls() (r []string, exists bool) {
-	v := m.subscription_urls
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldSubscriptionUrls returns the old "subscription_urls" field's value of the ProxyHopGroup entity.
-// If the ProxyHopGroup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ProxyHopGroupMutation) OldSubscriptionUrls(ctx context.Context) (v []string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldSubscriptionUrls is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldSubscriptionUrls requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldSubscriptionUrls: %w", err)
-	}
-	return oldValue.SubscriptionUrls, nil
-}
-
-// AppendSubscriptionUrls adds s to the "subscription_urls" field.
-func (m *ProxyHopGroupMutation) AppendSubscriptionUrls(s []string) {
-	m.appendsubscription_urls = append(m.appendsubscription_urls, s...)
-}
-
-// AppendedSubscriptionUrls returns the list of values that were appended to the "subscription_urls" field in this mutation.
-func (m *ProxyHopGroupMutation) AppendedSubscriptionUrls() ([]string, bool) {
-	if len(m.appendsubscription_urls) == 0 {
-		return nil, false
-	}
-	return m.appendsubscription_urls, true
-}
-
-// ResetSubscriptionUrls resets all changes to the "subscription_urls" field.
-func (m *ProxyHopGroupMutation) ResetSubscriptionUrls() {
-	m.subscription_urls = nil
-	m.appendsubscription_urls = nil
-}
-
-// SetMemberProxyIds sets the "member_proxy_ids" field.
-func (m *ProxyHopGroupMutation) SetMemberProxyIds(i []int64) {
-	m.member_proxy_ids = &i
-	m.appendmember_proxy_ids = nil
-}
-
-// MemberProxyIds returns the value of the "member_proxy_ids" field in the mutation.
-func (m *ProxyHopGroupMutation) MemberProxyIds() (r []int64, exists bool) {
-	v := m.member_proxy_ids
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldMemberProxyIds returns the old "member_proxy_ids" field's value of the ProxyHopGroup entity.
-// If the ProxyHopGroup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ProxyHopGroupMutation) OldMemberProxyIds(ctx context.Context) (v []int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldMemberProxyIds is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldMemberProxyIds requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldMemberProxyIds: %w", err)
-	}
-	return oldValue.MemberProxyIds, nil
-}
-
-// AppendMemberProxyIds adds i to the "member_proxy_ids" field.
-func (m *ProxyHopGroupMutation) AppendMemberProxyIds(i []int64) {
-	m.appendmember_proxy_ids = append(m.appendmember_proxy_ids, i...)
-}
-
-// AppendedMemberProxyIds returns the list of values that were appended to the "member_proxy_ids" field in this mutation.
-func (m *ProxyHopGroupMutation) AppendedMemberProxyIds() ([]int64, bool) {
-	if len(m.appendmember_proxy_ids) == 0 {
-		return nil, false
-	}
-	return m.appendmember_proxy_ids, true
-}
-
-// ResetMemberProxyIds resets all changes to the "member_proxy_ids" field.
-func (m *ProxyHopGroupMutation) ResetMemberProxyIds() {
-	m.member_proxy_ids = nil
-	m.appendmember_proxy_ids = nil
-}
-
-// SetSubscriptionUpdateInterval sets the "subscription_update_interval" field.
-func (m *ProxyHopGroupMutation) SetSubscriptionUpdateInterval(i int) {
-	m.subscription_update_interval = &i
-	m.addsubscription_update_interval = nil
-}
-
-// SubscriptionUpdateInterval returns the value of the "subscription_update_interval" field in the mutation.
-func (m *ProxyHopGroupMutation) SubscriptionUpdateInterval() (r int, exists bool) {
-	v := m.subscription_update_interval
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldSubscriptionUpdateInterval returns the old "subscription_update_interval" field's value of the ProxyHopGroup entity.
-// If the ProxyHopGroup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ProxyHopGroupMutation) OldSubscriptionUpdateInterval(ctx context.Context) (v int, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldSubscriptionUpdateInterval is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldSubscriptionUpdateInterval requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldSubscriptionUpdateInterval: %w", err)
-	}
-	return oldValue.SubscriptionUpdateInterval, nil
-}
-
-// AddSubscriptionUpdateInterval adds i to the "subscription_update_interval" field.
-func (m *ProxyHopGroupMutation) AddSubscriptionUpdateInterval(i int) {
-	if m.addsubscription_update_interval != nil {
-		*m.addsubscription_update_interval += i
-	} else {
-		m.addsubscription_update_interval = &i
-	}
-}
-
-// AddedSubscriptionUpdateInterval returns the value that was added to the "subscription_update_interval" field in this mutation.
-func (m *ProxyHopGroupMutation) AddedSubscriptionUpdateInterval() (r int, exists bool) {
-	v := m.addsubscription_update_interval
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetSubscriptionUpdateInterval resets all changes to the "subscription_update_interval" field.
-func (m *ProxyHopGroupMutation) ResetSubscriptionUpdateInterval() {
-	m.subscription_update_interval = nil
-	m.addsubscription_update_interval = nil
-}
-
-// SetStatus sets the "status" field.
-func (m *ProxyHopGroupMutation) SetStatus(s string) {
-	m.status = &s
-}
-
-// Status returns the value of the "status" field in the mutation.
-func (m *ProxyHopGroupMutation) Status() (r string, exists bool) {
-	v := m.status
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldStatus returns the old "status" field's value of the ProxyHopGroup entity.
-// If the ProxyHopGroup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ProxyHopGroupMutation) OldStatus(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldStatus requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
-	}
-	return oldValue.Status, nil
-}
-
-// ResetStatus resets all changes to the "status" field.
-func (m *ProxyHopGroupMutation) ResetStatus() {
-	m.status = nil
-}
-
-// Where appends a list predicates to the ProxyHopGroupMutation builder.
-func (m *ProxyHopGroupMutation) Where(ps ...predicate.ProxyHopGroup) {
-	m.predicates = append(m.predicates, ps...)
-}
-
-// WhereP appends storage-level predicates to the ProxyHopGroupMutation builder. Using this method,
-// users can use type-assertion to append predicates that do not depend on any generated package.
-func (m *ProxyHopGroupMutation) WhereP(ps ...func(*sql.Selector)) {
-	p := make([]predicate.ProxyHopGroup, len(ps))
-	for i := range ps {
-		p[i] = ps[i]
-	}
-	m.Where(p...)
-}
-
-// Op returns the operation name.
-func (m *ProxyHopGroupMutation) Op() Op {
-	return m.op
-}
-
-// SetOp allows setting the mutation operation.
-func (m *ProxyHopGroupMutation) SetOp(op Op) {
-	m.op = op
-}
-
-// Type returns the node type of this mutation (ProxyHopGroup).
-func (m *ProxyHopGroupMutation) Type() string {
-	return m.typ
-}
-
-// Fields returns all fields that were changed during this mutation. Note that in
-// order to get all numeric fields that were incremented/decremented, call
-// AddedFields().
-func (m *ProxyHopGroupMutation) Fields() []string {
-	fields := make([]string, 0, 11)
-	if m.created_at != nil {
-		fields = append(fields, proxyhopgroup.FieldCreatedAt)
-	}
-	if m.updated_at != nil {
-		fields = append(fields, proxyhopgroup.FieldUpdatedAt)
-	}
-	if m.name != nil {
-		fields = append(fields, proxyhopgroup.FieldName)
-	}
-	if m.strategy != nil {
-		fields = append(fields, proxyhopgroup.FieldStrategy)
-	}
-	if m.test_url != nil {
-		fields = append(fields, proxyhopgroup.FieldTestURL)
-	}
-	if m.interval_seconds != nil {
-		fields = append(fields, proxyhopgroup.FieldIntervalSeconds)
-	}
-	if m.tolerance_ms != nil {
-		fields = append(fields, proxyhopgroup.FieldToleranceMs)
-	}
-	if m.subscription_urls != nil {
-		fields = append(fields, proxyhopgroup.FieldSubscriptionUrls)
-	}
-	if m.member_proxy_ids != nil {
-		fields = append(fields, proxyhopgroup.FieldMemberProxyIds)
-	}
-	if m.subscription_update_interval != nil {
-		fields = append(fields, proxyhopgroup.FieldSubscriptionUpdateInterval)
-	}
-	if m.status != nil {
-		fields = append(fields, proxyhopgroup.FieldStatus)
-	}
-	return fields
-}
-
-// Field returns the value of a field with the given name. The second boolean
-// return value indicates that this field was not set, or was not defined in the
-// schema.
-func (m *ProxyHopGroupMutation) Field(name string) (ent.Value, bool) {
-	switch name {
-	case proxyhopgroup.FieldCreatedAt:
-		return m.CreatedAt()
-	case proxyhopgroup.FieldUpdatedAt:
-		return m.UpdatedAt()
-	case proxyhopgroup.FieldName:
-		return m.Name()
-	case proxyhopgroup.FieldStrategy:
-		return m.Strategy()
-	case proxyhopgroup.FieldTestURL:
-		return m.TestURL()
-	case proxyhopgroup.FieldIntervalSeconds:
-		return m.IntervalSeconds()
-	case proxyhopgroup.FieldToleranceMs:
-		return m.ToleranceMs()
-	case proxyhopgroup.FieldSubscriptionUrls:
-		return m.SubscriptionUrls()
-	case proxyhopgroup.FieldMemberProxyIds:
-		return m.MemberProxyIds()
-	case proxyhopgroup.FieldSubscriptionUpdateInterval:
-		return m.SubscriptionUpdateInterval()
-	case proxyhopgroup.FieldStatus:
-		return m.Status()
-	}
-	return nil, false
-}
-
-// OldField returns the old value of the field from the database. An error is
-// returned if the mutation operation is not UpdateOne, or the query to the
-// database failed.
-func (m *ProxyHopGroupMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
-	switch name {
-	case proxyhopgroup.FieldCreatedAt:
-		return m.OldCreatedAt(ctx)
-	case proxyhopgroup.FieldUpdatedAt:
-		return m.OldUpdatedAt(ctx)
-	case proxyhopgroup.FieldName:
-		return m.OldName(ctx)
-	case proxyhopgroup.FieldStrategy:
-		return m.OldStrategy(ctx)
-	case proxyhopgroup.FieldTestURL:
-		return m.OldTestURL(ctx)
-	case proxyhopgroup.FieldIntervalSeconds:
-		return m.OldIntervalSeconds(ctx)
-	case proxyhopgroup.FieldToleranceMs:
-		return m.OldToleranceMs(ctx)
-	case proxyhopgroup.FieldSubscriptionUrls:
-		return m.OldSubscriptionUrls(ctx)
-	case proxyhopgroup.FieldMemberProxyIds:
-		return m.OldMemberProxyIds(ctx)
-	case proxyhopgroup.FieldSubscriptionUpdateInterval:
-		return m.OldSubscriptionUpdateInterval(ctx)
-	case proxyhopgroup.FieldStatus:
-		return m.OldStatus(ctx)
-	}
-	return nil, fmt.Errorf("unknown ProxyHopGroup field %s", name)
-}
-
-// SetField sets the value of a field with the given name. It returns an error if
-// the field is not defined in the schema, or if the type mismatched the field
-// type.
-func (m *ProxyHopGroupMutation) SetField(name string, value ent.Value) error {
-	switch name {
-	case proxyhopgroup.FieldCreatedAt:
-		v, ok := value.(time.Time)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetCreatedAt(v)
-		return nil
-	case proxyhopgroup.FieldUpdatedAt:
-		v, ok := value.(time.Time)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUpdatedAt(v)
-		return nil
-	case proxyhopgroup.FieldName:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetName(v)
-		return nil
-	case proxyhopgroup.FieldStrategy:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetStrategy(v)
-		return nil
-	case proxyhopgroup.FieldTestURL:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetTestURL(v)
-		return nil
-	case proxyhopgroup.FieldIntervalSeconds:
-		v, ok := value.(int)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetIntervalSeconds(v)
-		return nil
-	case proxyhopgroup.FieldToleranceMs:
-		v, ok := value.(int)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetToleranceMs(v)
-		return nil
-	case proxyhopgroup.FieldSubscriptionUrls:
-		v, ok := value.([]string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetSubscriptionUrls(v)
-		return nil
-	case proxyhopgroup.FieldMemberProxyIds:
-		v, ok := value.([]int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetMemberProxyIds(v)
-		return nil
-	case proxyhopgroup.FieldSubscriptionUpdateInterval:
-		v, ok := value.(int)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetSubscriptionUpdateInterval(v)
-		return nil
-	case proxyhopgroup.FieldStatus:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetStatus(v)
-		return nil
-	}
-	return fmt.Errorf("unknown ProxyHopGroup field %s", name)
-}
-
-// AddedFields returns all numeric fields that were incremented/decremented during
-// this mutation.
-func (m *ProxyHopGroupMutation) AddedFields() []string {
-	var fields []string
-	if m.addinterval_seconds != nil {
-		fields = append(fields, proxyhopgroup.FieldIntervalSeconds)
-	}
-	if m.addtolerance_ms != nil {
-		fields = append(fields, proxyhopgroup.FieldToleranceMs)
-	}
-	if m.addsubscription_update_interval != nil {
-		fields = append(fields, proxyhopgroup.FieldSubscriptionUpdateInterval)
-	}
-	return fields
-}
-
-// AddedField returns the numeric value that was incremented/decremented on a field
-// with the given name. The second boolean return value indicates that this field
-// was not set, or was not defined in the schema.
-func (m *ProxyHopGroupMutation) AddedField(name string) (ent.Value, bool) {
-	switch name {
-	case proxyhopgroup.FieldIntervalSeconds:
-		return m.AddedIntervalSeconds()
-	case proxyhopgroup.FieldToleranceMs:
-		return m.AddedToleranceMs()
-	case proxyhopgroup.FieldSubscriptionUpdateInterval:
-		return m.AddedSubscriptionUpdateInterval()
-	}
-	return nil, false
-}
-
-// AddField adds the value to the field with the given name. It returns an error if
-// the field is not defined in the schema, or if the type mismatched the field
-// type.
-func (m *ProxyHopGroupMutation) AddField(name string, value ent.Value) error {
-	switch name {
-	case proxyhopgroup.FieldIntervalSeconds:
-		v, ok := value.(int)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddIntervalSeconds(v)
-		return nil
-	case proxyhopgroup.FieldToleranceMs:
-		v, ok := value.(int)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddToleranceMs(v)
-		return nil
-	case proxyhopgroup.FieldSubscriptionUpdateInterval:
-		v, ok := value.(int)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddSubscriptionUpdateInterval(v)
-		return nil
-	}
-	return fmt.Errorf("unknown ProxyHopGroup numeric field %s", name)
-}
-
-// ClearedFields returns all nullable fields that were cleared during this
-// mutation.
-func (m *ProxyHopGroupMutation) ClearedFields() []string {
-	return nil
-}
-
-// FieldCleared returns a boolean indicating if a field with the given name was
-// cleared in this mutation.
-func (m *ProxyHopGroupMutation) FieldCleared(name string) bool {
-	_, ok := m.clearedFields[name]
-	return ok
-}
-
-// ClearField clears the value of the field with the given name. It returns an
-// error if the field is not defined in the schema.
-func (m *ProxyHopGroupMutation) ClearField(name string) error {
-	return fmt.Errorf("unknown ProxyHopGroup nullable field %s", name)
-}
-
-// ResetField resets all changes in the mutation for the field with the given name.
-// It returns an error if the field is not defined in the schema.
-func (m *ProxyHopGroupMutation) ResetField(name string) error {
-	switch name {
-	case proxyhopgroup.FieldCreatedAt:
-		m.ResetCreatedAt()
-		return nil
-	case proxyhopgroup.FieldUpdatedAt:
-		m.ResetUpdatedAt()
-		return nil
-	case proxyhopgroup.FieldName:
-		m.ResetName()
-		return nil
-	case proxyhopgroup.FieldStrategy:
-		m.ResetStrategy()
-		return nil
-	case proxyhopgroup.FieldTestURL:
-		m.ResetTestURL()
-		return nil
-	case proxyhopgroup.FieldIntervalSeconds:
-		m.ResetIntervalSeconds()
-		return nil
-	case proxyhopgroup.FieldToleranceMs:
-		m.ResetToleranceMs()
-		return nil
-	case proxyhopgroup.FieldSubscriptionUrls:
-		m.ResetSubscriptionUrls()
-		return nil
-	case proxyhopgroup.FieldMemberProxyIds:
-		m.ResetMemberProxyIds()
-		return nil
-	case proxyhopgroup.FieldSubscriptionUpdateInterval:
-		m.ResetSubscriptionUpdateInterval()
-		return nil
-	case proxyhopgroup.FieldStatus:
-		m.ResetStatus()
-		return nil
-	}
-	return fmt.Errorf("unknown ProxyHopGroup field %s", name)
-}
-
-// AddedEdges returns all edge names that were set/added in this mutation.
-func (m *ProxyHopGroupMutation) AddedEdges() []string {
-	edges := make([]string, 0, 0)
-	return edges
-}
-
-// AddedIDs returns all IDs (to other nodes) that were added for the given edge
-// name in this mutation.
-func (m *ProxyHopGroupMutation) AddedIDs(name string) []ent.Value {
-	return nil
-}
-
-// RemovedEdges returns all edge names that were removed in this mutation.
-func (m *ProxyHopGroupMutation) RemovedEdges() []string {
-	edges := make([]string, 0, 0)
-	return edges
-}
-
-// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
-// the given name in this mutation.
-func (m *ProxyHopGroupMutation) RemovedIDs(name string) []ent.Value {
-	return nil
-}
-
-// ClearedEdges returns all edge names that were cleared in this mutation.
-func (m *ProxyHopGroupMutation) ClearedEdges() []string {
-	edges := make([]string, 0, 0)
-	return edges
-}
-
-// EdgeCleared returns a boolean which indicates if the edge with the given name
-// was cleared in this mutation.
-func (m *ProxyHopGroupMutation) EdgeCleared(name string) bool {
-	return false
-}
-
-// ClearEdge clears the value of the edge with the given name. It returns an error
-// if that edge is not defined in the schema.
-func (m *ProxyHopGroupMutation) ClearEdge(name string) error {
-	return fmt.Errorf("unknown ProxyHopGroup unique edge %s", name)
-}
-
-// ResetEdge resets all changes to the edge with the given name in this mutation.
-// It returns an error if the edge is not defined in the schema.
-func (m *ProxyHopGroupMutation) ResetEdge(name string) error {
-	return fmt.Errorf("unknown ProxyHopGroup edge %s", name)
 }
 
 // RedeemCodeMutation represents an operation that mutates the RedeemCode nodes in the graph.

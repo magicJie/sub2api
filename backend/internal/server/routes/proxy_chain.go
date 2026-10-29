@@ -7,16 +7,19 @@ import (
 
 // registerProxyChainRoutes 注册链式代理（fork）管理接口。
 func registerProxyChainRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
-	proxies := admin.Group("/proxies")
-	{
-		proxies.POST("/parse-link", h.Admin.ProxyChain.ParseLink)
-		proxies.GET("/chain-settings", h.Admin.ProxyChain.GetSettings)
-		proxies.PUT("/chain-settings", h.Admin.ProxyChain.UpdateSettings)
-	}
-	groups := admin.Group("/proxy-hop-groups")
-	groups.GET("", h.Admin.ProxyChain.ListHopGroups)
-	groups.POST("", h.Admin.ProxyChain.CreateHopGroup)
-	groups.GET("/:id", h.Admin.ProxyChain.GetHopGroup)
-	groups.PUT("/:id", h.Admin.ProxyChain.UpdateHopGroup)
-	groups.DELETE("/:id", h.Admin.ProxyChain.DeleteHopGroup)
+	admin.POST("/proxies/parse-link", h.Admin.ProxyChain.ParseLink)
+
+	endpoints := admin.Group("/proxy-upstream-endpoints")
+	endpoints.GET("", h.Admin.ProxyChain.ListUpstreamEndpoints)
+	endpoints.POST("", h.Admin.ProxyChain.CreateUpstreamEndpoint)
+	endpoints.GET("/:id", h.Admin.ProxyChain.GetUpstreamEndpoint)
+	endpoints.PUT("/:id", h.Admin.ProxyChain.UpdateUpstreamEndpoint)
+	endpoints.DELETE("/:id", h.Admin.ProxyChain.DeleteUpstreamEndpoint)
+
+	groups := admin.Group("/proxy-upstream-groups")
+	groups.GET("", h.Admin.ProxyChain.ListUpstreamGroups)
+	groups.POST("", h.Admin.ProxyChain.CreateUpstreamGroup)
+	groups.GET("/:id", h.Admin.ProxyChain.GetUpstreamGroup)
+	groups.PUT("/:id", h.Admin.ProxyChain.UpdateUpstreamGroup)
+	groups.DELETE("/:id", h.Admin.ProxyChain.DeleteUpstreamGroup)
 }

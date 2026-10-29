@@ -39,7 +39,6 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		// Business layer ProviderSets
 		repository.ProviderSet,
 		service.ProviderSet,
-		provideProxyHopGroupRuntime, // 链式代理（fork）
 		securityaudit.ProviderSet,
 		payment.ProviderSet,
 		middleware.ProviderSet,

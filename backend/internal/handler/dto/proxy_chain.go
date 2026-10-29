@@ -4,17 +4,15 @@ import "github.com/Wei-Shaw/sub2api/internal/service"
 
 // ProxyChainFields 是代理 DTO 上的链式代理字段（fork，嵌入 AdminProxy）。
 type ProxyChainFields struct {
-	UpstreamMode       string            `json:"upstream_mode"`
-	UpstreamProxyID    *int64            `json:"upstream_proxy_id"`
-	UpstreamHopGroupID *int64            `json:"upstream_hop_group_id"`
-	Options            map[string]string `json:"options"`
-	Chain              []ProxyChainHop   `json:"chain"`
-	ChainError         string            `json:"chain_error,omitempty"`
-	PoolID             *int64            `json:"pool_id"` // 代理池（fork）
-	Role               string            `json:"role"`    // 代理池（fork）：egress | transport
+	UpstreamMode    string            `json:"upstream_mode"`
+	UpstreamGroupID *int64            `json:"upstream_group_id"`
+	Options         map[string]string `json:"options"`
+	Chain           []ProxyChainHop   `json:"chain"`
+	ChainError      string            `json:"chain_error,omitempty"`
+	PoolID          *int64            `json:"pool_id"` // 代理池（fork）
 }
 
-// ProxyChainHop 是展示用的前置链路节点（按拨号顺序，不含代理自身）。
+// ProxyChainHop 是展示用的当前前置端点（不含代理自身），name 形如「组/槽位/端点」。
 type ProxyChainHop struct {
 	ID       int64  `json:"id"`
 	Name     string `json:"name"`
@@ -32,13 +30,11 @@ func proxyChainFieldsFromService(p *service.Proxy) ProxyChainFields {
 		chain = append(chain, ProxyChainHop{ID: h.ID, Name: h.Name, Protocol: h.Protocol})
 	}
 	return ProxyChainFields{
-		UpstreamMode:       service.NormalizeUpstreamMode(p.UpstreamMode),
-		UpstreamProxyID:    p.UpstreamProxyID,
-		UpstreamHopGroupID: p.UpstreamHopGroupID,
-		Options:            options,
-		Chain:              chain,
-		ChainError:         chainErr,
-		PoolID:             p.PoolID,
-		Role:               service.NormalizeProxyRole(p.Role),
+		UpstreamMode:    service.NormalizeUpstreamMode(p.UpstreamMode),
+		UpstreamGroupID: p.UpstreamGroupID,
+		Options:         options,
+		Chain:           chain,
+		ChainError:      chainErr,
+		PoolID:          p.PoolID,
 	}
 }
