@@ -56,7 +56,7 @@ func (r *proxyPoolRepoStub) UpsertPolicy(_ context.Context, p *ProxyIPPolicy) er
 func (r *proxyPoolRepoStub) DeletePolicy(context.Context, string) error { return nil }
 func (r *proxyPoolRepoStub) EgressHostTaken(_ context.Context, host string, exclude int64) (bool, error) {
 	for _, m := range r.members {
-		if m.Proxy.ID != exclude && NormalizeProxyRole(m.Proxy.Role) == ProxyRoleEgress && m.Proxy.Host == host {
+		if m.Proxy.ID != exclude && m.Proxy.Host == host {
 			return true, nil
 		}
 	}
@@ -243,90 +243,23 @@ func TestProxyPoolRetiredPlatforms(t *testing.T) {
 	require.Equal(t, []string{"kiro"}, ProxyPoolRetiredPlatforms(policies, &m))
 }
 
-func TestApplyProxyRole(t *testing.T) {
-	poolID := int64(3)
-
-	p := &Proxy{}
-	require.NoError(t, applyProxyRole(p, "", true))
-	require.Equal(t, ProxyRoleEgress, p.Role)
-
-	// 编辑时未显式指定代理池：改为 transport 会把代理移出代理池。
-	p = &Proxy{Role: ProxyRoleEgress, PoolID: &poolID}
-	require.NoError(t, applyProxyRole(p, ProxyRoleTransport, false))
-	require.Equal(t, ProxyRoleTransport, p.Role)
-	require.Nil(t, p.PoolID)
-
-	// 显式把 transport 代理放进非默认池：拒绝。
-	p = &Proxy{PoolID: &poolID}
-	require.ErrorIs(t, applyProxyRole(p, ProxyRoleTransport, true), ErrProxyPoolTransportProxy)
-
-	// 空值保持原角色。
-	p = &Proxy{Role: ProxyRoleTransport}
-	require.NoError(t, applyProxyRole(p, "", false))
-	require.Equal(t, ProxyRoleTransport, p.Role)
-
-	require.ErrorIs(t, applyProxyRole(&Proxy{}, "infra", false), ErrProxyRoleInvalid)
-}
-
-type proxyRoleRepoStub struct {
-	ProxyRepository
-	proxies  map[int64]*Proxy
-	accounts map[int64]int64
-}
-
-func (r *proxyRoleRepoStub) GetByID(_ context.Context, id int64) (*Proxy, error) {
-	if p, ok := r.proxies[id]; ok {
-		return p, nil
-	}
-	return nil, ErrProxyNotFound
-}
-
-func (r *proxyRoleRepoStub) CountAccountsByProxyID(_ context.Context, id int64) (int64, error) {
-	return r.accounts[id], nil
-}
-
-func TestProxyRoleConstraints(t *testing.T) {
-	ctx := context.Background()
-	repo := &proxyRoleRepoStub{
-		proxies:  map[int64]*Proxy{1: {ID: 1, Role: ProxyRoleTransport}, 2: {ID: 2, Role: ProxyRoleEgress}},
-		accounts: map[int64]int64{2: 1},
-	}
-
-	// 账号不能直接用 transport。
-	tid, eid, zero := int64(1), int64(2), int64(0)
-	require.ErrorIs(t, checkAccountProxyRole(ctx, repo, &tid), ErrAccountTransportProxy)
-	require.NoError(t, checkAccountProxyRole(ctx, repo, &eid))
-	require.NoError(t, checkAccountProxyRole(ctx, repo, &zero))
-	require.NoError(t, checkAccountProxyRole(ctx, repo, nil))
-
-	// 有账号在用的 egress 不能改为 transport；没人用的可以。
-	prev := Proxy{ID: 2, Role: ProxyRoleEgress}
-	next := prev
-	next.Role = ProxyRoleTransport
-	require.ErrorIs(t, checkProxyRoleConstraints(ctx, repo, &next, &prev), ErrProxyRoleInUse)
-	repo.accounts[2] = 0
-	require.NoError(t, checkProxyRoleConstraints(ctx, repo, &next, &prev))
-}
-
 func TestProxyEgressHostUnique(t *testing.T) {
 	ctx := context.Background()
 	prevSvc := activeProxyPoolService.Load()
 	t.Cleanup(func() { activeProxyPoolService.Store(prevSvc) })
-	poolRepo := &proxyPoolRepoStub{members: []ProxyPoolMember{{Proxy: Proxy{ID: 5, Host: "1.2.3.4", Role: ProxyRoleEgress}}}}
+	poolRepo := &proxyPoolRepoStub{members: []ProxyPoolMember{{Proxy: Proxy{ID: 5, Host: "1.2.3.4"}}}}
 	activeProxyPoolService.Store(NewProxyPoolService(poolRepo, nil))
-	repo := &proxyRoleRepoStub{}
 
-	// 新建同落地 IP 的 egress：拒绝；transport 不受限。
-	require.ErrorIs(t, checkProxyRoleConstraints(ctx, repo, &Proxy{Host: "1.2.3.4"}, nil), ErrProxyEgressHostExists)
-	require.NoError(t, checkProxyRoleConstraints(ctx, repo, &Proxy{Host: "1.2.3.4", Role: ProxyRoleTransport}, nil))
-	require.NoError(t, checkProxyRoleConstraints(ctx, repo, &Proxy{Host: "5.6.7.8"}, nil))
+	// 新建同落地 IP 的代理：拒绝。
+	require.ErrorIs(t, checkProxyEgressHost(ctx, &Proxy{Host: "1.2.3.4"}, nil), ErrProxyEgressHostExists)
+	require.NoError(t, checkProxyEgressHost(ctx, &Proxy{Host: "5.6.7.8"}, nil))
 
 	// 存量重复：host 不变的编辑不阻断；改成已占用的 host 则拒绝。
-	prev := Proxy{ID: 6, Host: "1.2.3.4", Role: ProxyRoleEgress}
+	prev := Proxy{ID: 6, Host: "1.2.3.4"}
 	same := prev
-	require.NoError(t, checkProxyRoleConstraints(ctx, repo, &same, &prev))
-	prev2 := Proxy{ID: 6, Host: "9.9.9.9", Role: ProxyRoleEgress}
+	require.NoError(t, checkProxyEgressHost(ctx, &same, &prev))
+	prev2 := Proxy{ID: 6, Host: "9.9.9.9"}
 	moved := prev2
 	moved.Host = "1.2.3.4"
-	require.ErrorIs(t, checkProxyRoleConstraints(ctx, repo, &moved, &prev2), ErrProxyEgressHostExists)
+	require.ErrorIs(t, checkProxyEgressHost(ctx, &moved, &prev2), ErrProxyEgressHostExists)
 }

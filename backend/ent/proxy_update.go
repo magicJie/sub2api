@@ -261,57 +261,30 @@ func (_u *ProxyUpdate) SetNillableUpstreamMode(v *string) *ProxyUpdate {
 	return _u
 }
 
-// SetUpstreamProxyID sets the "upstream_proxy_id" field.
-func (_u *ProxyUpdate) SetUpstreamProxyID(v int64) *ProxyUpdate {
-	_u.mutation.ResetUpstreamProxyID()
-	_u.mutation.SetUpstreamProxyID(v)
+// SetUpstreamGroupID sets the "upstream_group_id" field.
+func (_u *ProxyUpdate) SetUpstreamGroupID(v int64) *ProxyUpdate {
+	_u.mutation.ResetUpstreamGroupID()
+	_u.mutation.SetUpstreamGroupID(v)
 	return _u
 }
 
-// SetNillableUpstreamProxyID sets the "upstream_proxy_id" field if the given value is not nil.
-func (_u *ProxyUpdate) SetNillableUpstreamProxyID(v *int64) *ProxyUpdate {
+// SetNillableUpstreamGroupID sets the "upstream_group_id" field if the given value is not nil.
+func (_u *ProxyUpdate) SetNillableUpstreamGroupID(v *int64) *ProxyUpdate {
 	if v != nil {
-		_u.SetUpstreamProxyID(*v)
+		_u.SetUpstreamGroupID(*v)
 	}
 	return _u
 }
 
-// AddUpstreamProxyID adds value to the "upstream_proxy_id" field.
-func (_u *ProxyUpdate) AddUpstreamProxyID(v int64) *ProxyUpdate {
-	_u.mutation.AddUpstreamProxyID(v)
+// AddUpstreamGroupID adds value to the "upstream_group_id" field.
+func (_u *ProxyUpdate) AddUpstreamGroupID(v int64) *ProxyUpdate {
+	_u.mutation.AddUpstreamGroupID(v)
 	return _u
 }
 
-// ClearUpstreamProxyID clears the value of the "upstream_proxy_id" field.
-func (_u *ProxyUpdate) ClearUpstreamProxyID() *ProxyUpdate {
-	_u.mutation.ClearUpstreamProxyID()
-	return _u
-}
-
-// SetUpstreamHopGroupID sets the "upstream_hop_group_id" field.
-func (_u *ProxyUpdate) SetUpstreamHopGroupID(v int64) *ProxyUpdate {
-	_u.mutation.ResetUpstreamHopGroupID()
-	_u.mutation.SetUpstreamHopGroupID(v)
-	return _u
-}
-
-// SetNillableUpstreamHopGroupID sets the "upstream_hop_group_id" field if the given value is not nil.
-func (_u *ProxyUpdate) SetNillableUpstreamHopGroupID(v *int64) *ProxyUpdate {
-	if v != nil {
-		_u.SetUpstreamHopGroupID(*v)
-	}
-	return _u
-}
-
-// AddUpstreamHopGroupID adds value to the "upstream_hop_group_id" field.
-func (_u *ProxyUpdate) AddUpstreamHopGroupID(v int64) *ProxyUpdate {
-	_u.mutation.AddUpstreamHopGroupID(v)
-	return _u
-}
-
-// ClearUpstreamHopGroupID clears the value of the "upstream_hop_group_id" field.
-func (_u *ProxyUpdate) ClearUpstreamHopGroupID() *ProxyUpdate {
-	_u.mutation.ClearUpstreamHopGroupID()
+// ClearUpstreamGroupID clears the value of the "upstream_group_id" field.
+func (_u *ProxyUpdate) ClearUpstreamGroupID() *ProxyUpdate {
+	_u.mutation.ClearUpstreamGroupID()
 	return _u
 }
 
@@ -351,20 +324,6 @@ func (_u *ProxyUpdate) AddPoolID(v int64) *ProxyUpdate {
 // ClearPoolID clears the value of the "pool_id" field.
 func (_u *ProxyUpdate) ClearPoolID() *ProxyUpdate {
 	_u.mutation.ClearPoolID()
-	return _u
-}
-
-// SetRole sets the "role" field.
-func (_u *ProxyUpdate) SetRole(v string) *ProxyUpdate {
-	_u.mutation.SetRole(v)
-	return _u
-}
-
-// SetNillableRole sets the "role" field if the given value is not nil.
-func (_u *ProxyUpdate) SetNillableRole(v *string) *ProxyUpdate {
-	if v != nil {
-		_u.SetRole(*v)
-	}
 	return _u
 }
 
@@ -540,11 +499,6 @@ func (_u *ProxyUpdate) check() error {
 			return &ValidationError{Name: "upstream_mode", err: fmt.Errorf(`ent: validator failed for field "Proxy.upstream_mode": %w`, err)}
 		}
 	}
-	if v, ok := _u.mutation.Role(); ok {
-		if err := proxy.RoleValidator(v); err != nil {
-			return &ValidationError{Name: "role", err: fmt.Errorf(`ent: validator failed for field "Proxy.role": %w`, err)}
-		}
-	}
 	return nil
 }
 
@@ -617,23 +571,14 @@ func (_u *ProxyUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.UpstreamMode(); ok {
 		_spec.SetField(proxy.FieldUpstreamMode, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.UpstreamProxyID(); ok {
-		_spec.SetField(proxy.FieldUpstreamProxyID, field.TypeInt64, value)
+	if value, ok := _u.mutation.UpstreamGroupID(); ok {
+		_spec.SetField(proxy.FieldUpstreamGroupID, field.TypeInt64, value)
 	}
-	if value, ok := _u.mutation.AddedUpstreamProxyID(); ok {
-		_spec.AddField(proxy.FieldUpstreamProxyID, field.TypeInt64, value)
+	if value, ok := _u.mutation.AddedUpstreamGroupID(); ok {
+		_spec.AddField(proxy.FieldUpstreamGroupID, field.TypeInt64, value)
 	}
-	if _u.mutation.UpstreamProxyIDCleared() {
-		_spec.ClearField(proxy.FieldUpstreamProxyID, field.TypeInt64)
-	}
-	if value, ok := _u.mutation.UpstreamHopGroupID(); ok {
-		_spec.SetField(proxy.FieldUpstreamHopGroupID, field.TypeInt64, value)
-	}
-	if value, ok := _u.mutation.AddedUpstreamHopGroupID(); ok {
-		_spec.AddField(proxy.FieldUpstreamHopGroupID, field.TypeInt64, value)
-	}
-	if _u.mutation.UpstreamHopGroupIDCleared() {
-		_spec.ClearField(proxy.FieldUpstreamHopGroupID, field.TypeInt64)
+	if _u.mutation.UpstreamGroupIDCleared() {
+		_spec.ClearField(proxy.FieldUpstreamGroupID, field.TypeInt64)
 	}
 	if value, ok := _u.mutation.Options(); ok {
 		_spec.SetField(proxy.FieldOptions, field.TypeJSON, value)
@@ -649,9 +594,6 @@ func (_u *ProxyUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.PoolIDCleared() {
 		_spec.ClearField(proxy.FieldPoolID, field.TypeInt64)
-	}
-	if value, ok := _u.mutation.Role(); ok {
-		_spec.SetField(proxy.FieldRole, field.TypeString, value)
 	}
 	if _u.mutation.AccountsCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -1024,57 +966,30 @@ func (_u *ProxyUpdateOne) SetNillableUpstreamMode(v *string) *ProxyUpdateOne {
 	return _u
 }
 
-// SetUpstreamProxyID sets the "upstream_proxy_id" field.
-func (_u *ProxyUpdateOne) SetUpstreamProxyID(v int64) *ProxyUpdateOne {
-	_u.mutation.ResetUpstreamProxyID()
-	_u.mutation.SetUpstreamProxyID(v)
+// SetUpstreamGroupID sets the "upstream_group_id" field.
+func (_u *ProxyUpdateOne) SetUpstreamGroupID(v int64) *ProxyUpdateOne {
+	_u.mutation.ResetUpstreamGroupID()
+	_u.mutation.SetUpstreamGroupID(v)
 	return _u
 }
 
-// SetNillableUpstreamProxyID sets the "upstream_proxy_id" field if the given value is not nil.
-func (_u *ProxyUpdateOne) SetNillableUpstreamProxyID(v *int64) *ProxyUpdateOne {
+// SetNillableUpstreamGroupID sets the "upstream_group_id" field if the given value is not nil.
+func (_u *ProxyUpdateOne) SetNillableUpstreamGroupID(v *int64) *ProxyUpdateOne {
 	if v != nil {
-		_u.SetUpstreamProxyID(*v)
+		_u.SetUpstreamGroupID(*v)
 	}
 	return _u
 }
 
-// AddUpstreamProxyID adds value to the "upstream_proxy_id" field.
-func (_u *ProxyUpdateOne) AddUpstreamProxyID(v int64) *ProxyUpdateOne {
-	_u.mutation.AddUpstreamProxyID(v)
+// AddUpstreamGroupID adds value to the "upstream_group_id" field.
+func (_u *ProxyUpdateOne) AddUpstreamGroupID(v int64) *ProxyUpdateOne {
+	_u.mutation.AddUpstreamGroupID(v)
 	return _u
 }
 
-// ClearUpstreamProxyID clears the value of the "upstream_proxy_id" field.
-func (_u *ProxyUpdateOne) ClearUpstreamProxyID() *ProxyUpdateOne {
-	_u.mutation.ClearUpstreamProxyID()
-	return _u
-}
-
-// SetUpstreamHopGroupID sets the "upstream_hop_group_id" field.
-func (_u *ProxyUpdateOne) SetUpstreamHopGroupID(v int64) *ProxyUpdateOne {
-	_u.mutation.ResetUpstreamHopGroupID()
-	_u.mutation.SetUpstreamHopGroupID(v)
-	return _u
-}
-
-// SetNillableUpstreamHopGroupID sets the "upstream_hop_group_id" field if the given value is not nil.
-func (_u *ProxyUpdateOne) SetNillableUpstreamHopGroupID(v *int64) *ProxyUpdateOne {
-	if v != nil {
-		_u.SetUpstreamHopGroupID(*v)
-	}
-	return _u
-}
-
-// AddUpstreamHopGroupID adds value to the "upstream_hop_group_id" field.
-func (_u *ProxyUpdateOne) AddUpstreamHopGroupID(v int64) *ProxyUpdateOne {
-	_u.mutation.AddUpstreamHopGroupID(v)
-	return _u
-}
-
-// ClearUpstreamHopGroupID clears the value of the "upstream_hop_group_id" field.
-func (_u *ProxyUpdateOne) ClearUpstreamHopGroupID() *ProxyUpdateOne {
-	_u.mutation.ClearUpstreamHopGroupID()
+// ClearUpstreamGroupID clears the value of the "upstream_group_id" field.
+func (_u *ProxyUpdateOne) ClearUpstreamGroupID() *ProxyUpdateOne {
+	_u.mutation.ClearUpstreamGroupID()
 	return _u
 }
 
@@ -1114,20 +1029,6 @@ func (_u *ProxyUpdateOne) AddPoolID(v int64) *ProxyUpdateOne {
 // ClearPoolID clears the value of the "pool_id" field.
 func (_u *ProxyUpdateOne) ClearPoolID() *ProxyUpdateOne {
 	_u.mutation.ClearPoolID()
-	return _u
-}
-
-// SetRole sets the "role" field.
-func (_u *ProxyUpdateOne) SetRole(v string) *ProxyUpdateOne {
-	_u.mutation.SetRole(v)
-	return _u
-}
-
-// SetNillableRole sets the "role" field if the given value is not nil.
-func (_u *ProxyUpdateOne) SetNillableRole(v *string) *ProxyUpdateOne {
-	if v != nil {
-		_u.SetRole(*v)
-	}
 	return _u
 }
 
@@ -1316,11 +1217,6 @@ func (_u *ProxyUpdateOne) check() error {
 			return &ValidationError{Name: "upstream_mode", err: fmt.Errorf(`ent: validator failed for field "Proxy.upstream_mode": %w`, err)}
 		}
 	}
-	if v, ok := _u.mutation.Role(); ok {
-		if err := proxy.RoleValidator(v); err != nil {
-			return &ValidationError{Name: "role", err: fmt.Errorf(`ent: validator failed for field "Proxy.role": %w`, err)}
-		}
-	}
 	return nil
 }
 
@@ -1410,23 +1306,14 @@ func (_u *ProxyUpdateOne) sqlSave(ctx context.Context) (_node *Proxy, err error)
 	if value, ok := _u.mutation.UpstreamMode(); ok {
 		_spec.SetField(proxy.FieldUpstreamMode, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.UpstreamProxyID(); ok {
-		_spec.SetField(proxy.FieldUpstreamProxyID, field.TypeInt64, value)
+	if value, ok := _u.mutation.UpstreamGroupID(); ok {
+		_spec.SetField(proxy.FieldUpstreamGroupID, field.TypeInt64, value)
 	}
-	if value, ok := _u.mutation.AddedUpstreamProxyID(); ok {
-		_spec.AddField(proxy.FieldUpstreamProxyID, field.TypeInt64, value)
+	if value, ok := _u.mutation.AddedUpstreamGroupID(); ok {
+		_spec.AddField(proxy.FieldUpstreamGroupID, field.TypeInt64, value)
 	}
-	if _u.mutation.UpstreamProxyIDCleared() {
-		_spec.ClearField(proxy.FieldUpstreamProxyID, field.TypeInt64)
-	}
-	if value, ok := _u.mutation.UpstreamHopGroupID(); ok {
-		_spec.SetField(proxy.FieldUpstreamHopGroupID, field.TypeInt64, value)
-	}
-	if value, ok := _u.mutation.AddedUpstreamHopGroupID(); ok {
-		_spec.AddField(proxy.FieldUpstreamHopGroupID, field.TypeInt64, value)
-	}
-	if _u.mutation.UpstreamHopGroupIDCleared() {
-		_spec.ClearField(proxy.FieldUpstreamHopGroupID, field.TypeInt64)
+	if _u.mutation.UpstreamGroupIDCleared() {
+		_spec.ClearField(proxy.FieldUpstreamGroupID, field.TypeInt64)
 	}
 	if value, ok := _u.mutation.Options(); ok {
 		_spec.SetField(proxy.FieldOptions, field.TypeJSON, value)
@@ -1442,9 +1329,6 @@ func (_u *ProxyUpdateOne) sqlSave(ctx context.Context) (_node *Proxy, err error)
 	}
 	if _u.mutation.PoolIDCleared() {
 		_spec.ClearField(proxy.FieldPoolID, field.TypeInt64)
-	}
-	if value, ok := _u.mutation.Role(); ok {
-		_spec.SetField(proxy.FieldRole, field.TypeString, value)
 	}
 	if _u.mutation.AccountsCleared() {
 		edge := &sqlgraph.EdgeSpec{

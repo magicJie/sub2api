@@ -56,15 +56,11 @@ func (r *proxyRepository) Create(ctx context.Context, proxyIn *service.Proxy) er
 	}
 	// 链式代理（fork）
 	builder.SetUpstreamMode(service.NormalizeUpstreamMode(proxyIn.UpstreamMode))
-	if proxyIn.UpstreamProxyID != nil {
-		builder.SetUpstreamProxyID(*proxyIn.UpstreamProxyID)
-	}
-	builder.SetNillableUpstreamHopGroupID(proxyIn.UpstreamHopGroupID) // 链式代理（fork）
+	builder.SetNillableUpstreamGroupID(proxyIn.UpstreamGroupID)
 	if len(proxyIn.Options) > 0 {
 		builder.SetOptions(proxyIn.Options)
 	}
 	builder.SetNillablePoolID(proxyIn.PoolID) // 代理池（fork）
-	builder.SetRole(service.NormalizeProxyRole(proxyIn.Role))
 
 	created, err := builder.Save(ctx)
 	if err == nil {
@@ -189,12 +185,11 @@ func updateProxyAndInvalidateProbeSnapshots(ctx context.Context, client *dbent.C
 	}
 	// 链式代理（fork）
 	builder.SetUpstreamMode(service.NormalizeUpstreamMode(proxyIn.UpstreamMode))
-	if proxyIn.UpstreamProxyID != nil {
-		builder.SetUpstreamProxyID(*proxyIn.UpstreamProxyID)
+	if proxyIn.UpstreamGroupID != nil {
+		builder.SetUpstreamGroupID(*proxyIn.UpstreamGroupID)
 	} else {
-		builder.ClearUpstreamProxyID()
+		builder.ClearUpstreamGroupID()
 	}
-	applyProxyHopGroupUpdate(builder, proxyIn.UpstreamHopGroupID) // 链式代理（fork）
 	if len(proxyIn.Options) > 0 {
 		builder.SetOptions(proxyIn.Options)
 	} else {
@@ -205,7 +200,6 @@ func updateProxyAndInvalidateProbeSnapshots(ctx context.Context, client *dbent.C
 	} else {
 		builder.ClearPoolID()
 	}
-	builder.SetRole(service.NormalizeProxyRole(proxyIn.Role))
 
 	updated, err := builder.Save(ctx)
 	if dbent.IsNotFound(err) {
@@ -635,12 +629,10 @@ func proxyEntityToService(m *dbent.Proxy) *service.Proxy {
 		BackupProxyID:  m.BackupProxyID,
 		ExpiryWarnDays: m.ExpiryWarnDays,
 		// 链式代理（fork）
-		UpstreamMode:       m.UpstreamMode,
-		UpstreamProxyID:    m.UpstreamProxyID,
-		UpstreamHopGroupID: m.UpstreamHopGroupID,
-		Options:            m.Options,
-		PoolID:             m.PoolID, // 代理池（fork）
-		Role:               m.Role,
+		UpstreamMode:    m.UpstreamMode,
+		UpstreamGroupID: m.UpstreamGroupID,
+		Options:         m.Options,
+		PoolID:          m.PoolID, // 代理池（fork）
 	}
 	if m.Username != nil {
 		out.Username = *m.Username

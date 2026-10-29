@@ -283,10 +283,7 @@ const bindings = reactive({
 const selectedPool = computed(() => pools.value.find((p) => p.id === selectedPoolId.value) ?? null)
 const defaultPoolId = computed(() => pools.value.find((p) => p.is_default)?.id ?? null)
 const memberIds = computed(() => new Set(members.value.map((m) => m.proxy.id)))
-// 传输代理（role=transport）不进代理池
-const assignableProxies = computed(() =>
-  allProxies.value.filter((p) => !memberIds.value.has(p.id) && p.role !== 'transport')
-)
+const assignableProxies = computed(() => allProxies.value.filter((p) => !memberIds.value.has(p.id)))
 
 const showError = (error: unknown, fallback: string) => {
   appStore.showError(extractI18nErrorMessage(error, t, 'admin.proxyPools.errors', fallback))

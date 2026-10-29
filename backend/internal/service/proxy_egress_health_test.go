@@ -158,8 +158,8 @@ func (p *fakeEgressProber) ProbeProxy(_ context.Context, url string) (*ProxyExit
 
 func healthFixture(t *testing.T) (*ProxyEgressHealthService, *healthPoolRepo, *healthAccountRepo, *fakeEgressProber) {
 	t.Helper()
-	bad := Proxy{ID: 1, Name: "bad", Protocol: "socks5", Host: "10.0.0.1", Port: 1, Status: StatusActive, Role: ProxyRoleEgress}
-	good := Proxy{ID: 2, Name: "good", Protocol: "socks5", Host: "10.0.0.2", Port: 1, Status: StatusActive, Role: ProxyRoleEgress}
+	bad := Proxy{ID: 1, Name: "bad", Protocol: "socks5", Host: "10.0.0.1", Port: 1, Status: StatusActive}
+	good := Proxy{ID: 2, Name: "good", Protocol: "socks5", Host: "10.0.0.2", Port: 1, Status: StatusActive}
 	one := int64(1)
 	accRepo := &healthAccountRepo{
 		accounts: map[int64]*Account{
@@ -234,20 +234,31 @@ func TestProxyEgressHealth_ThresholdAndPolicyActions(t *testing.T) {
 	require.ErrorIs(t, svc.pool.ResumeAccount(ctx, 11), ErrProxyIncidentNotPaused)
 }
 
+// withUpstreamGroup 把 p 挂到一个单槽位前置组上，返回运行时与端点探测桩（测试结束后还原全局状态）。
+func withUpstreamGroup(t *testing.T, p *Proxy) (*upstreamTestEnv, Proxy) {
+	t.Helper()
+	g := testUpstreamGroup(7, ProxyUpstreamSlot{ID: 70, Name: "s", EndpointIDs: []int64{1}})
+	env := newUpstreamTestEnv(t, []ProxyUpstreamGroup{g}, upstreamEndpoints(1))
+	prevSvc := activeProxyChainService.Swap(&ProxyChainService{runtime: env.rt})
+	gid := g.ID
+	p.UpstreamMode, p.UpstreamGroupID = UpstreamModeGroup, &gid
+	prevSnap := proxyChainState.Load()
+	proxyChainState.Store(&proxyChainSnapshot{byID: map[int64]Proxy{p.ID: *p}, loaded: true})
+	t.Cleanup(func() { proxyChainState.Store(prevSnap); activeProxyChainService.Store(prevSvc) })
+	return env, *p
+}
+
 func TestProxyEgressHealth_TransportFailureDoesNotTouchAccounts(t *testing.T) {
 	svc, repo, accRepo, _ := healthFixture(t)
 	ctx := context.Background()
-	prevHealthy := hopGroupHealthy
-	hopGroupHealthy = func(int64) (bool, error) { return false, nil }
-	t.Cleanup(func() { hopGroupHealthy = prevHealthy })
-
-	gid := int64(7)
 	p := repo.members[0].Proxy
-	p.UpstreamMode, p.UpstreamHopGroupID = UpstreamModeHopGroup, &gid
-	prevSnap := proxyChainState.Load()
-	proxyChainState.Store(&proxyChainSnapshot{byID: map[int64]Proxy{p.ID: p},
-		hopGroups: map[int64]ProxyHopGroup{gid: {ID: gid, Name: "g", Status: StatusActive}}, loaded: true})
-	t.Cleanup(func() { proxyChainState.Store(prevSnap) })
+	env, _ := withUpstreamGroup(t, &p)
+	// 组内唯一槽位的端点挂了：整组没有可用槽位。
+	env.probe.set(1, true)
+	for i := 0; i < 3; i++ {
+		env.tick(30 * time.Second)
+	}
+	require.False(t, env.rt.GroupAvailable(7))
 
 	for i := 0; i < ProxyEgressDefaultFailThreshold; i++ {
 		require.NoError(t, svc.CheckProxy(ctx, &p))
@@ -259,55 +270,56 @@ func TestProxyEgressHealth_TransportFailureDoesNotTouchAccounts(t *testing.T) {
 	require.Equal(t, int64(1), *accRepo.accounts[10].ProxyID)
 }
 
-func TestProxyEgressHealth_ExternalTransportFailure(t *testing.T) {
-	for _, mode := range []string{UpstreamModeProxy, UpstreamModeDefault} {
-		t.Run(mode, func(t *testing.T) {
-			svc, repo, accRepo, prober := healthFixture(t)
-			p := repo.members[0].Proxy
-			upstream := Proxy{ID: 3, Name: "aio", Protocol: "http", Host: "127.0.0.1", Port: 17890,
-				Status: StatusActive, Role: ProxyRoleTransport}
-			p.UpstreamMode = mode
-			if mode == UpstreamModeProxy {
-				p.UpstreamProxyID = &upstream.ID
-			}
-			prev := proxyChainState.Load()
-			proxyChainState.Store(&proxyChainSnapshot{byID: map[int64]Proxy{p.ID: p, upstream.ID: upstream},
-				defaultUpstreamID: &upstream.ID, loaded: true})
-			t.Cleanup(func() { proxyChainState.Store(prev) })
-			prober.down = map[string]bool{upstream.URL(): true, p.URL(): true}
+type recordingAlertSink struct{ events []OpsAlertEvent }
 
-			for range ProxyEgressDefaultFailThreshold {
-				require.NoError(t, svc.CheckProxy(context.Background(), &p))
-			}
-			require.Equal(t, ProxyIncidentLayerTransport, repo.incidents[p.ID].Layer)
-			require.NotNil(t, repo.incidents[p.ID].HandledAt)
-			require.Empty(t, repo.records)
-			require.True(t, accRepo.accounts[11].Schedulable)
-			require.Equal(t, p.ID, *accRepo.accounts[10].ProxyID)
+func (a *recordingAlertSink) IsMonitoringEnabled(context.Context) bool { return true }
+func (a *recordingAlertSink) CreateAlertEvent(_ context.Context, e *OpsAlertEvent) (*OpsAlertEvent, error) {
+	cp := *e
+	cp.ID = int64(len(a.events) + 1)
+	a.events = append(a.events, cp)
+	return &cp, nil
+}
+func (a *recordingAlertSink) UpdateAlertEventStatus(context.Context, int64, string, *time.Time) error {
+	return nil
+}
 
-			// A healthy listener with a failed landing (also unreachable directly) remains an egress failure.
-			delete(prober.down, upstream.URL())
-			prober.down[p.directURL()] = true
-			for range ProxyEgressDefaultFailThreshold {
-				require.NoError(t, svc.CheckProxy(context.Background(), &p))
-			}
-			require.Equal(t, ProxyIncidentLayerEgress, repo.incidents[p.ID].Layer)
-			require.False(t, accRepo.accounts[11].Schedulable)
-		})
+// 整组没有可用槽位时，故障由槽位告警报出，落地事件只记录不再告警；只是经前置到落地不通时照常告警。
+func TestProxyEgressHealth_GroupDownSkipsPerProxyAlert(t *testing.T) {
+	svc, repo, _, _ := healthFixture(t)
+	sink := &recordingAlertSink{}
+	svc.alerts = sink
+	p := repo.members[0].Proxy
+	env, _ := withUpstreamGroup(t, &p)
+	env.probe.set(1, true)
+	for i := 0; i < 3; i++ {
+		env.tick(30 * time.Second)
 	}
+	for range ProxyEgressDefaultFailThreshold {
+		require.NoError(t, svc.CheckProxy(context.Background(), &p))
+	}
+	require.Equal(t, ProxyIncidentLayerTransport, repo.incidents[p.ID].Layer)
+	require.NotNil(t, repo.incidents[p.ID].HandledAt)
+	require.Empty(t, sink.events)
+
+	// 组可用、只是经前置到该落地不通（直连可用）：按落地发 transport 告警。
+	svc2, repo2, _, prober2 := healthFixture(t)
+	sink2 := &recordingAlertSink{}
+	svc2.alerts = sink2
+	q := repo2.members[0].Proxy
+	withUpstreamGroup(t, &q)
+	prober2.down = map[string]bool{q.URL(): true}
+	for range ProxyEgressDefaultFailThreshold {
+		require.NoError(t, svc2.CheckProxy(context.Background(), &q))
+	}
+	require.Len(t, sink2.events, 1)
+	require.Equal(t, "P2", sink2.events[0].Severity)
 }
 
 func TestProxyEgressHealth_LandingReachableDirectlyIsTransport(t *testing.T) {
 	svc, repo, accRepo, prober := healthFixture(t)
 	p := repo.members[0].Proxy
-	upstream := Proxy{ID: 3, Name: "aio", Protocol: "http", Host: "127.0.0.1", Port: 17890,
-		Status: StatusActive, Role: ProxyRoleTransport}
-	p.UpstreamMode = UpstreamModeProxy
-	p.UpstreamProxyID = &upstream.ID
-	prev := proxyChainState.Load()
-	proxyChainState.Store(&proxyChainSnapshot{byID: map[int64]Proxy{p.ID: p, upstream.ID: upstream}, loaded: true})
-	t.Cleanup(func() { proxyChainState.Store(prev) })
-	// listener 自身可用，但经它到该落地不通；落地直连可用。
+	withUpstreamGroup(t, &p)
+	// 端点自身可用，但经它到该落地不通；落地直连可用。
 	prober.down = map[string]bool{p.URL(): true}
 
 	for range ProxyEgressDefaultFailThreshold {
@@ -471,4 +483,19 @@ func TestProxyEgressHealthRunOnceRespectsConfig(t *testing.T) {
 	now = now.Add(31 * time.Second)
 	svc.runOnce()
 	require.Equal(t, now, svc.lastRun)
+}
+
+// 前置组没有可用槽位时，管理端测试直接报链路原因，不拨占位地址。
+func TestProbeProxyChain_GroupDownReturnsReadableError(t *testing.T) {
+	_, repo, _, prober := healthFixture(t)
+	p := repo.members[1].Proxy
+	env, _ := withUpstreamGroup(t, &p)
+	env.probe.set(1, true)
+	for i := 0; i < 3; i++ {
+		env.tick(30 * time.Second)
+	}
+	svc := &adminServiceImpl{proxyProber: prober}
+	_, _, err := svc.probeProxyChain(context.Background(), &p)
+	require.ErrorContains(t, err, "upstream group has no available slot")
+	require.NotContains(t, err.Error(), "proxychain-unavailable")
 }

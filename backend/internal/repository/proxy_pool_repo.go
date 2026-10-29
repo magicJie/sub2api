@@ -39,7 +39,7 @@ func (r *proxyPoolRepository) ListPools(ctx context.Context) ([]service.ProxyPoo
 	rows, err := r.sql.QueryContext(ctx, `
 		SELECT `+proxyPoolColumns+`,
 			(SELECT COUNT(*) FROM proxies x
-			 WHERE x.deleted_at IS NULL AND x.role = 'egress'
+			 WHERE x.deleted_at IS NULL
 			   AND (x.pool_id = p.id OR (p.is_default AND x.pool_id IS NULL)))
 		FROM proxy_pools p
 		ORDER BY p.is_default DESC, p.id`)
@@ -126,7 +126,7 @@ func (r *proxyPoolRepository) AssignProxies(ctx context.Context, pool *service.P
 	}
 	_, err := r.sql.ExecContext(ctx, `
 		UPDATE proxies SET pool_id = $1, updated_at = NOW()
-		WHERE id = ANY($2) AND deleted_at IS NULL AND role = 'egress'`, poolID, pq.Array(proxyIDs))
+		WHERE id = ANY($2) AND deleted_at IS NULL`, poolID, pq.Array(proxyIDs))
 	if err == nil {
 		service.RefreshProxyChainSnapshot(ctx)
 	}
@@ -134,8 +134,7 @@ func (r *proxyPoolRepository) AssignProxies(ctx context.Context, pool *service.P
 }
 
 func (r *proxyPoolRepository) ListMembers(ctx context.Context, pool *service.ProxyPool, excludeAccountID int64) ([]service.ProxyPoolMember, error) {
-	// 只有落地代理（role=egress）属于代理池；transport 只做传输。
-	q := clientFromContext(ctx, r.client).Proxy.Query().Where(proxy.RoleEQ(service.ProxyRoleEgress))
+	q := clientFromContext(ctx, r.client).Proxy.Query()
 	if pool.IsDefault {
 		q = q.Where(proxy.Or(proxy.PoolIDIsNil(), proxy.PoolIDEQ(pool.ID)))
 	} else {
@@ -309,8 +308,8 @@ func (r *proxyPoolRepository) ListLockedAccountIDs(ctx context.Context, accountI
 func (r *proxyPoolRepository) EgressHostTaken(ctx context.Context, host string, excludeProxyID int64) (bool, error) {
 	rows, err := r.sql.QueryContext(ctx, `
 		SELECT 1 FROM proxies
-		WHERE deleted_at IS NULL AND role = $1 AND lower(host) = lower($2) AND id <> $3
-		LIMIT 1`, service.ProxyRoleEgress, host, excludeProxyID)
+		WHERE deleted_at IS NULL AND lower(host) = lower($1) AND id <> $2
+		LIMIT 1`, host, excludeProxyID)
 	if err != nil {
 		return false, err
 	}

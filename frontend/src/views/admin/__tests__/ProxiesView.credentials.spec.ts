@@ -9,7 +9,7 @@ vi.mock('vue-i18n', async () => ({
   ...await vi.importActual<typeof import('vue-i18n')>('vue-i18n'),
   useI18n: () => ({ t: (key: string) => key, locale: { value: 'en' } }),
 }))
-vi.mock('@/proxyHopGroups/api', () => ({ hopGroupsAPI: { list: vi.fn().mockResolvedValue([]) } }))
+vi.mock('@/proxyUpstreamGroups/api', () => ({ upstreamGroupsAPI: { list: vi.fn().mockResolvedValue([]) }, upstreamEndpointsAPI: { list: vi.fn().mockResolvedValue([]) } }))
 const mountView = () => shallowMount(ProxiesView, {
   global: { stubs: {
     AppLayout: { template: '<div><slot /></div>' },

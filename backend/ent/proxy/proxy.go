@@ -45,16 +45,12 @@ const (
 	FieldExpiryWarnDays = "expiry_warn_days"
 	// FieldUpstreamMode holds the string denoting the upstream_mode field in the database.
 	FieldUpstreamMode = "upstream_mode"
-	// FieldUpstreamProxyID holds the string denoting the upstream_proxy_id field in the database.
-	FieldUpstreamProxyID = "upstream_proxy_id"
-	// FieldUpstreamHopGroupID holds the string denoting the upstream_hop_group_id field in the database.
-	FieldUpstreamHopGroupID = "upstream_hop_group_id"
+	// FieldUpstreamGroupID holds the string denoting the upstream_group_id field in the database.
+	FieldUpstreamGroupID = "upstream_group_id"
 	// FieldOptions holds the string denoting the options field in the database.
 	FieldOptions = "options"
 	// FieldPoolID holds the string denoting the pool_id field in the database.
 	FieldPoolID = "pool_id"
-	// FieldRole holds the string denoting the role field in the database.
-	FieldRole = "role"
 	// EdgeAccounts holds the string denoting the accounts edge name in mutations.
 	EdgeAccounts = "accounts"
 	// EdgePrimaryProxies holds the string denoting the primary_proxies edge name in mutations.
@@ -98,11 +94,9 @@ var Columns = []string{
 	FieldBackupProxyID,
 	FieldExpiryWarnDays,
 	FieldUpstreamMode,
-	FieldUpstreamProxyID,
-	FieldUpstreamHopGroupID,
+	FieldUpstreamGroupID,
 	FieldOptions,
 	FieldPoolID,
-	FieldRole,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -153,10 +147,6 @@ var (
 	DefaultUpstreamMode string
 	// UpstreamModeValidator is a validator for the "upstream_mode" field. It is called by the builders before save.
 	UpstreamModeValidator func(string) error
-	// DefaultRole holds the default value on creation for the "role" field.
-	DefaultRole string
-	// RoleValidator is a validator for the "role" field. It is called by the builders before save.
-	RoleValidator func(string) error
 )
 
 // OrderOption defines the ordering options for the Proxy queries.
@@ -242,24 +232,14 @@ func ByUpstreamMode(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldUpstreamMode, opts...).ToFunc()
 }
 
-// ByUpstreamProxyID orders the results by the upstream_proxy_id field.
-func ByUpstreamProxyID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldUpstreamProxyID, opts...).ToFunc()
-}
-
-// ByUpstreamHopGroupID orders the results by the upstream_hop_group_id field.
-func ByUpstreamHopGroupID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldUpstreamHopGroupID, opts...).ToFunc()
+// ByUpstreamGroupID orders the results by the upstream_group_id field.
+func ByUpstreamGroupID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldUpstreamGroupID, opts...).ToFunc()
 }
 
 // ByPoolID orders the results by the pool_id field.
 func ByPoolID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldPoolID, opts...).ToFunc()
-}
-
-// ByRole orders the results by the role field.
-func ByRole(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldRole, opts...).ToFunc()
 }
 
 // ByAccountsCount orders the results by accounts count.

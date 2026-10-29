@@ -141,9 +141,6 @@ func (h *AccountHandler) ExportData(c *gin.Context) {
 	var proxies []service.Proxy
 	if includeProxies {
 		proxies, err = h.resolveExportProxies(ctx, accounts)
-		if err == nil {
-			proxies, err = appendUpstreamProxies(ctx, h.adminService, proxies) // 链式代理（fork）
-		}
 		if err != nil {
 			response.ErrorFrom(c, err)
 			return
@@ -188,7 +185,7 @@ func (h *AccountHandler) ExportData(c *gin.Context) {
 			BackupProxyName: backupProxyName,
 			ExpiryWarnDays:  p.ExpiryWarnDays,
 
-			DataProxyChain: dataProxyChainFromService(&p, proxies), // 链式代理（fork）
+			DataProxyChain: dataProxyChainFromService(&p), // 链式代理（fork）
 		})
 	}
 
@@ -275,8 +272,6 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 		}
 	}
 
-	dataPayload.Proxies = orderDataProxiesForImport(dataPayload.Proxies) // 链式代理（fork）
-	chainRefs := newProxyChainRefs(existingProxies)                      // 链式代理（fork）
 	for i := range dataPayload.Proxies {
 		item := dataPayload.Proxies[i]
 		key := item.ProxyKey
@@ -297,7 +292,7 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 		if existingID, ok := proxyKeyToID[key]; ok {
 			proxyKeyToID[key] = existingID
 			result.ProxyReused++
-			if msg := chainRefs.reuseID(item, key, existingID, existingProxies); msg != "" { // 链式代理（fork）
+			if msg := reuseProxyChainByID(item, existingID, existingProxies); msg != "" { // 链式代理（fork）
 				result.Errors = append(result.Errors, DataImportError{Kind: "proxy", Name: item.Name, ProxyKey: key, Message: msg})
 			}
 			if normalizedStatus != "" {
@@ -375,8 +370,7 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 			BackupProxyID:  backupProxyID,
 			ExpiryWarnDays: item.ExpiryWarnDays,
 
-			ProxyChainInput: item.DataProxyChain.toInput(chainRefs), // 链式代理（fork）
-			Role:            item.Role,                              // 代理池（fork）
+			ProxyChainInput: item.DataProxyChain.toInput(), // 链式代理（fork）
 		})
 		if createErr != nil {
 			result.ProxyFailed++
@@ -389,7 +383,6 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 			continue
 		}
 		proxyKeyToID[key] = created.ID
-		chainRefs.add(item.Name, key, created.ID) // 链式代理（fork）
 		// 把新建代理的 name 也加入反查表，供后续批内代理引用
 		if created.Name != "" {
 			proxyNameToID[created.Name] = created.ID

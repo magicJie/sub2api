@@ -130,24 +130,14 @@ func UpstreamMode(v string) predicate.Proxy {
 	return predicate.Proxy(sql.FieldEQ(FieldUpstreamMode, v))
 }
 
-// UpstreamProxyID applies equality check predicate on the "upstream_proxy_id" field. It's identical to UpstreamProxyIDEQ.
-func UpstreamProxyID(v int64) predicate.Proxy {
-	return predicate.Proxy(sql.FieldEQ(FieldUpstreamProxyID, v))
-}
-
-// UpstreamHopGroupID applies equality check predicate on the "upstream_hop_group_id" field. It's identical to UpstreamHopGroupIDEQ.
-func UpstreamHopGroupID(v int64) predicate.Proxy {
-	return predicate.Proxy(sql.FieldEQ(FieldUpstreamHopGroupID, v))
+// UpstreamGroupID applies equality check predicate on the "upstream_group_id" field. It's identical to UpstreamGroupIDEQ.
+func UpstreamGroupID(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldEQ(FieldUpstreamGroupID, v))
 }
 
 // PoolID applies equality check predicate on the "pool_id" field. It's identical to PoolIDEQ.
 func PoolID(v int64) predicate.Proxy {
 	return predicate.Proxy(sql.FieldEQ(FieldPoolID, v))
-}
-
-// Role applies equality check predicate on the "role" field. It's identical to RoleEQ.
-func Role(v string) predicate.Proxy {
-	return predicate.Proxy(sql.FieldEQ(FieldRole, v))
 }
 
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
@@ -980,104 +970,54 @@ func UpstreamModeContainsFold(v string) predicate.Proxy {
 	return predicate.Proxy(sql.FieldContainsFold(FieldUpstreamMode, v))
 }
 
-// UpstreamProxyIDEQ applies the EQ predicate on the "upstream_proxy_id" field.
-func UpstreamProxyIDEQ(v int64) predicate.Proxy {
-	return predicate.Proxy(sql.FieldEQ(FieldUpstreamProxyID, v))
+// UpstreamGroupIDEQ applies the EQ predicate on the "upstream_group_id" field.
+func UpstreamGroupIDEQ(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldEQ(FieldUpstreamGroupID, v))
 }
 
-// UpstreamProxyIDNEQ applies the NEQ predicate on the "upstream_proxy_id" field.
-func UpstreamProxyIDNEQ(v int64) predicate.Proxy {
-	return predicate.Proxy(sql.FieldNEQ(FieldUpstreamProxyID, v))
+// UpstreamGroupIDNEQ applies the NEQ predicate on the "upstream_group_id" field.
+func UpstreamGroupIDNEQ(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldNEQ(FieldUpstreamGroupID, v))
 }
 
-// UpstreamProxyIDIn applies the In predicate on the "upstream_proxy_id" field.
-func UpstreamProxyIDIn(vs ...int64) predicate.Proxy {
-	return predicate.Proxy(sql.FieldIn(FieldUpstreamProxyID, vs...))
+// UpstreamGroupIDIn applies the In predicate on the "upstream_group_id" field.
+func UpstreamGroupIDIn(vs ...int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldIn(FieldUpstreamGroupID, vs...))
 }
 
-// UpstreamProxyIDNotIn applies the NotIn predicate on the "upstream_proxy_id" field.
-func UpstreamProxyIDNotIn(vs ...int64) predicate.Proxy {
-	return predicate.Proxy(sql.FieldNotIn(FieldUpstreamProxyID, vs...))
+// UpstreamGroupIDNotIn applies the NotIn predicate on the "upstream_group_id" field.
+func UpstreamGroupIDNotIn(vs ...int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldNotIn(FieldUpstreamGroupID, vs...))
 }
 
-// UpstreamProxyIDGT applies the GT predicate on the "upstream_proxy_id" field.
-func UpstreamProxyIDGT(v int64) predicate.Proxy {
-	return predicate.Proxy(sql.FieldGT(FieldUpstreamProxyID, v))
+// UpstreamGroupIDGT applies the GT predicate on the "upstream_group_id" field.
+func UpstreamGroupIDGT(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldGT(FieldUpstreamGroupID, v))
 }
 
-// UpstreamProxyIDGTE applies the GTE predicate on the "upstream_proxy_id" field.
-func UpstreamProxyIDGTE(v int64) predicate.Proxy {
-	return predicate.Proxy(sql.FieldGTE(FieldUpstreamProxyID, v))
+// UpstreamGroupIDGTE applies the GTE predicate on the "upstream_group_id" field.
+func UpstreamGroupIDGTE(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldGTE(FieldUpstreamGroupID, v))
 }
 
-// UpstreamProxyIDLT applies the LT predicate on the "upstream_proxy_id" field.
-func UpstreamProxyIDLT(v int64) predicate.Proxy {
-	return predicate.Proxy(sql.FieldLT(FieldUpstreamProxyID, v))
+// UpstreamGroupIDLT applies the LT predicate on the "upstream_group_id" field.
+func UpstreamGroupIDLT(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldLT(FieldUpstreamGroupID, v))
 }
 
-// UpstreamProxyIDLTE applies the LTE predicate on the "upstream_proxy_id" field.
-func UpstreamProxyIDLTE(v int64) predicate.Proxy {
-	return predicate.Proxy(sql.FieldLTE(FieldUpstreamProxyID, v))
+// UpstreamGroupIDLTE applies the LTE predicate on the "upstream_group_id" field.
+func UpstreamGroupIDLTE(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldLTE(FieldUpstreamGroupID, v))
 }
 
-// UpstreamProxyIDIsNil applies the IsNil predicate on the "upstream_proxy_id" field.
-func UpstreamProxyIDIsNil() predicate.Proxy {
-	return predicate.Proxy(sql.FieldIsNull(FieldUpstreamProxyID))
+// UpstreamGroupIDIsNil applies the IsNil predicate on the "upstream_group_id" field.
+func UpstreamGroupIDIsNil() predicate.Proxy {
+	return predicate.Proxy(sql.FieldIsNull(FieldUpstreamGroupID))
 }
 
-// UpstreamProxyIDNotNil applies the NotNil predicate on the "upstream_proxy_id" field.
-func UpstreamProxyIDNotNil() predicate.Proxy {
-	return predicate.Proxy(sql.FieldNotNull(FieldUpstreamProxyID))
-}
-
-// UpstreamHopGroupIDEQ applies the EQ predicate on the "upstream_hop_group_id" field.
-func UpstreamHopGroupIDEQ(v int64) predicate.Proxy {
-	return predicate.Proxy(sql.FieldEQ(FieldUpstreamHopGroupID, v))
-}
-
-// UpstreamHopGroupIDNEQ applies the NEQ predicate on the "upstream_hop_group_id" field.
-func UpstreamHopGroupIDNEQ(v int64) predicate.Proxy {
-	return predicate.Proxy(sql.FieldNEQ(FieldUpstreamHopGroupID, v))
-}
-
-// UpstreamHopGroupIDIn applies the In predicate on the "upstream_hop_group_id" field.
-func UpstreamHopGroupIDIn(vs ...int64) predicate.Proxy {
-	return predicate.Proxy(sql.FieldIn(FieldUpstreamHopGroupID, vs...))
-}
-
-// UpstreamHopGroupIDNotIn applies the NotIn predicate on the "upstream_hop_group_id" field.
-func UpstreamHopGroupIDNotIn(vs ...int64) predicate.Proxy {
-	return predicate.Proxy(sql.FieldNotIn(FieldUpstreamHopGroupID, vs...))
-}
-
-// UpstreamHopGroupIDGT applies the GT predicate on the "upstream_hop_group_id" field.
-func UpstreamHopGroupIDGT(v int64) predicate.Proxy {
-	return predicate.Proxy(sql.FieldGT(FieldUpstreamHopGroupID, v))
-}
-
-// UpstreamHopGroupIDGTE applies the GTE predicate on the "upstream_hop_group_id" field.
-func UpstreamHopGroupIDGTE(v int64) predicate.Proxy {
-	return predicate.Proxy(sql.FieldGTE(FieldUpstreamHopGroupID, v))
-}
-
-// UpstreamHopGroupIDLT applies the LT predicate on the "upstream_hop_group_id" field.
-func UpstreamHopGroupIDLT(v int64) predicate.Proxy {
-	return predicate.Proxy(sql.FieldLT(FieldUpstreamHopGroupID, v))
-}
-
-// UpstreamHopGroupIDLTE applies the LTE predicate on the "upstream_hop_group_id" field.
-func UpstreamHopGroupIDLTE(v int64) predicate.Proxy {
-	return predicate.Proxy(sql.FieldLTE(FieldUpstreamHopGroupID, v))
-}
-
-// UpstreamHopGroupIDIsNil applies the IsNil predicate on the "upstream_hop_group_id" field.
-func UpstreamHopGroupIDIsNil() predicate.Proxy {
-	return predicate.Proxy(sql.FieldIsNull(FieldUpstreamHopGroupID))
-}
-
-// UpstreamHopGroupIDNotNil applies the NotNil predicate on the "upstream_hop_group_id" field.
-func UpstreamHopGroupIDNotNil() predicate.Proxy {
-	return predicate.Proxy(sql.FieldNotNull(FieldUpstreamHopGroupID))
+// UpstreamGroupIDNotNil applies the NotNil predicate on the "upstream_group_id" field.
+func UpstreamGroupIDNotNil() predicate.Proxy {
+	return predicate.Proxy(sql.FieldNotNull(FieldUpstreamGroupID))
 }
 
 // OptionsIsNil applies the IsNil predicate on the "options" field.
@@ -1138,71 +1078,6 @@ func PoolIDIsNil() predicate.Proxy {
 // PoolIDNotNil applies the NotNil predicate on the "pool_id" field.
 func PoolIDNotNil() predicate.Proxy {
 	return predicate.Proxy(sql.FieldNotNull(FieldPoolID))
-}
-
-// RoleEQ applies the EQ predicate on the "role" field.
-func RoleEQ(v string) predicate.Proxy {
-	return predicate.Proxy(sql.FieldEQ(FieldRole, v))
-}
-
-// RoleNEQ applies the NEQ predicate on the "role" field.
-func RoleNEQ(v string) predicate.Proxy {
-	return predicate.Proxy(sql.FieldNEQ(FieldRole, v))
-}
-
-// RoleIn applies the In predicate on the "role" field.
-func RoleIn(vs ...string) predicate.Proxy {
-	return predicate.Proxy(sql.FieldIn(FieldRole, vs...))
-}
-
-// RoleNotIn applies the NotIn predicate on the "role" field.
-func RoleNotIn(vs ...string) predicate.Proxy {
-	return predicate.Proxy(sql.FieldNotIn(FieldRole, vs...))
-}
-
-// RoleGT applies the GT predicate on the "role" field.
-func RoleGT(v string) predicate.Proxy {
-	return predicate.Proxy(sql.FieldGT(FieldRole, v))
-}
-
-// RoleGTE applies the GTE predicate on the "role" field.
-func RoleGTE(v string) predicate.Proxy {
-	return predicate.Proxy(sql.FieldGTE(FieldRole, v))
-}
-
-// RoleLT applies the LT predicate on the "role" field.
-func RoleLT(v string) predicate.Proxy {
-	return predicate.Proxy(sql.FieldLT(FieldRole, v))
-}
-
-// RoleLTE applies the LTE predicate on the "role" field.
-func RoleLTE(v string) predicate.Proxy {
-	return predicate.Proxy(sql.FieldLTE(FieldRole, v))
-}
-
-// RoleContains applies the Contains predicate on the "role" field.
-func RoleContains(v string) predicate.Proxy {
-	return predicate.Proxy(sql.FieldContains(FieldRole, v))
-}
-
-// RoleHasPrefix applies the HasPrefix predicate on the "role" field.
-func RoleHasPrefix(v string) predicate.Proxy {
-	return predicate.Proxy(sql.FieldHasPrefix(FieldRole, v))
-}
-
-// RoleHasSuffix applies the HasSuffix predicate on the "role" field.
-func RoleHasSuffix(v string) predicate.Proxy {
-	return predicate.Proxy(sql.FieldHasSuffix(FieldRole, v))
-}
-
-// RoleEqualFold applies the EqualFold predicate on the "role" field.
-func RoleEqualFold(v string) predicate.Proxy {
-	return predicate.Proxy(sql.FieldEqualFold(FieldRole, v))
-}
-
-// RoleContainsFold applies the ContainsFold predicate on the "role" field.
-func RoleContainsFold(v string) predicate.Proxy {
-	return predicate.Proxy(sql.FieldContainsFold(FieldRole, v))
 }
 
 // HasAccounts applies the HasEdge predicate on the "accounts" edge.
