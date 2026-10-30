@@ -466,3 +466,127 @@ func TestValidateUpstreamAIOAndEndpoint(t *testing.T) {
 		}
 	}
 }
+
+func TestUpstreamStartupReadinessWaitsForFirstProbe(t *testing.T) {
+	rt := NewProxyUpstreamRuntime()
+	probe := &fakeUpstreamProbe{down: map[int64]bool{}}
+	rt.probe = probe.probe
+	if ready, loaded, _ := rt.StartupReadiness(); ready || loaded {
+		t.Fatalf("before config load: ready=%v loaded=%v, want false/false", ready, loaded)
+	}
+
+	inactive := testUpstreamGroup(2, ProxyUpstreamSlot{ID: 20, EndpointIDs: []int64{3}})
+	inactive.Status = StatusDisabled
+	rt.Replace([]ProxyUpstreamGroup{
+		testUpstreamGroup(1, ProxyUpstreamSlot{ID: 11, EndpointIDs: []int64{1}}, ProxyUpstreamSlot{ID: 10, EndpointIDs: []int64{2}}),
+		inactive,
+	}, upstreamEndpoints(1, 2, 3))
+	ready, loaded, pending := rt.StartupReadiness()
+	if ready || !loaded || len(pending) != 2 || pending[0].SlotID != 10 || pending[1].SlotID != 11 {
+		t.Fatalf("before probe: ready=%v loaded=%v pending=%+v, want 2 pending slots of group 1 sorted", ready, loaded, pending)
+	}
+
+	// 探测结果不论成败都算完成。
+	probe.set(1, true)
+	rt.ProbeAll(context.Background())
+	if ready, _, pending := rt.StartupReadiness(); !ready || len(pending) != 0 {
+		t.Fatalf("after probe: ready=%v pending=%+v, want ready", ready, pending)
+	}
+
+	// 锁存：就绪后新增的槽位不让实例回到未就绪。
+	rt.Replace([]ProxyUpstreamGroup{
+		testUpstreamGroup(1, ProxyUpstreamSlot{ID: 11, EndpointIDs: []int64{1}}, ProxyUpstreamSlot{ID: 10, EndpointIDs: []int64{2}}),
+		testUpstreamGroup(3, ProxyUpstreamSlot{ID: 30, EndpointIDs: []int64{4}}),
+	}, upstreamEndpoints(1, 2, 4))
+	if ready, _, _ := rt.StartupReadiness(); !ready {
+		t.Fatalf("readiness must latch after first probe round")
+	}
+}
+
+func TestUpstreamStartupReadinessWithoutGroups(t *testing.T) {
+	rt := NewProxyUpstreamRuntime()
+	rt.Replace(nil, nil)
+	if ready, loaded, pending := rt.StartupReadiness(); !ready || !loaded || len(pending) != 0 {
+		t.Fatalf("no groups: ready=%v loaded=%v pending=%+v, want ready", ready, loaded, pending)
+	}
+	// 槽位里没有启用的端点可探：不阻塞就绪。
+	rt = NewProxyUpstreamRuntime()
+	ep := upstreamEndpoints(1)
+	ep[0].Status = StatusDisabled
+	rt.Replace([]ProxyUpstreamGroup{testUpstreamGroup(1, ProxyUpstreamSlot{ID: 10, EndpointIDs: []int64{1}})}, ep)
+	if ready, _, _ := rt.StartupReadiness(); !ready {
+		t.Fatalf("slot without active endpoints must not block readiness")
+	}
+}
+
+func TestUpstreamStartupFirstRoundFailureMarksUnknownDown(t *testing.T) {
+	g := testUpstreamGroup(1, ProxyUpstreamSlot{ID: 10, Name: "s1", EndpointIDs: []int64{1, 2}})
+	rt := NewProxyUpstreamRuntime()
+	probe := &fakeUpstreamProbe{down: map[int64]bool{1: true}}
+	now := time.Unix(1_800_000_000, 0)
+	rt.probe = probe.probe
+	rt.now = func() time.Time { return now }
+	rt.Replace([]ProxyUpstreamGroup{g}, upstreamEndpoints(1, 2))
+
+	// 启动首轮：主端点本轮含重试仍失败，直接判不可用，切到备用（不等 fail_threshold=3）。
+	rt.ProbeAll(context.Background())
+	if got := currentEndpoint(t, rt, 10); got != 2 {
+		t.Fatalf("startup round current = %d, want backup 2", got)
+	}
+	if h := rt.EndpointHealth(1); h.State != UpstreamHealthUnhealthy {
+		t.Fatalf("primary state = %s, want unhealthy", h.State)
+	}
+	// 恢复走正常的 recover_threshold。
+	probe.set(1, false)
+	now = now.Add(30 * time.Second)
+	rt.ProbeDue(context.Background())
+	if h := rt.EndpointHealth(1); h.State != UpstreamHealthUnhealthy {
+		t.Fatalf("after 1 success state = %s, want still unhealthy (recover_threshold=2)", h.State)
+	}
+	now = now.Add(30 * time.Second)
+	rt.ProbeDue(context.Background())
+	if h := rt.EndpointHealth(1); h.State != UpstreamHealthHealthy {
+		t.Fatalf("after 2 successes state = %s, want healthy", h.State)
+	}
+}
+
+func TestUpstreamAfterReadyUnknownFailureUsesThreshold(t *testing.T) {
+	g := testUpstreamGroup(1, ProxyUpstreamSlot{ID: 10, Name: "s1", EndpointIDs: []int64{1}})
+	env := newUpstreamTestEnv(t, []ProxyUpstreamGroup{g}, upstreamEndpoints(1))
+	if ready, _, _ := env.rt.StartupReadiness(); !ready {
+		t.Fatalf("want ready after initial probe")
+	}
+	// 就绪后新增的组：状态未知端点首轮失败仍按 fail_threshold 计数，不立即判不可用。
+	g2 := testUpstreamGroup(2, ProxyUpstreamSlot{ID: 20, Name: "s2", EndpointIDs: []int64{2, 3}})
+	env.rt.Replace([]ProxyUpstreamGroup{g, g2}, upstreamEndpoints(1, 2, 3))
+	env.probe.set(2, true)
+	env.rt.ProbeAll(context.Background())
+	if got := currentEndpoint(t, env.rt, 20); got != 2 {
+		t.Fatalf("after-ready first failure current = %d, want primary 2 (below threshold)", got)
+	}
+	env.tick(30 * time.Second)
+	env.tick(30 * time.Second)
+	if got := currentEndpoint(t, env.rt, 20); got != 3 {
+		t.Fatalf("after threshold current = %d, want backup 3", got)
+	}
+}
+
+func TestUpstreamStartupTransientFailureRecoveredByRetry(t *testing.T) {
+	g := testUpstreamGroup(1, ProxyUpstreamSlot{ID: 10, EndpointIDs: []int64{1, 2}})
+	rt := NewProxyUpstreamRuntime()
+	calls := 0
+	rt.probe = func(_ context.Context, e ProxyUpstreamEndpoint, _ string) (time.Duration, error) {
+		if e.ID == 1 {
+			calls++
+			if calls == 1 {
+				return 0, errors.New("eof")
+			}
+		}
+		return time.Millisecond, nil
+	}
+	rt.Replace([]ProxyUpstreamGroup{g}, upstreamEndpoints(1, 2))
+	rt.ProbeAll(context.Background())
+	if got := currentEndpoint(t, rt, 10); got != 1 {
+		t.Fatalf("transient failure fixed by retry: current = %d, want primary 1", got)
+	}
+}

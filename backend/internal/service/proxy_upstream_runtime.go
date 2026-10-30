@@ -12,6 +12,9 @@ package service
 //     落地按权重比例分到各槽位，增删槽位或改权重只改派受影响的那部分落地。
 //
 // 运行时只影响「新连接走哪个端点」：切换后 ProxyChainService 刷新快照，旧链由 proxychain.Manager.Retain 回收。
+//
+// 启动就绪（/ready）：所有启用组的每个槽位都探测过一轮才算就绪，就绪后锁存不再回落。
+// 就绪前（启动首轮）状态未知的端点本轮含重试仍失败，直接判不可用，不等 fail_threshold；就绪后恢复正常计数。
 
 import (
 	"context"
@@ -25,6 +28,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -100,6 +104,8 @@ type ProxyUpstreamRuntime struct {
 	probe     upstreamProbeFunc
 	now       func() time.Time
 	onChange  func() // 槽位当前端点或可用性变化时调用（刷新链路快照）
+	loaded    bool   // 已加载过一次配置
+	ready     bool   // 启动首轮探测已完成（锁存）
 
 	probing sync.Mutex // 同一时刻只跑一轮探测
 }
@@ -117,6 +123,7 @@ func NewProxyUpstreamRuntime() *ProxyUpstreamRuntime {
 func (r *ProxyUpstreamRuntime) Replace(groups []ProxyUpstreamGroup, endpoints []ProxyUpstreamEndpoint) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.loaded = true
 	r.groups = make(map[int64]ProxyUpstreamGroup, len(groups))
 	r.endpoints = make(map[int64]ProxyUpstreamEndpoint, len(endpoints))
 	for _, e := range endpoints {
@@ -415,6 +422,7 @@ func (r *ProxyUpstreamRuntime) probeGroups(ctx context.Context, force bool) bool
 		task    upstreamProbeTask
 		latency time.Duration
 		err     error
+		retried bool // 失败后已立即重试过一次（仍失败）
 	}
 	results := make([]result, len(tasks))
 	sem := make(chan struct{}, proxyUpstreamMaxProbes)
@@ -426,17 +434,20 @@ func (r *ProxyUpstreamRuntime) probeGroups(ctx context.Context, force bool) bool
 			defer wg.Done()
 			defer func() { <-sem }()
 			lat, err := probeUpstreamOnce(ctx, probe, tasks[i])
+			retried := false
 			if err != nil && ctx.Err() == nil {
 				// 单次失败立即重试一次：偶发的握手失败、EOF 不计入连续失败。
 				lat, err = probeUpstreamOnce(ctx, probe, tasks[i])
+				retried = true
 			}
-			results[i] = result{task: tasks[i], latency: lat, err: err}
+			results[i] = result{task: tasks[i], latency: lat, err: err, retried: retried}
 		}(i)
 	}
 	wg.Wait()
 
 	r.mu.Lock()
 	now = r.now()
+	startup := !r.ready
 	for _, res := range results {
 		k := endpointHealthKey{res.task.group.ID, res.task.endpoint.ID}
 		h := r.health[k]
@@ -444,8 +455,9 @@ func (r *ProxyUpstreamRuntime) probeGroups(ctx context.Context, force bool) bool
 			h = &endpointHealth{}
 			r.health[k] = h
 		}
-		r.recordProbeLocked(res.task.group, res.task.endpoint, h, res.latency, res.err, now)
+		r.recordProbeLocked(res.task.group, res.task.endpoint, h, res.latency, res.err, startup && res.retried, now)
 	}
+	r.startupPendingLocked()
 	r.mu.Unlock()
 	return r.reconcileAll()
 }
@@ -456,12 +468,18 @@ func probeUpstreamOnce(ctx context.Context, probe upstreamProbeFunc, t upstreamP
 	return probe(pctx, t.endpoint, t.group.ProbeURL)
 }
 
-func (r *ProxyUpstreamRuntime) recordProbeLocked(g ProxyUpstreamGroup, e ProxyUpstreamEndpoint, h *endpointHealth, latency time.Duration, err error, now time.Time) {
+// strictUnknown：启动首轮且本轮已重试仍失败时，状态未知的端点直接判不可用。
+func (r *ProxyUpstreamRuntime) recordProbeLocked(g ProxyUpstreamGroup, e ProxyUpstreamEndpoint, h *endpointHealth, latency time.Duration, err error, strictUnknown bool, now time.Time) {
 	h.lastChecked = now
 	if err != nil {
 		h.fails++
 		h.successes = 0
 		h.lastError = err.Error()
+		if strictUnknown && !h.known {
+			slog.Warn("proxy_upstream_endpoint_down_at_startup", "group_id", g.ID, "endpoint_id", e.ID, "endpoint", e.Name, "error", h.lastError)
+			h.healthy, h.known = false, true
+			return
+		}
 		// 首次探测失败也要达到阈值才判不可用；未知状态下仍视为可用。
 		if h.fails >= g.FailThreshold && (h.healthy || !h.known) {
 			if h.known {
@@ -484,6 +502,58 @@ func (r *ProxyUpstreamRuntime) recordProbeLocked(g ProxyUpstreamGroup, e ProxyUp
 		slog.Info("proxy_upstream_endpoint_up", "group_id", g.ID, "endpoint_id", e.ID, "endpoint", e.Name)
 		h.healthy, h.healthySince = true, now
 	}
+}
+
+// UpstreamPendingSlot 是启动首轮尚未探测完的槽位（/ready 展示用）。
+type UpstreamPendingSlot struct {
+	GroupID int64 `json:"group_id"`
+	SlotID  int64 `json:"slot_id"`
+}
+
+// StartupReadiness 报告启动首轮探测是否完成：配置已加载，且所有启用组的每个槽位里启用的端点都探测过（不论结果）。
+// 没有启用的端点可探的槽位不阻塞就绪。一旦就绪即锁存，之后新增的组或槽位不会让实例回到未就绪。
+// loaded 为 false 表示配置还没加载成功（此时 pending 为空）。
+func (r *ProxyUpstreamRuntime) StartupReadiness() (ready, loaded bool, pending []UpstreamPendingSlot) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	pending = r.startupPendingLocked()
+	return r.ready, r.loaded, pending
+}
+
+// startupPendingLocked 返回未探测完的槽位，全部完成时锁存 ready。
+func (r *ProxyUpstreamRuntime) startupPendingLocked() []UpstreamPendingSlot {
+	if r.ready || !r.loaded {
+		return nil
+	}
+	var pending []UpstreamPendingSlot
+	for _, g := range r.groups {
+		if g.Status != StatusActive {
+			continue
+		}
+		for _, slot := range g.Slots {
+			for _, eid := range slot.EndpointIDs {
+				e, ok := r.endpoints[eid]
+				if !ok || !e.active() {
+					continue
+				}
+				if h := r.health[endpointHealthKey{g.ID, eid}]; h == nil || h.lastChecked.IsZero() {
+					pending = append(pending, UpstreamPendingSlot{GroupID: g.ID, SlotID: slot.ID})
+					break
+				}
+			}
+		}
+	}
+	if len(pending) == 0 {
+		r.ready = true
+		return nil
+	}
+	sort.Slice(pending, func(i, j int) bool {
+		if pending[i].GroupID != pending[j].GroupID {
+			return pending[i].GroupID < pending[j].GroupID
+		}
+		return pending[i].SlotID < pending[j].SlotID
+	})
+	return pending
 }
 
 func (r *ProxyUpstreamRuntime) reconcileAll() bool {
