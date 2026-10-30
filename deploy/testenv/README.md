@@ -62,7 +62,7 @@ deploy/testenv/testenv.sh smoke
 
 ## 注意
 
-- 不要把生产在用的 OAuth 账号（Kiro、Claude、OpenAI 等）导入测试环境，生产数据只进 uatenv。refresh token 刷新后会轮换，两边谁先刷新另一边就失效。测试环境要用单独的账号。`up` 和 `restore` 在启动 sub2api 前会比对测试库和生产库的 refresh token 哈希，有重复就拒绝启动；在 `local.env` 设置 `TESTENV_PROD_KUBECONFIG` 启用，`TESTENV_SKIP_RT_GUARD=1` 可跳过。
+- 不要把生产在用的 OAuth 账号（Kiro、Claude、OpenAI 等）导入测试环境，生产数据只进 uat。refresh token 刷新后会轮换，两边谁先刷新另一边就失效。测试环境要用单独的账号。`up` 和 `restore` 在启动 sub2api 前会比对测试库和生产库的 refresh token 哈希，有重复就拒绝启动；在 `local.env` 设置 `TESTENV_PROD_KUBECONFIG` 启用，`TESTENV_SKIP_RT_GUARD=1` 可跳过。
 
 - 快照和 `local.env` 都包含真实凭据（上游账号密钥、API Key），已被 git 忽略，不要外传。
 - 冒烟会真实调用上游并消耗额度，每次运行约 5 个请求。
@@ -207,9 +207,9 @@ T2 的 Alpine APK TLS 下载问题与临时本机编译路径仅为历史部署�
 
 ## 生产数据模拟升级
 
-testenv 只放合成数据，不导入生产数据。发版前的生产数据复刻与模拟升级在独立环境 uatenv 中执行（端口 28080，与本环境数据互不共用），由 SRE 会话操作，见 [`deploy/uatenv/README.md`](../uatenv/README.md)。
+testenv 只放合成数据，不导入生产数据。发版前的生产数据复刻与模拟升级在独立环境 uat 中执行（端口 28080，与本环境数据互不共用），由 SRE 会话操作，见 [`deploy/uat/README.md`](../uat/README.md)。
 
-uatenv 的应用容器会加入本环境的 Docker 网络 `sub2api-testenv_testenv`，以访问其中的生产 mihomo-hop 桥接容器，所以 `destroy` 或删除该网络会影响 uatenv。
+uat 的应用容器会加入本环境的 Docker 网络 `sub2api-testenv_testenv`，以访问其中的生产 mihomo-hop 桥接容器，所以 `destroy` 或删除该网络会影响 uat。
 
 ## 模拟在线订阅
 

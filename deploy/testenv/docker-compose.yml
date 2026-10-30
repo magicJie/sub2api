@@ -52,7 +52,7 @@ services:
       - SUB2API_KIRO_PACE_SCHEDULING=${SUB2API_KIRO_PACE_SCHEDULING:-}
       - SUB2API_KIRO_CHUNKED_WRITE_POLICY=${SUB2API_KIRO_CHUNKED_WRITE_POLICY:-}
       - SUB2API_KIRO_AUTONOMOUS_COMPLETION_POLICY=${SUB2API_KIRO_AUTONOMOUS_COMPLETION_POLICY:-}
-      # testenv 只放合成数据；生产数据演练在 deploy/uatenv（那里固定为 false）。
+      # testenv 只放合成数据；生产数据演练在 deploy/uat（那里固定为 false）。
       - TOKEN_REFRESH_ENABLED=${TESTENV_TOKEN_REFRESH_ENABLED:-true}
       # 访问真实上游走宿主机代理；容器内 127.0.0.1 不是宿主机。
       - HTTP_PROXY=${TESTENV_HTTP_PROXY:-http://host.docker.internal:7897}

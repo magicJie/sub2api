@@ -1,7 +1,7 @@
 # =============================================================================
 # Sub2API UAT 环境（生产数据复刻 / 模拟升级）
 # =============================================================================
-# 由 deploy/uatenv/uatenv.sh 驱动，只由 SRE 会话操作，不要用于生产。
+# 由 deploy/uat/uat.sh 驱动，只由 SRE 会话操作，不要用于生产。
 # 和 testenv 是两套独立实例：独立 compose project、命名卷和端口，端口只绑定 127.0.0.1。
 # 库里是脱敏后的生产数据，token 刷新固定关闭。
 #
@@ -10,17 +10,17 @@
 # 两个网络里都有 postgres/redis，所以数据库与 Redis 用容器名访问，避免解析到 testenv。
 # =============================================================================
 
-name: sub2api-uatenv
+name: sub2api-uat
 
 services:
-  sub2api-uatenv:
-    image: ${SUB2API_UATENV_IMAGE:-sub2api-uatenv:local}
-    container_name: sub2api-uatenv-app
+  sub2api-uat:
+    image: ${SUB2API_UAT_IMAGE:-sub2api-uat:local}
+    container_name: sub2api-uat-app
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
     ports:
-      - "127.0.0.1:${UATENV_APP_PORT:-28080}:8080"
+      - "127.0.0.1:${UAT_APP_PORT:-28080}:8080"
     volumes:
       - app_data:/app/data
     extra_hosts:
@@ -31,13 +31,13 @@ services:
       - SERVER_PORT=8080
       - SERVER_MODE=debug
       - RUN_MODE=standard
-      - DATABASE_HOST=sub2api-uatenv-postgres
+      - DATABASE_HOST=sub2api-uat-postgres
       - DATABASE_PORT=5432
       - DATABASE_USER=sub2api
-      - DATABASE_PASSWORD=sub2api-uatenv
+      - DATABASE_PASSWORD=sub2api-uat
       - DATABASE_DBNAME=sub2api
       - DATABASE_SSLMODE=disable
-      - REDIS_HOST=sub2api-uatenv-redis
+      - REDIS_HOST=sub2api-uat-redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=
       - REDIS_DB=0
@@ -45,7 +45,7 @@ services:
       - ADMIN_EMAIL=admin@sub2api.test
       - ADMIN_PASSWORD=Admin@Testenv123
       # 固定密钥：保证快照恢复后登录态、TOTP、加密字段仍可用。
-      - JWT_SECRET=uatenv-jwt-secret-0123456789abcdef0123456789abcdef
+      - JWT_SECRET=uat-jwt-secret-0123456789abcdef0123456789abcdef
       - TOTP_ENCRYPTION_KEY=0000000000000000000000000000000000000000000000000000000000000001
       - TZ=Asia/Shanghai
       # Kiro 行为开关（fork），留空即默认值，见 KIRO_FORK.md
@@ -56,17 +56,17 @@ services:
       # 库里是生产账号，固定关闭，不读取任何环境变量，避免后台轮换生产 RT。
       - TOKEN_REFRESH_ENABLED=false
       # 访问真实上游走宿主机代理；容器内 127.0.0.1 不是宿主机。
-      - HTTP_PROXY=${UATENV_HTTP_PROXY:-http://host.docker.internal:7897}
-      - HTTPS_PROXY=${UATENV_HTTPS_PROXY:-http://host.docker.internal:7897}
-      - ALL_PROXY=${UATENV_ALL_PROXY:-http://host.docker.internal:7897}
-      - NO_PROXY=${UATENV_NO_PROXY:-127.0.0.1,localhost,::1,sub2api-uatenv-postgres,sub2api-uatenv-redis,sub2api-uatenv,sub2api-uatenv-app,.svc.cluster.local,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,.local,.lan}
+      - HTTP_PROXY=${UAT_HTTP_PROXY:-http://host.docker.internal:7897}
+      - HTTPS_PROXY=${UAT_HTTPS_PROXY:-http://host.docker.internal:7897}
+      - ALL_PROXY=${UAT_ALL_PROXY:-http://host.docker.internal:7897}
+      - NO_PROXY=${UAT_NO_PROXY:-127.0.0.1,localhost,::1,sub2api-uat-postgres,sub2api-uat-redis,sub2api-uat,sub2api-uat-app,.svc.cluster.local,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,.local,.lan}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     networks:
-      - uatenv
+      - uat
       - prod_bridge
     healthcheck:
       test: ["CMD", "wget", "-q", "-T", "5", "-O", "/dev/null", "http://localhost:8080/health"]
@@ -77,20 +77,20 @@ services:
 
   postgres:
     image: postgres:18-alpine
-    container_name: sub2api-uatenv-postgres
+    container_name: sub2api-uat-postgres
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${UATENV_PG_PORT:-25432}:5432"
+      - "127.0.0.1:${UAT_PG_PORT:-25432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     environment:
       - POSTGRES_USER=sub2api
-      - POSTGRES_PASSWORD=sub2api-uatenv
+      - POSTGRES_PASSWORD=sub2api-uat
       - POSTGRES_DB=sub2api
       - PGDATA=/var/lib/postgresql/data
       - TZ=Asia/Shanghai
     networks:
-      - uatenv
+      - uat
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U sub2api -d sub2api"]
       interval: 5s
@@ -99,15 +99,15 @@ services:
 
   redis:
     image: redis:8-alpine
-    container_name: sub2api-uatenv-redis
+    container_name: sub2api-uat-redis
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${UATENV_REDIS_PORT:-26379}:6379"
+      - "127.0.0.1:${UAT_REDIS_PORT:-26379}:6379"
     volumes:
       - redis_data:/data
     command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
     networks:
-      - uatenv
+      - uat
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -120,9 +120,9 @@ volumes:
   redis_data:
 
 networks:
-  uatenv:
+  uat:
     driver: bridge
   # 生产桥接所在网络，由 testenv 创建；长期应改为独立的共享网络（S7）。
   prod_bridge:
     external: true
-    name: ${UATENV_BRIDGE_NETWORK:-sub2api-testenv_testenv}
+    name: ${UAT_BRIDGE_NETWORK:-sub2api-testenv_testenv}

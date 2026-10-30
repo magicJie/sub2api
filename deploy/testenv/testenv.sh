@@ -17,12 +17,12 @@
 #   logs      跟随日志，可追加服务名
 #   info      打印连接信息
 #
-# 生产数据复刻与模拟升级只在独立的 uatenv 环境里做，见 deploy/uatenv/README.md。
+# 生产数据复刻与模拟升级只在独立的 uat 环境里做，见 deploy/uat/README.md。
 set -euo pipefail
 # 让 $(...) 里的失败也中止脚本。
 shopt -s inherit_errexit
 
-# 本文件同时是 deploy/uatenv/uatenv.sh 的实现：uatenv.sh 先设 env_name=uatenv 再 source 本文件。
+# 本文件同时是 deploy/uat/uat.sh 的实现：uat.sh 先设 env_name=uat 再 source 本文件。
 # 直接执行时固定为 testenv，不受外部变量影响。
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   env_name=testenv
@@ -39,25 +39,25 @@ case "$env_name" in
     env_prefix=TESTENV
     default_ports=(18080 15432 16379)
     app_svc=sub2api
-    # 外部网络依赖（uatenv 用于接入生产桥接），testenv 没有。
+    # 外部网络依赖（uat 用于接入生产桥接），testenv 没有。
     bridge_network=
     ;;
-  uatenv)
-    env_prefix=UATENV
+  uat)
+    env_prefix=UAT
     default_ports=(28080 25432 26379)
-    app_svc=sub2api-uatenv
-    bridge_network=${UATENV_BRIDGE_NETWORK:-sub2api-testenv_testenv}
+    app_svc=sub2api-uat
+    bridge_network=${UAT_BRIDGE_NETWORK:-sub2api-testenv_testenv}
     # 运行态目录与文件都含生产数据：目录 0700，文件 0600。
     umask 077
     ;;
-  *) die "未知环境: ${env_name:-<空>}（只能通过 testenv.sh 或 uatenv.sh 调用）" ;;
+  *) die "未知环境: ${env_name:-<空>}（只能通过 testenv.sh 或 uat.sh 调用）" ;;
 esac
 here="$repo_root/deploy/$env_name"
 compose=(docker compose -f "$here/docker-compose.yml")
 app_container="sub2api-$env_name-app"
 local_env="$here/local.env"
 
-# 读取本环境的配置变量：cfg NAME DEFAULT 返回 ${TESTENV_|UATENV_}NAME，未设置或为空时返回 DEFAULT。
+# 读取本环境的配置变量：cfg NAME DEFAULT 返回 ${TESTENV_|UAT_}NAME，未设置或为空时返回 DEFAULT。
 cfg() {
   local v="${env_prefix}_$1"
   printf '%s' "${!v:-${2:-}}"
@@ -140,7 +140,7 @@ refresh_token_hashes_sql="select id || '|' || encode(sha256(convert_to(credentia
 
 # OAuth 的 refresh token 刷新后旧值即失效（Kiro 等会轮换 RT），测试环境和生产共用同一个
 # RT 时，谁先刷新另一边就失效。启动 sub2api 前比对两边 RT 的哈希，发现重复就拒绝启动。
-# 生产库通过 kubectl 访问，在 local.env 里设置 <前缀>_PROD_KUBECONFIG 启用（前缀 TESTENV 或 UATENV）；
+# 生产库通过 kubectl 访问，在 local.env 里设置 <前缀>_PROD_KUBECONFIG 启用（前缀 TESTENV 或 UAT）；
 # <前缀>_PROD_CONTEXT（默认 default）、_PROD_NAMESPACE（默认 sub2api）、_PROD_PG_DEPLOY（默认 deploy/postgres）可覆盖。
 guard_shared_refresh_tokens() {
   if [ "$(cfg SKIP_RT_GUARD)" = "1" ]; then
@@ -173,11 +173,11 @@ guard_shared_refresh_tokens() {
   log "RT 冲突检查通过"
 }
 
-# uatenv 的应用容器要加入 testenv 网络才能访问生产桥接（mihomo-hop 等），网络不存在时 compose 会报错。
+# uat 的应用容器要加入 testenv 网络才能访问生产桥接（mihomo-hop 等），网络不存在时 compose 会报错。
 require_bridge_network() {
   [ -n "$bridge_network" ] || return 0
   docker network inspect "$bridge_network" >/dev/null 2>&1 ||
-    die "外部网络 $bridge_network 不存在：先启动 testenv（它创建该网络）与生产桥接，见 deploy/uatenv/README.md"
+    die "外部网络 $bridge_network 不存在：先启动 testenv（它创建该网络）与生产桥接，见 deploy/uat/README.md"
 }
 
 cmd_up() {
@@ -327,11 +327,11 @@ cmd_snapshots() {
 }
 
 # ---------------------------------------------------------------------------
-# 生产复刻与模拟升级：只在 uatenv 运行（SRE 工作流，见 deploy/uatenv/README.md）
+# 生产复刻与模拟升级：只在 uat 运行（SRE 工作流，见 deploy/uat/README.md）
 # ---------------------------------------------------------------------------
 
-require_uatenv() {
-  [ "$env_name" = uatenv ] || die "$1 只能在 uatenv 运行，testenv 只放合成数据。改用: deploy/uatenv/uatenv.sh $1"
+require_uat() {
+  [ "$env_name" = uat ] || die "$1 只能在 uat 运行，testenv 只放合成数据。改用: deploy/uat/uat.sh $1"
 }
 
 prod_kubectl() {
@@ -362,7 +362,7 @@ prod_skip_data_tables=(usage_logs usage_billing_dedup usage_billing_dedup_archiv
   channel_monitor_v2_latency_histograms_1m channel_monitor_v2_latency_histograms_rollup)
 
 # 每行 "键|值"：@migrations 是 schema_migrations 的 "条数 最大文件名"，其余是 public 下
-# 未跳过数据的表的行数。settings 不计脱敏会删掉的那一行。只有 select，生产与 uatenv 共用。
+# 未跳过数据的表的行数。settings 不计脱敏会删掉的那一行。只有 select，生产与 uat 共用。
 prod_counts_sql() {
   local excluded
   excluded=$(printf "'%s'," "${prod_skip_data_tables[@]}")
@@ -408,7 +408,7 @@ SQL
   log "脱敏完成：refresh token 0 个，通知/SMTP/定时测试已关，管理员 admin@sub2api.test"
 }
 
-# token 刷新在 uatenv 的 docker-compose.yml 里写死为 false，这里再从 compose 配置和容器两侧确认。
+# token 刷新在 uat 的 docker-compose.yml 里写死为 false，这里再从 compose 配置和容器两侧确认。
 require_token_refresh_off() {
   [ "$("${compose[@]}" config --format json | jq -r --arg s "$app_svc" '.services[$s].environment.TOKEN_REFRESH_ENABLED')" = false ] ||
     die "docker-compose.yml 里 TOKEN_REFRESH_ENABLED 不是 false"
@@ -426,11 +426,11 @@ recreate_app() {
   require_token_refresh_off
 }
 
-# 只读比对生产与 uatenv：迁移账本条数/最大值，以及未跳过数据的表的行数。
+# 只读比对生产与 uat：迁移账本条数/最大值，以及未跳过数据的表的行数。
 # 迁移账本必须与本次生产读数相同。prod-clone 导出前后各读一次行数（文件留在导出目录），本次再读
-# 一次；uatenv 的行数落在这几次生产读数的范围内即视为一致（导出期间仍在写入的表允许偏差）。
+# 一次；uat 的行数落在这几次生产读数的范围内即视为一致（导出期间仍在写入的表允许偏差）。
 cmd_prod_check() {
-  require_uatenv prod-check
+  require_uat prod-check
   require_tools
   command -v kubectl >/dev/null || die "缺少依赖: kubectl"
   umask 077
@@ -438,11 +438,11 @@ cmd_prod_check() {
   dir=$(prod_work_dir "$name")
   mkdir -p -m 700 "$dir"
   prod_counts >"$dir/prod-counts-now.txt"
-  prod_counts_sql | env_psql -f - >"$dir/uatenv-counts.txt"
+  prod_counts_sql | env_psql -f - >"$dir/uat-counts.txt"
   for f in "$dir/prod-counts-before.txt" "$dir/prod-counts-after.txt" "$dir/prod-counts-now.txt"; do
     [ -s "$f" ] && prod_files+=("$f")
   done
-  [ -s "$dir/uatenv-counts.txt" ] || die "未读到 uatenv 行数"
+  [ -s "$dir/uat-counts.txt" ] || die "未读到 uat 行数"
 
   diff=$(awk -F '|' '
     { k = $1; v = substr($0, length($1) + 2) }
@@ -455,24 +455,24 @@ cmd_prod_check() {
     }
     END {
       for (k in keys) {
-        if (!(k in uat)) { print k ": uatenv 缺失"; continue }
-        if (!(k in seen)) { print k ": 生产缺失（uatenv " uat[k] "）"; continue }
-        if (k ~ /^@/) { if (pv[k] != uat[k]) print k ": 生产 " pv[k] "，uatenv " uat[k]; continue }
+        if (!(k in uat)) { print k ": uat 缺失"; continue }
+        if (!(k in seen)) { print k ": 生产缺失（uat " uat[k] "）"; continue }
+        if (k ~ /^@/) { if (pv[k] != uat[k]) print k ": 生产 " pv[k] "，uat " uat[k]; continue }
         if (uat[k] + 0 < lo[k] || uat[k] + 0 > hi[k])
-          print k ": 生产 " (lo[k] == hi[k] ? lo[k] : lo[k] "~" hi[k]) "，uatenv " uat[k]
+          print k ": 生产 " (lo[k] == hi[k] ? lo[k] : lo[k] "~" hi[k]) "，uat " uat[k]
       }
-    }' "$dir/uatenv-counts.txt" "${prod_files[@]}" | sort)
+    }' "$dir/uat-counts.txt" "${prod_files[@]}" | sort)
   if [ -n "$diff" ]; then
     printf '%s\n' "$diff" >"$dir/prod-check.diff"
-    die "uatenv 与生产不一致（$(wc -l <<<"$diff") 项，已写入 $dir/prod-check.diff）：
+    die "uat 与生产不一致（$(wc -l <<<"$diff") 项，已写入 $dir/prod-check.diff）：
 $diff"
   fi
   rm -f -- "$dir/prod-check.diff"
-  log "prod-check 通过：迁移 $(sed -n 's/^@migrations|//p' "$dir/uatenv-counts.txt")，$(grep -vc '^@' "$dir/uatenv-counts.txt") 张表行数一致"
+  log "prod-check 通过：迁移 $(sed -n 's/^@migrations|//p' "$dir/uat-counts.txt")，$(grep -vc '^@' "$dir/uat-counts.txt") 张表行数一致"
 }
 
 cmd_prod_clone() {
-  require_uatenv prod-clone
+  require_uat prod-clone
   require_tools
   command -v kubectl >/dev/null || die "缺少依赖: kubectl"
   umask 077
@@ -509,7 +509,7 @@ cmd_prod_clone() {
   [ "$(env_psql -c "select count(*) from channel_monitor_v2_config")" = 1 ] ||
     die "导入后 channel_monitor_v2_config 不是 1 行，配置表数据没有导出"
   prod_sanitize
-  UATENV_SKIP_RT_GUARD='' guard_shared_refresh_tokens
+  UAT_SKIP_RT_GUARD='' guard_shared_refresh_tokens
   cmd_prod_check "$name"
 
   # 3. 用生产同一镜像启动，确认旧版在复刻数据上正常，固化旧态快照。
@@ -521,7 +521,7 @@ cmd_prod_clone() {
 }
 
 cmd_prod_upgrade() {
-  require_uatenv prod-upgrade
+  require_uat prod-upgrade
   require_tools
   umask 077
   local name=${1:-$(date +%Y%m%d)} dir old_image new_image=$app_image
@@ -577,7 +577,7 @@ main() {
   esac
 }
 
-# 被 uatenv.sh source 时由它调用 main。
+# 被 uat.sh source 时由它调用 main。
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   main "$@"
 fi
