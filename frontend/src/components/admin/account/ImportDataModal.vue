@@ -1,14 +1,14 @@
 <template>
   <BaseDialog
     :show="show"
-    :title="t('admin.accounts.dataImportTitle')"
+    :title="isKiro ? t('admin.accounts.kiroImportTitle') : t('admin.accounts.dataImportTitle')"
     width="normal"
     close-on-click-outside
     @close="handleClose"
   >
     <form id="import-data-form" class="space-y-4" @submit.prevent="handleImport">
       <div class="text-sm text-gray-600 dark:text-dark-300">
-        {{ t('admin.accounts.dataImportHint') }}
+        {{ isKiro ? t('admin.accounts.kiroImportHint') : t('admin.accounts.dataImportHint') }}
       </div>
       <div
         class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-600 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-400"
@@ -106,6 +106,8 @@ import { convertKiroAccountManagerExport, isKiroAccountManagerExport } from '@/k
 
 interface Props {
   show: boolean
+  /** sub2api：sub2api 导出数据；kiro-account-manager（fork）：kiro-account-manager 导出的账号 JSON。两种格式不混用。 */
+  format?: 'sub2api' | 'kiro-account-manager'
 }
 
 interface Emits {
@@ -113,12 +115,13 @@ interface Emits {
   (e: 'imported'): void
 }
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), { format: 'sub2api' })
 const emit = defineEmits<Emits>()
 
 const { t } = useI18n()
 const appStore = useAppStore()
 
+const isKiro = computed(() => props.format === 'kiro-account-manager')
 const importing = ref(false)
 const files = ref<File[]>([])
 const dragDepth = ref(0)
@@ -287,8 +290,12 @@ const handleImport = async () => {
         )
         return
       }
-      if (isKiroAccountManagerExport(parsed)) {
+      if (isKiro.value) {
         // kiro-account-manager 导出的账号数组：转换成数据导入格式。
+        if (!isKiroAccountManagerExport(parsed)) {
+          appStore.showError(t('admin.accounts.kiroImportInvalidFile', { name: sourceFile.name }))
+          return
+        }
         const converted = convertKiroAccountManagerExport(parsed)
         kiroSkipped += converted.skipped.length
         if (converted.payload.accounts.length === 0) {
