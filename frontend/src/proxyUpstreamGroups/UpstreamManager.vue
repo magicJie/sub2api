@@ -31,7 +31,7 @@
       :endpoints="endpoints"
       @changed="onChanged"
     />
-    <UpstreamEndpointPanel v-else :endpoints="endpoints" @changed="onChanged" />
+    <UpstreamEndpointPanel v-else :aios="aios" :endpoints="endpoints" @changed="onChanged" />
     <template #footer>
       <button type="button" class="btn btn-secondary" @click="close">{{ t('common.close') }}</button>
     </template>
@@ -39,12 +39,19 @@
 </template>
 
 <script setup lang="ts">
-// 前置组（fork）：前置组与前置端点管理入口（取代首跳组）。列表每 10 秒刷新以展示健康与槽位 runtime。
+// 前置组（fork）：前置组与 AIO（含监听端口）管理入口（取代首跳组）。列表每 10 秒刷新以展示健康与槽位 runtime。
 import { computed, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
-import { upstreamEndpointsAPI, upstreamGroupsAPI, type UpstreamEndpoint, type UpstreamGroup } from './api'
+import {
+  upstreamAIOsAPI,
+  upstreamEndpointsAPI,
+  upstreamGroupsAPI,
+  type UpstreamAIO,
+  type UpstreamEndpoint,
+  type UpstreamGroup
+} from './api'
 import UpstreamGroupPanel from './UpstreamGroupPanel.vue'
 import UpstreamEndpointPanel from './UpstreamEndpointPanel.vue'
 
@@ -53,6 +60,7 @@ const { t } = useI18n()
 const show = ref(false)
 const tab = ref<'groups' | 'endpoints'>('groups')
 const groups = ref<UpstreamGroup[]>([])
+const aios = ref<UpstreamAIO[]>([])
 const endpoints = ref<UpstreamEndpoint[]>([])
 const loading = ref(false)
 const refreshing = ref(false)
@@ -65,12 +73,14 @@ let timer: ReturnType<typeof setInterval> | undefined
 
 async function reload() {
   try {
-    const [loadedGroups, loadedEndpoints] = await Promise.all([
+    const [loadedGroups, loadedAIOs, loadedEndpoints] = await Promise.all([
       upstreamGroupsAPI.list(),
+      upstreamAIOsAPI.list(),
       upstreamEndpointsAPI.list()
     ])
     if (!show.value) return
     groups.value = loadedGroups
+    aios.value = loadedAIOs
     endpoints.value = loadedEndpoints
     error.value = ''
   } catch {

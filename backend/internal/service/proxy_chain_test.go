@@ -421,3 +421,48 @@ func TestUpstreamSlotWeightDistribution(t *testing.T) {
 		t.Fatalf("slot a share = %.3f, want ~0.75", ratio)
 	}
 }
+
+// AIO 停用时其下端口一并跳过，切到其他 AIO 的备用端口。
+func TestUpstreamInactiveAIOSkipsItsPorts(t *testing.T) {
+	g := testUpstreamGroup(1, ProxyUpstreamSlot{ID: 10, Name: "s", EndpointIDs: []int64{1, 2}})
+	eps := upstreamEndpoints(1, 2)
+	eps[0].AIOID, eps[0].AIOStatus = 1, "inactive"
+	eps[1].AIOID, eps[1].AIOStatus = 2, StatusActive
+	env := newUpstreamTestEnv(t, []ProxyUpstreamGroup{g}, eps)
+	if got := currentEndpoint(t, env.rt, 10); got != 2 {
+		t.Fatalf("port of inactive AIO must be skipped, current = %d", got)
+	}
+}
+
+func TestValidateUpstreamAIOAndEndpoint(t *testing.T) {
+	a := &ProxyUpstreamAIO{Name: " aio ", Protocol: "SOCKS5", Host: " 10.0.0.1 "}
+	if err := validateUpstreamAIO(a); err != nil || a.Name != "aio" || a.Protocol != "socks5" || a.Host != "10.0.0.1" || a.Status != StatusActive {
+		t.Fatalf("valid AIO: err=%v %+v", err, a)
+	}
+	for _, bad := range []ProxyUpstreamAIO{
+		{Name: "", Protocol: "socks5", Host: "h"},
+		{Name: "x", Protocol: "vmess", Host: "h"},
+		{Name: "x", Protocol: "http", Host: "a/b"},
+		{Name: "x", Protocol: "http", Host: "h", Status: "paused"},
+	} {
+		bad := bad
+		if validateUpstreamAIO(&bad) == nil {
+			t.Fatalf("AIO %+v must be rejected", bad)
+		}
+	}
+	e := &ProxyUpstreamEndpoint{AIOID: 1, Name: " xyy ", Port: 17911}
+	if err := validateUpstreamEndpoint(e); err != nil || e.Name != "xyy" || e.Status != StatusActive {
+		t.Fatalf("valid port: err=%v %+v", err, e)
+	}
+	for _, bad := range []ProxyUpstreamEndpoint{
+		{Name: "xyy", Port: 17911},
+		{AIOID: 1, Name: "", Port: 17911},
+		{AIOID: 1, Name: "xyy", Port: 0},
+		{AIOID: 1, Name: "xyy", Port: 70000},
+	} {
+		bad := bad
+		if validateUpstreamEndpoint(&bad) == nil {
+			t.Fatalf("port %+v must be rejected", bad)
+		}
+	}
+}

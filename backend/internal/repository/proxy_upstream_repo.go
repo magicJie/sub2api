@@ -1,13 +1,15 @@
 package repository
 
-// 链式代理（fork）：前置端点 / 前置组 / 槽位的读写，见迁移 257 与 service/proxy_upstream_model.go。
+// 链式代理（fork）：AIO / AIO 端口（前置端点）/ 前置组 / 槽位的读写，见迁移 257、259 与 service/proxy_upstream_model.go。
 
 import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
 )
@@ -20,18 +22,121 @@ func NewProxyUpstreamRepository(db *sql.DB) service.ProxyUpstreamRepository {
 	return &proxyUpstreamRepository{db: db}
 }
 
-const proxyUpstreamEndpointColumns = `id, name, protocol, host, port, username, password, status, created_at, updated_at`
+const proxyUpstreamAIOColumns = `id, name, protocol, host, username, password, status, created_at, updated_at`
+
+func scanProxyUpstreamAIO(scan func(dest ...any) error) (*service.ProxyUpstreamAIO, error) {
+	var a service.ProxyUpstreamAIO
+	if err := scan(&a.ID, &a.Name, &a.Protocol, &a.Host, &a.Username, &a.Password, &a.Status, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+func (r *proxyUpstreamRepository) ListAIOs(ctx context.Context) ([]service.ProxyUpstreamAIO, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT `+proxyUpstreamAIOColumns+` FROM proxy_upstream_aios ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := []service.ProxyUpstreamAIO{}
+	for rows.Next() {
+		a, err := scanProxyUpstreamAIO(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *a)
+	}
+	return out, rows.Err()
+}
+
+func (r *proxyUpstreamRepository) GetAIO(ctx context.Context, id int64) (*service.ProxyUpstreamAIO, error) {
+	row := r.db.QueryRowContext(ctx, `SELECT `+proxyUpstreamAIOColumns+` FROM proxy_upstream_aios WHERE id = $1`, id)
+	a, err := scanProxyUpstreamAIO(row.Scan)
+	return a, translatePersistenceError(err, service.ErrProxyUpstreamAIONotFound, nil)
+}
+
+func (r *proxyUpstreamRepository) CreateAIO(ctx context.Context, a *service.ProxyUpstreamAIO) error {
+	row := r.db.QueryRowContext(ctx, `
+		INSERT INTO proxy_upstream_aios (name, protocol, host, username, password, status)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING `+proxyUpstreamAIOColumns,
+		a.Name, a.Protocol, a.Host, a.Username, a.Password, a.Status)
+	created, err := scanProxyUpstreamAIO(row.Scan)
+	if err != nil {
+		return translatePersistenceError(err, nil, service.ErrProxyUpstreamAIONameExists)
+	}
+	*a = *created
+	return nil
+}
+
+func (r *proxyUpstreamRepository) UpdateAIO(ctx context.Context, a *service.ProxyUpstreamAIO) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	row := tx.QueryRowContext(ctx, `
+		UPDATE proxy_upstream_aios
+		SET name = $2, protocol = $3, host = $4, username = $5, password = $6, status = $7, updated_at = NOW()
+		WHERE id = $1
+		RETURNING `+proxyUpstreamAIOColumns,
+		a.ID, a.Name, a.Protocol, a.Host, a.Username, a.Password, a.Status)
+	updated, err := scanProxyUpstreamAIO(row.Scan)
+	if err != nil {
+		return translatePersistenceError(err, service.ErrProxyUpstreamAIONotFound, service.ErrProxyUpstreamAIONameExists)
+	}
+	// 端口表的冗余列与 AIO 保持一致，回滚到旧版本时链路不变。
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE proxy_upstream_endpoints SET protocol = $2, host = $3, username = $4, password = $5, updated_at = NOW()
+		WHERE aio_id = $1`, updated.ID, updated.Protocol, updated.Host, updated.Username, updated.Password); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	*a = *updated
+	return nil
+}
+
+func (r *proxyUpstreamRepository) DeleteAIO(ctx context.Context, id int64) error {
+	res, err := r.db.ExecContext(ctx, `
+		DELETE FROM proxy_upstream_aios a WHERE a.id = $1
+		AND NOT EXISTS (SELECT 1 FROM proxy_upstream_endpoints e WHERE e.aio_id = a.id)`, id)
+	if err != nil {
+		// 并发新增端口时外键拒绝删除。
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23503" {
+			return service.ErrProxyUpstreamAIOInUse
+		}
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return nil
+	}
+	var exists bool
+	if err := r.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM proxy_upstream_aios WHERE id = $1)`, id).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return service.ErrProxyUpstreamAIOInUse
+	}
+	return service.ErrProxyUpstreamAIONotFound
+}
+
+// 端口的协议、主机与认证取自所属 AIO。
+const proxyUpstreamEndpointSelect = `SELECT e.id, e.aio_id, a.name, a.status, e.name, a.protocol, a.host, e.port, a.username, a.password, e.status, e.created_at, e.updated_at
+	FROM proxy_upstream_endpoints e JOIN proxy_upstream_aios a ON a.id = e.aio_id`
 
 func scanProxyUpstreamEndpoint(scan func(dest ...any) error) (*service.ProxyUpstreamEndpoint, error) {
 	var e service.ProxyUpstreamEndpoint
-	if err := scan(&e.ID, &e.Name, &e.Protocol, &e.Host, &e.Port, &e.Username, &e.Password, &e.Status, &e.CreatedAt, &e.UpdatedAt); err != nil {
+	if err := scan(&e.ID, &e.AIOID, &e.AIOName, &e.AIOStatus, &e.Name, &e.Protocol, &e.Host, &e.Port, &e.Username, &e.Password, &e.Status, &e.CreatedAt, &e.UpdatedAt); err != nil {
 		return nil, err
 	}
 	return &e, nil
 }
 
 func (r *proxyUpstreamRepository) ListEndpoints(ctx context.Context) ([]service.ProxyUpstreamEndpoint, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT `+proxyUpstreamEndpointColumns+` FROM proxy_upstream_endpoints ORDER BY id`)
+	rows, err := r.db.QueryContext(ctx, proxyUpstreamEndpointSelect+` ORDER BY e.aio_id, e.port, e.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -48,37 +153,65 @@ func (r *proxyUpstreamRepository) ListEndpoints(ctx context.Context) ([]service.
 }
 
 func (r *proxyUpstreamRepository) GetEndpoint(ctx context.Context, id int64) (*service.ProxyUpstreamEndpoint, error) {
-	row := r.db.QueryRowContext(ctx, `SELECT `+proxyUpstreamEndpointColumns+` FROM proxy_upstream_endpoints WHERE id = $1`, id)
+	return r.getEndpoint(ctx, r.db, id)
+}
+
+type rowQueryer interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func (r *proxyUpstreamRepository) getEndpoint(ctx context.Context, q rowQueryer, id int64) (*service.ProxyUpstreamEndpoint, error) {
+	row := q.QueryRowContext(ctx, proxyUpstreamEndpointSelect+` WHERE e.id = $1`, id)
 	e, err := scanProxyUpstreamEndpoint(row.Scan)
 	return e, translatePersistenceError(err, service.ErrProxyUpstreamEndpointNotFound, nil)
 }
 
+// CreateEndpoint / UpdateEndpoint 从所属 AIO 复制协议、主机与认证到冗余列（锁住 AIO 行，与 UpdateAIO 互斥）。
 func (r *proxyUpstreamRepository) CreateEndpoint(ctx context.Context, e *service.ProxyUpstreamEndpoint) error {
-	row := r.db.QueryRowContext(ctx, `
-		INSERT INTO proxy_upstream_endpoints (name, protocol, host, port, username, password, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING `+proxyUpstreamEndpointColumns,
-		e.Name, e.Protocol, e.Host, e.Port, e.Username, e.Password, e.Status)
-	created, err := scanProxyUpstreamEndpoint(row.Scan)
-	if err != nil {
-		return translatePersistenceError(err, nil, service.ErrProxyUpstreamEndpointNameExists)
-	}
-	*e = *created
-	return nil
+	return r.writeEndpoint(ctx, e, true)
 }
 
 func (r *proxyUpstreamRepository) UpdateEndpoint(ctx context.Context, e *service.ProxyUpstreamEndpoint) error {
-	row := r.db.QueryRowContext(ctx, `
-		UPDATE proxy_upstream_endpoints
-		SET name = $2, protocol = $3, host = $4, port = $5, username = $6, password = $7, status = $8, updated_at = NOW()
-		WHERE id = $1
-		RETURNING `+proxyUpstreamEndpointColumns,
-		e.ID, e.Name, e.Protocol, e.Host, e.Port, e.Username, e.Password, e.Status)
-	updated, err := scanProxyUpstreamEndpoint(row.Scan)
+	return r.writeEndpoint(ctx, e, false)
+}
+
+func (r *proxyUpstreamRepository) writeEndpoint(ctx context.Context, e *service.ProxyUpstreamEndpoint, create bool) error {
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return translatePersistenceError(err, service.ErrProxyUpstreamEndpointNotFound, service.ErrProxyUpstreamEndpointNameExists)
+		return err
 	}
-	*e = *updated
+	defer func() { _ = tx.Rollback() }()
+	var id int64
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM proxy_upstream_aios WHERE id = $1 FOR UPDATE`, e.AIOID).Scan(&id); err != nil {
+		return translatePersistenceError(err, service.ErrProxyUpstreamAIONotFound, nil)
+	}
+	if create {
+		err = tx.QueryRowContext(ctx, `
+			INSERT INTO proxy_upstream_endpoints (aio_id, name, protocol, host, port, username, password, status)
+			SELECT a.id, $2, a.protocol, a.host, $3, a.username, a.password, $4 FROM proxy_upstream_aios a WHERE a.id = $1
+			RETURNING id`, e.AIOID, e.Name, e.Port, e.Status).Scan(&id)
+	} else {
+		err = tx.QueryRowContext(ctx, `
+			UPDATE proxy_upstream_endpoints SET aio_id = a.id, name = $3, protocol = a.protocol, host = a.host, port = $4,
+			    username = a.username, password = a.password, status = $5, updated_at = NOW()
+			FROM proxy_upstream_aios a WHERE proxy_upstream_endpoints.id = $1 AND a.id = $2
+			RETURNING proxy_upstream_endpoints.id`, e.ID, e.AIOID, e.Name, e.Port, e.Status).Scan(&id)
+	}
+	if err != nil {
+		var notFound *infraerrors.ApplicationError
+		if !create {
+			notFound = service.ErrProxyUpstreamEndpointNotFound
+		}
+		return translatePersistenceError(err, notFound, service.ErrProxyUpstreamEndpointNameExists)
+	}
+	saved, err := r.getEndpoint(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	*e = *saved
 	return nil
 }
 

@@ -157,7 +157,7 @@ func (r *ProxyUpstreamRuntime) Replace(groups []ProxyUpstreamGroup, endpoints []
 // endpointUsableLocked：端点启用，且（未探测过或探测健康）。
 func (r *ProxyUpstreamRuntime) endpointUsableLocked(groupID, endpointID int64) bool {
 	e, ok := r.endpoints[endpointID]
-	if !ok || e.Status != StatusActive {
+	if !ok || !e.active() {
 		return false
 	}
 	h := r.health[endpointHealthKey{groupID, endpointID}]
@@ -397,7 +397,7 @@ func (r *ProxyUpstreamRuntime) probeGroups(ctx context.Context, force bool) bool
 		for _, slot := range g.Slots {
 			for _, eid := range slot.EndpointIDs {
 				e, ok := r.endpoints[eid]
-				if seen[eid] || !ok || e.Status != StatusActive {
+				if seen[eid] || !ok || !e.active() {
 					continue
 				}
 				seen[eid] = true

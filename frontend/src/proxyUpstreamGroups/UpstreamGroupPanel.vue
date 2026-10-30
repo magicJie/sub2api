@@ -45,28 +45,7 @@
               <option value="inactive">{{ t('admin.proxyUpstream.inactive') }}</option>
             </select>
           </label>
-          <label class="block sm:col-span-2">
-            <span class="input-label">{{ t('admin.proxyUpstream.probeUrl') }}</span>
-            <input v-model="form.probe_url" type="url" class="input w-full" required />
-          </label>
-          <label class="block">
-            <span class="input-label">{{ t('admin.proxyUpstream.probeInterval') }}</span>
-            <input v-model.number="form.probe_interval_seconds" type="number" min="5" max="3600" step="1" class="input w-full" required />
-          </label>
-          <label class="block">
-            <span class="input-label">{{ t('admin.proxyUpstream.failback') }}</span>
-            <input v-model.number="form.failback_seconds" type="number" min="0" max="86400" step="1" class="input w-full" required />
-          </label>
-          <label class="block">
-            <span class="input-label">{{ t('admin.proxyUpstream.failThreshold') }}</span>
-            <input v-model.number="form.fail_threshold" type="number" min="1" max="20" step="1" class="input w-full" required />
-          </label>
-          <label class="block">
-            <span class="input-label">{{ t('admin.proxyUpstream.recoverThreshold') }}</span>
-            <input v-model.number="form.recover_threshold" type="number" min="1" max="20" step="1" class="input w-full" required />
-          </label>
         </div>
-        <p class="input-hint">{{ t('admin.proxyUpstream.probeHint') }}</p>
 
         <fieldset class="space-y-3 rounded-lg border border-gray-200 p-3 dark:border-dark-600">
           <legend class="px-1 text-sm font-medium">{{ t('admin.proxyUpstream.slots') }}</legend>
@@ -137,8 +116,13 @@
                 data-test="slot-endpoint"
                 class="flex items-center gap-2 text-sm"
               >
-                <span class="badge shrink-0" :class="endpointIndex === 0 ? 'badge-primary' : 'badge-gray'">
-                  {{ endpointIndex === 0 ? t('admin.proxyUpstream.primary') : t('admin.proxyUpstream.backup') }}
+                <span
+                  class="badge shrink-0"
+                  data-test="slot-endpoint-order"
+                  :class="endpointIndex === 0 ? 'badge-primary' : 'badge-gray'"
+                  :title="endpointIndex === 0 ? t('admin.proxyUpstream.primary') : t('admin.proxyUpstream.backup')"
+                >
+                  {{ endpointIndex + 1 }}
                 </span>
                 <span class="min-w-0 flex-1 truncate">{{ endpointLabel(endpointId) }}</span>
                 <button
@@ -178,9 +162,11 @@
                 @change="addEndpoint(slot.endpoint_ids, $event)"
               >
                 <option value="">{{ t('admin.proxyUpstream.addEndpoint') }}</option>
-                <option v-for="endpoint in addableEndpoints(slot.endpoint_ids)" :key="endpoint.id" :value="endpoint.id">
-                  {{ endpointOptionLabel(endpoint) }}
-                </option>
+                <optgroup v-for="aio in addableByAIO(slot.endpoint_ids)" :key="aio.id" :label="aio.label">
+                  <option v-for="endpoint in aio.endpoints" :key="endpoint.id" :value="endpoint.id">
+                    {{ endpointOptionLabel(endpoint) }}
+                  </option>
+                </optgroup>
               </select>
             </div>
           </div>
@@ -188,6 +174,33 @@
             <Icon name="plus" size="sm" class="mr-1" />
             {{ t('admin.proxyUpstream.addSlot') }}
           </button>
+        </fieldset>
+
+        <fieldset class="space-y-3 rounded-lg border border-gray-200 p-3 dark:border-dark-600">
+          <legend class="px-1 text-sm font-medium">{{ t('admin.proxyUpstream.probeSettings') }}</legend>
+          <div class="grid gap-4 sm:grid-cols-2">
+            <label class="block sm:col-span-2">
+              <span class="input-label">{{ t('admin.proxyUpstream.probeUrl') }}</span>
+              <input v-model="form.probe_url" type="url" class="input w-full" required />
+            </label>
+            <label class="block">
+              <span class="input-label">{{ t('admin.proxyUpstream.probeInterval') }}</span>
+              <input v-model.number="form.probe_interval_seconds" type="number" min="5" max="3600" step="1" class="input w-full" required />
+            </label>
+            <label class="block">
+              <span class="input-label">{{ t('admin.proxyUpstream.failback') }}</span>
+              <input v-model.number="form.failback_seconds" type="number" min="0" max="86400" step="1" class="input w-full" required />
+            </label>
+            <label class="block">
+              <span class="input-label">{{ t('admin.proxyUpstream.failThreshold') }}</span>
+              <input v-model.number="form.fail_threshold" type="number" min="1" max="20" step="1" class="input w-full" required />
+            </label>
+            <label class="block">
+              <span class="input-label">{{ t('admin.proxyUpstream.recoverThreshold') }}</span>
+              <input v-model.number="form.recover_threshold" type="number" min="1" max="20" step="1" class="input w-full" required />
+            </label>
+          </div>
+          <p class="input-hint">{{ t('admin.proxyUpstream.probeHint') }}</p>
         </fieldset>
 
         <div class="flex justify-end gap-3">
@@ -211,29 +224,6 @@
             <button type="button" class="btn btn-danger btn-sm" @click="confirmDelete = true">{{ t('common.delete') }}</button>
           </div>
         </div>
-        <dl class="grid gap-2 rounded-lg bg-gray-50 p-3 text-sm dark:bg-dark-700 sm:grid-cols-2">
-          <div class="sm:col-span-2">
-            <dt class="text-xs text-gray-500">{{ t('admin.proxyUpstream.probeUrl') }}</dt>
-            <dd class="break-all">{{ selected.probe_url }}</dd>
-          </div>
-          <div>
-            <dt class="text-xs text-gray-500">{{ t('admin.proxyUpstream.probeInterval') }}</dt>
-            <dd>{{ selected.probe_interval_seconds }}</dd>
-          </div>
-          <div>
-            <dt class="text-xs text-gray-500">{{ t('admin.proxyUpstream.failback') }}</dt>
-            <dd>{{ selected.failback_seconds }}</dd>
-          </div>
-          <div>
-            <dt class="text-xs text-gray-500">{{ t('admin.proxyUpstream.failThreshold') }}</dt>
-            <dd>{{ selected.fail_threshold }}</dd>
-          </div>
-          <div>
-            <dt class="text-xs text-gray-500">{{ t('admin.proxyUpstream.recoverThreshold') }}</dt>
-            <dd>{{ selected.recover_threshold }}</dd>
-          </div>
-        </dl>
-        <p class="text-sm text-gray-500">{{ t('admin.proxyUpstream.failClosed') }}</p>
         <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-dark-600">
           <table class="w-full text-left text-sm">
             <thead class="bg-gray-50 text-xs text-gray-500 dark:bg-dark-700">
@@ -241,7 +231,7 @@
                 <th class="p-3">{{ t('admin.proxyUpstream.slot') }}</th>
                 <th class="p-3">{{ t('admin.proxyUpstream.slotState') }}</th>
                 <th class="p-3">{{ t('admin.proxyUpstream.currentEndpoint') }}</th>
-                <th class="p-3">{{ t('admin.proxyUpstream.endpointsTab') }}</th>
+                <th class="p-3">{{ t('admin.proxyUpstream.slotPorts') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -272,8 +262,13 @@
                 <td class="p-3">
                   <ol class="space-y-1">
                     <li v-for="(endpointId, index) in slot.endpoint_ids" :key="endpointId" class="flex items-center gap-2">
-                      <span class="text-xs text-gray-500">
-                        {{ index === 0 ? t('admin.proxyUpstream.primary') : t('admin.proxyUpstream.backup') }}
+                      <span
+                        class="badge shrink-0"
+                        data-test="slot-row-order"
+                        :class="index === 0 ? 'badge-primary' : 'badge-gray'"
+                        :title="index === 0 ? t('admin.proxyUpstream.primary') : t('admin.proxyUpstream.backup')"
+                      >
+                        {{ index + 1 }}
                       </span>
                       <span class="truncate">{{ endpointName(endpointId) }}</span>
                       <UpstreamHealthBadge :health="endpointById.get(endpointId)?.health" />
@@ -284,6 +279,30 @@
             </tbody>
           </table>
         </div>
+        <h4 class="text-sm font-medium text-gray-700 dark:text-dark-200">{{ t('admin.proxyUpstream.probeSettings') }}</h4>
+        <dl class="grid gap-2 rounded-lg bg-gray-50 p-3 text-sm dark:bg-dark-700 sm:grid-cols-2">
+          <div class="sm:col-span-2">
+            <dt class="text-xs text-gray-500">{{ t('admin.proxyUpstream.probeUrl') }}</dt>
+            <dd class="break-all">{{ selected.probe_url }}</dd>
+          </div>
+          <div>
+            <dt class="text-xs text-gray-500">{{ t('admin.proxyUpstream.probeInterval') }}</dt>
+            <dd>{{ selected.probe_interval_seconds }}</dd>
+          </div>
+          <div>
+            <dt class="text-xs text-gray-500">{{ t('admin.proxyUpstream.failback') }}</dt>
+            <dd>{{ selected.failback_seconds }}</dd>
+          </div>
+          <div>
+            <dt class="text-xs text-gray-500">{{ t('admin.proxyUpstream.failThreshold') }}</dt>
+            <dd>{{ selected.fail_threshold }}</dd>
+          </div>
+          <div>
+            <dt class="text-xs text-gray-500">{{ t('admin.proxyUpstream.recoverThreshold') }}</dt>
+            <dd>{{ selected.recover_threshold }}</dd>
+          </div>
+        </dl>
+        <p class="text-sm text-gray-500">{{ t('admin.proxyUpstream.failClosed') }}</p>
       </div>
     </section>
 
@@ -299,7 +318,7 @@
 </template>
 
 <script setup lang="ts">
-// 前置组（fork）：前置组 = 有序槽位；槽位 = 有序端点列表（第一个为主，其余备用）。
+// 前置组（fork）：前置组 = 有序槽位；槽位 = 有序 AIO 端口列表（序号 1 为主，其余按序备用）。
 // 落地按 rendezvous hash 在可用槽位间黏滞，槽位顺序只影响展示与编辑。
 import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -332,9 +351,10 @@ interface SlotDraft {
   endpoint_ids: number[]
 }
 let slotKey = 0
+// 槽位名是数据而非界面文案：默认名与后端、迁移生成的 slot-N 一致，不随界面语言变化。
 const newSlot = (index: number): SlotDraft => ({
   key: ++slotKey,
-  name: t('admin.proxyUpstream.slotDefaultName', { n: index + 1 }),
+  name: `slot-${index + 1}`,
   weight: 1,
   endpoint_ids: []
 })
@@ -378,14 +398,32 @@ const weightShare = (group: UpstreamGroup, slot: UpstreamSlot) => {
   const total = group.slots.reduce((sum, s) => sum + (s.weight ?? 1), 0)
   return total > 0 ? Math.round(((slot.weight ?? 1) / total) * 100) : 0
 }
-const endpointName = (id: number) => endpointById.value.get(id)?.name ?? `#${id}`
+const endpointName = (id: number) => {
+  const e = endpointById.value.get(id)
+  return e ? `${e.aio_name} / ${e.name}` : `#${id}`
+}
+const endpointInactive = (e: UpstreamEndpoint) => e.status === 'inactive' || e.aio_status === 'inactive'
 const endpointOptionLabel = (e: UpstreamEndpoint) =>
-  `${e.name} (${e.protocol} ${e.host}:${e.port})${e.status === 'inactive' ? ` · ${t('admin.proxyUpstream.inactive')}` : ''}`
+  `${e.aio_name} / ${e.name} (:${e.port})${endpointInactive(e) ? ` · ${t('admin.proxyUpstream.inactive')}` : ''}`
 const endpointLabel = (id: number) => {
   const endpoint = endpointById.value.get(id)
   return endpoint ? endpointOptionLabel(endpoint) : `${t('admin.proxyUpstream.missingEndpoint')} #${id}`
 }
 const addableEndpoints = (ids: number[]) => props.endpoints.filter((e) => !ids.includes(e.id))
+// 下拉按 AIO 分组，组内按端口号排序
+const addableByAIO = (ids: number[]) => {
+  const byAIO = new Map<number, { id: number; label: string; endpoints: UpstreamEndpoint[] }>()
+  for (const e of addableEndpoints(ids)) {
+    let entry = byAIO.get(e.aio_id)
+    if (!entry) {
+      entry = { id: e.aio_id, label: `${e.aio_name} (${e.protocol} ${e.host})`, endpoints: [] }
+      byAIO.set(e.aio_id, entry)
+    }
+    entry.endpoints.push(e)
+  }
+  for (const entry of byAIO.values()) entry.endpoints.sort((a, b) => a.port - b.port || a.id - b.id)
+  return [...byAIO.values()]
+}
 
 function move<T>(list: T[], index: number, delta: number) {
   const target = index + delta
