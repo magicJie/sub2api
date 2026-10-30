@@ -12,6 +12,7 @@ import (
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/proxychain"
 )
 
 // 代理池（fork）：落地 IP 健康巡检与一键处置，见 docs/PROXY_IP_MODEL.md 第 5 节。
@@ -359,7 +360,13 @@ func (s *ProxyEgressHealthService) probe(ctx context.Context, p *Proxy) (string,
 	if chainErr != "" {
 		return ProxyIncidentLayerTransport, errors.New(chainErr)
 	}
-	if _, _, err := s.prober.ProbeProxy(ctx, p.URL()); err != nil {
+	gen := proxychain.Default().Generation()
+	_, _, err := s.prober.ProbeProxy(ctx, p.URL())
+	if err != nil && proxychain.Default().Generation() != gen && ctx.Err() == nil {
+		// 探测期间槽位切换，Retain 注销了旧链凭据（本地入口报认证失败）：按新链路重取 URL 复测一次。
+		_, _, err = s.prober.ProbeProxy(ctx, p.URL())
+	}
+	if err != nil {
 		// 前置端点健康但经它到落地失败：绕过前置直连落地复测。落地本身可用，
 		// 说明是前置到该落地的路径坏了，按 transport 处理，避免误暂停或换 IP。
 		if NormalizeUpstreamMode(p.UpstreamMode) == UpstreamModeGroup {
