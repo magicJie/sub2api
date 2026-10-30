@@ -11,6 +11,7 @@ import (
 type KiroOAuthHandler struct {
 	kiroOAuthService *service.KiroOAuthService
 	kiroUsageRefresh *service.KiroUsageRefreshService
+	kiroRetire       *service.KiroRetireService
 }
 
 // NewKiroOAuthHandler 依赖 service.KiroRuntimeBinding，保证 wire 会把 Kiro 运行时依赖
@@ -19,8 +20,9 @@ func NewKiroOAuthHandler(
 	kiroOAuthService *service.KiroOAuthService,
 	_ service.KiroRuntimeBinding,
 	kiroUsageRefresh *service.KiroUsageRefreshService,
+	kiroRetire *service.KiroRetireService,
 ) *KiroOAuthHandler {
-	return &KiroOAuthHandler{kiroOAuthService: kiroOAuthService, kiroUsageRefresh: kiroUsageRefresh}
+	return &KiroOAuthHandler{kiroOAuthService: kiroOAuthService, kiroUsageRefresh: kiroUsageRefresh, kiroRetire: kiroRetire}
 }
 
 type KiroGenerateAuthURLRequest struct {

@@ -21,6 +21,7 @@ const messages: Record<string, string> = {
   'admin.accounts.usageWindow.kiroNearlyExhausted': '即将耗尽',
   'admin.accounts.usageWindow.kiroUpstreamRejected': '已被上游拒绝，{time} 恢复',
   'admin.accounts.usageWindow.kiroRetirable': '可退役',
+  'admin.accounts.usageWindow.kiroRetire': '退役',
   'admin.accounts.usageWindow.kiroDaysRemaining': '剩余 {days} 天'
 }
 
@@ -166,6 +167,9 @@ describe('AccountUsageCell Kiro 额度', () => {
     const tag = wrapper.get('[data-test="kiro-retirable"]')
     expect(tag.text()).toBe('可退役')
     expect(tag.attributes('title')).toBe('402 monthly_request_count')
+
+    await wrapper.get('[data-test="kiro-retire"]').trigger('click')
+    expect(wrapper.emitted('kiro-retire')?.[0]?.[0]).toMatchObject({ kiro_quota_rejected_at: '2026-10-27T04:02:00Z' })
   })
 
   it('没有上游拒绝标记时不显示可退役标签', async () => {
@@ -176,5 +180,6 @@ describe('AccountUsageCell Kiro 额度', () => {
 
     expect(wrapper.find('[data-test="kiro-upstream-rejected"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="kiro-retirable"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="kiro-retire"]').exists()).toBe(false)
   })
 })

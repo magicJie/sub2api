@@ -350,6 +350,7 @@ var KiroProviderSet = wire.NewSet(
 	NewKiroOAuthService,
 	ProvideKiroTokenProvider,
 	ProvideKiroUsageRefreshService,
+	NewKiroRetireService,
 	ProvideKiroCooldownStore,
 	ProvideKiroContinuationStore,
 	ProvideKiroRuntimeBinding,

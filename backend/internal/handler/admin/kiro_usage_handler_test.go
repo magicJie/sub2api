@@ -37,7 +37,7 @@ func newKiroUsageHandlerTestRouter(repo service.AccountRepository) (*gin.Engine,
 	gin.SetMode(gin.TestMode)
 	settings := newTestSettingRepo()
 	refresher := service.NewKiroUsageRefreshService(repo, nil, service.NewSettingService(settings, nil))
-	h := NewKiroOAuthHandler(nil, service.KiroRuntimeBinding{}, refresher)
+	h := NewKiroOAuthHandler(nil, service.KiroRuntimeBinding{}, refresher, nil)
 	router := gin.New()
 	router.GET("/kiro/usage-refresh/settings", h.GetUsageRefreshSettings)
 	router.PUT("/kiro/usage-refresh/settings", h.UpdateUsageRefreshSettings)
