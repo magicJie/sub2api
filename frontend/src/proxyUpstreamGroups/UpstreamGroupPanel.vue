@@ -89,6 +89,18 @@
                 :aria-label="t('admin.proxyUpstream.slotName')"
                 :placeholder="t('admin.proxyUpstream.slotName')"
               />
+              <input
+                v-model.number="slot.weight"
+                data-test="slot-weight"
+                type="number"
+                min="1"
+                max="100"
+                step="1"
+                required
+                class="input w-20 shrink-0"
+                :aria-label="t('admin.proxyUpstream.slotWeight')"
+                :title="t('admin.proxyUpstream.slotWeight')"
+              />
               <button
                 type="button"
                 class="btn btn-secondary btn-sm"
@@ -239,7 +251,12 @@
                 data-test="slot-row"
                 class="border-t border-gray-100 align-top dark:border-dark-700"
               >
-                <td class="p-3 font-medium">{{ slot.name }}</td>
+                <td class="p-3 font-medium">
+                  {{ slot.name }}
+                  <div class="mt-0.5 text-xs font-normal text-gray-500" data-test="slot-weight-share">
+                    {{ t('admin.proxyUpstream.slotWeightShare', { weight: slot.weight ?? 1, share: weightShare(selected, slot) }) }}
+                  </div>
+                </td>
                 <td class="p-3">
                   <span v-if="!slot.runtime" class="badge badge-gray">{{ t('admin.proxyUpstream.unknown') }}</span>
                   <span v-else class="badge" :class="slot.runtime.available ? 'badge-success' : 'badge-danger'">
@@ -296,6 +313,7 @@ import {
   type UpstreamEndpoint,
   type UpstreamGroup,
   type UpstreamGroupInput,
+  type UpstreamSlot,
   type UpstreamStatus
 } from './api'
 import UpstreamHealthBadge from './UpstreamHealthBadge.vue'
@@ -310,12 +328,14 @@ interface SlotDraft {
   key: number
   id?: number
   name: string
+  weight: number
   endpoint_ids: number[]
 }
 let slotKey = 0
 const newSlot = (index: number): SlotDraft => ({
   key: ++slotKey,
   name: t('admin.proxyUpstream.slotDefaultName', { n: index + 1 }),
+  weight: 1,
   endpoint_ids: []
 })
 const defaults = () => ({
@@ -353,6 +373,11 @@ watch(
 
 const availableSlots = (group: UpstreamGroup) => group.slots.filter((s) => s.runtime?.available).length
 const sortedSlots = (group: UpstreamGroup) => [...group.slots].sort((a, b) => a.position - b.position)
+// 槽位全部可用时该槽位分到的落地占比（权重 / 总权重）。
+const weightShare = (group: UpstreamGroup, slot: UpstreamSlot) => {
+  const total = group.slots.reduce((sum, s) => sum + (s.weight ?? 1), 0)
+  return total > 0 ? Math.round(((slot.weight ?? 1) / total) * 100) : 0
+}
 const endpointName = (id: number) => endpointById.value.get(id)?.name ?? `#${id}`
 const endpointOptionLabel = (e: UpstreamEndpoint) =>
   `${e.name} (${e.protocol} ${e.host}:${e.port})${e.status === 'inactive' ? ` · ${t('admin.proxyUpstream.inactive')}` : ''}`
@@ -400,7 +425,7 @@ function startEdit() {
     fail_threshold: group.fail_threshold,
     recover_threshold: group.recover_threshold,
     failback_seconds: group.failback_seconds,
-    slots: sortedSlots(group).map((s) => ({ key: ++slotKey, id: s.id, name: s.name, endpoint_ids: [...s.endpoint_ids] }))
+    slots: sortedSlots(group).map((s) => ({ key: ++slotKey, id: s.id, name: s.name, weight: s.weight ?? 1, endpoint_ids: [...s.endpoint_ids] }))
   })
   creating.value = false
   editing.value = true
@@ -420,6 +445,10 @@ async function save() {
     appStore.showError(t('admin.proxyUpstream.slotEndpointRequired'))
     return
   }
+  if (form.slots.some((s) => !Number.isInteger(s.weight) || s.weight < 1 || s.weight > 100)) {
+    appStore.showError(t('admin.proxyUpstream.slotWeightInvalid'))
+    return
+  }
   const input: UpstreamGroupInput = {
     name: form.name.trim(),
     status: form.status,
@@ -431,6 +460,7 @@ async function save() {
     slots: form.slots.map((s) => ({
       ...(s.id ? { id: s.id } : {}),
       name: s.name.trim(),
+      weight: s.weight,
       endpoint_ids: [...new Set(s.endpoint_ids)]
     }))
   }

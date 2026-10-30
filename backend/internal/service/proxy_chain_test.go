@@ -122,6 +122,35 @@ func TestUpstreamSlotFailoverAndFailback(t *testing.T) {
 	}
 }
 
+// 单次偶发失败由立即重试吸收，不计入连续失败。
+func TestUpstreamProbeRetriesOnceBeforeCountingFailure(t *testing.T) {
+	g := testUpstreamGroup(1, ProxyUpstreamSlot{ID: 10, Name: "s1", EndpointIDs: []int64{1, 2}})
+	env := newUpstreamTestEnv(t, []ProxyUpstreamGroup{g}, upstreamEndpoints(1, 2))
+	var calls int
+	flaky := env.probe.probe
+	env.rt.probe = func(ctx context.Context, e ProxyUpstreamEndpoint, u string) (time.Duration, error) {
+		if e.ID == 1 {
+			calls++
+			if calls%2 == 1 {
+				return 0, errors.New("EOF")
+			}
+		}
+		return flaky(ctx, e, u)
+	}
+	for i := 0; i < 5; i++ {
+		env.tick(30 * time.Second)
+	}
+	if got := currentEndpoint(t, env.rt, 10); got != 1 {
+		t.Fatalf("flaky primary must not fail over: current = %d", got)
+	}
+	if h := env.rt.EndpointHealth(1); h.State != UpstreamHealthHealthy || h.ConsecutiveFailures != 0 {
+		t.Fatalf("flaky primary health = %+v, want healthy", h)
+	}
+	if calls != 10 {
+		t.Fatalf("probe calls = %d, want 10 (one retry per round)", calls)
+	}
+}
+
 func TestUpstreamSlotWithSingleEndpointFailsClosed(t *testing.T) {
 	g := testUpstreamGroup(1, ProxyUpstreamSlot{ID: 10, Name: "only", EndpointIDs: []int64{1}})
 	env := newUpstreamTestEnv(t, []ProxyUpstreamGroup{g}, upstreamEndpoints(1))
@@ -319,5 +348,76 @@ func TestValidateUpstreamGroup(t *testing.T) {
 	g.ProbeURL = "ftp://x"
 	if validateUpstreamGroup(g) == nil {
 		t.Fatalf("non-HTTP probe URL must be rejected")
+	}
+	g = base()
+	if err := validateUpstreamGroup(g); err != nil || g.Slots[0].Weight != ProxyUpstreamDefaultSlotWeight {
+		t.Fatalf("omitted weight must default to 1: err=%v weight=%d", err, g.Slots[0].Weight)
+	}
+	for _, w := range []int{-1, ProxyUpstreamMaxSlotWeight + 1} {
+		g = base()
+		g.Slots[0].Weight = w
+		if validateUpstreamGroup(g) == nil {
+			t.Fatalf("weight %d must be rejected", w)
+		}
+	}
+}
+
+// 权重全为 1 时与原等权 rendezvous 选择一致：升级后存量落地不改派。
+func TestUpstreamSlotEqualWeightMatchesUnweighted(t *testing.T) {
+	slots := []int64{10, 11, 12}
+	for pid := int64(1); pid <= 2000; pid++ {
+		var unweighted, weighted int64
+		var bu uint64
+		var bw float64
+		for _, sid := range slots {
+			if u := rendezvousScore(pid, sid); unweighted == 0 || u > bu {
+				unweighted, bu = sid, u
+			}
+			if w := weightedRendezvousScore(pid, sid, 1); weighted == 0 || w > bw {
+				weighted, bw = sid, w
+			}
+		}
+		if unweighted != weighted {
+			t.Fatalf("proxy %d: weighted=1 picked %d, unweighted picked %d", pid, weighted, unweighted)
+		}
+	}
+}
+
+// 落地按权重比例分到各槽位；只调高一个槽位的权重时，落地只会移入该槽位。
+func TestUpstreamSlotWeightDistribution(t *testing.T) {
+	build := func(wa int) ProxyUpstreamGroup {
+		return testUpstreamGroup(1,
+			ProxyUpstreamSlot{ID: 10, Name: "a", Weight: wa, EndpointIDs: []int64{1}},
+			ProxyUpstreamSlot{ID: 11, Name: "b", Weight: 1, EndpointIDs: []int64{2}},
+		)
+	}
+	env := newUpstreamTestEnv(t, []ProxyUpstreamGroup{build(1)}, upstreamEndpoints(1, 2))
+	const n = 3000
+	before := map[int64]int64{}
+	for pid := int64(1); pid <= n; pid++ {
+		_, slot, err := env.rt.SelectEndpoint(1, pid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[pid] = slot.ID
+	}
+	env.rt.Replace([]ProxyUpstreamGroup{build(3)}, upstreamEndpoints(1, 2))
+	env.rt.ProbeAll(context.Background())
+	onA := 0
+	for pid := int64(1); pid <= n; pid++ {
+		_, slot, err := env.rt.SelectEndpoint(1, pid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if slot.ID == 10 {
+			onA++
+		}
+		if before[pid] == 10 && slot.ID != 10 {
+			t.Fatalf("proxy %d left slot a after its weight increased", pid)
+		}
+	}
+	// 权重 3:1，期望约 75%。
+	if ratio := float64(onA) / n; ratio < 0.71 || ratio > 0.79 {
+		t.Fatalf("slot a share = %.3f, want ~0.75", ratio)
 	}
 }

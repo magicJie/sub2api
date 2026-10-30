@@ -3,12 +3,13 @@ package service
 // 链式代理（fork）：前置组运行时，见 docs/PROXY_IP_MODEL.md 第 2.2 节。
 //
 // 每个实例在内存中独立维护：
-//   - 端点健康：经端点请求组的 probe_url，连续失败 fail_threshold 次判不可用，连续成功 recover_threshold 次判恢复。
+//   - 端点健康：经端点请求组的 probe_url（单次失败立即重试一次），连续失败 fail_threshold 次判不可用，连续成功 recover_threshold 次判恢复。
 //     同一端点被多个组引用时按组参数分别计数（不同组的探测地址可能不同）。
 //   - 槽位当前端点：当前端点不可用时切到列表中下一个可用端点；更靠前的端点连续健康满 failback_seconds 后切回。
 //   - 槽位可用：至少一个端点可用。不可用的槽位从选择中剔除，恢复后也要连续可用满 failback_seconds 才重新参与，
 //     避免落地在槽位间来回改派。
-//   - 落地选槽：rendezvous hash（落地 id × 槽位 id）在可用槽位中取最大者，不存状态；增删槽位只改派约 1/N 的落地。
+//   - 落地选槽：加权 rendezvous hash（落地 id × 槽位 id，按槽位权重缩放）在可用槽位中取最大者，不存状态；
+//     落地按权重比例分到各槽位，增删槽位或改权重只改派受影响的那部分落地。
 //
 // 运行时只影响「新连接走哪个端点」：切换后 ProxyChainService 刷新快照，旧链由 proxychain.Manager.Retain 回收。
 
@@ -20,6 +21,7 @@ import (
 	"hash/fnv"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -223,7 +225,7 @@ func (r *ProxyUpstreamRuntime) reconcileSlotLocked(g ProxyUpstreamGroup, slot Pr
 	return prevCurrent != st.current || prevAvailable != st.available
 }
 
-// SelectEndpoint 为落地选出前置端点：组内可用槽位按 rendezvous hash 取最大者，再取槽位当前端点。
+// SelectEndpoint 为落地选出前置端点：组内可用槽位按加权 rendezvous hash 取最大者，再取槽位当前端点。
 func (r *ProxyUpstreamRuntime) SelectEndpoint(groupID, proxyID int64) (ProxyUpstreamEndpoint, ProxyUpstreamSlot, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -235,14 +237,14 @@ func (r *ProxyUpstreamRuntime) SelectEndpoint(groupID, proxyID int64) (ProxyUpst
 		return ProxyUpstreamEndpoint{}, ProxyUpstreamSlot{}, errors.New("upstream group is inactive")
 	}
 	var best *ProxyUpstreamSlot
-	var bestScore uint64
+	var bestScore float64
 	for i := range g.Slots {
 		slot := &g.Slots[i]
 		st := r.slots[slot.ID]
 		if st == nil || !st.available || st.current == 0 {
 			continue
 		}
-		if score := rendezvousScore(proxyID, slot.ID); best == nil || score > bestScore {
+		if score := weightedRendezvousScore(proxyID, slot.ID, slot.Weight); best == nil || score > bestScore {
 			best, bestScore = slot, score
 		}
 	}
@@ -250,6 +252,16 @@ func (r *ProxyUpstreamRuntime) SelectEndpoint(groupID, proxyID int64) (ProxyUpst
 		return ProxyUpstreamEndpoint{}, ProxyUpstreamSlot{}, errors.New("upstream group has no available slot")
 	}
 	return r.endpoints[r.slots[best.ID].current], *best, nil
+}
+
+// weightedRendezvousScore 是加权 rendezvous hash 的得分 -w/ln(u)，u 为哈希映射到 (0,1) 的值。
+// 各槽位胜出概率与权重成正比；权重相同时排序与 u 一致，即与等权 rendezvous 结果相同。
+func weightedRendezvousScore(proxyID, slotID int64, weight int) float64 {
+	if weight < 1 {
+		weight = ProxyUpstreamDefaultSlotWeight
+	}
+	u := (float64(rendezvousScore(proxyID, slotID)>>11) + 0.5) / (1 << 53)
+	return -float64(weight) / math.Log(u)
 }
 
 func rendezvousScore(proxyID, slotID int64) uint64 {
@@ -413,9 +425,11 @@ func (r *ProxyUpstreamRuntime) probeGroups(ctx context.Context, force bool) bool
 		go func(i int) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			pctx, cancel := context.WithTimeout(ctx, proxyUpstreamProbeTimeout)
-			defer cancel()
-			lat, err := probe(pctx, tasks[i].endpoint, tasks[i].group.ProbeURL)
+			lat, err := probeUpstreamOnce(ctx, probe, tasks[i])
+			if err != nil && ctx.Err() == nil {
+				// 单次失败立即重试一次：偶发的握手失败、EOF 不计入连续失败。
+				lat, err = probeUpstreamOnce(ctx, probe, tasks[i])
+			}
 			results[i] = result{task: tasks[i], latency: lat, err: err}
 		}(i)
 	}
@@ -434,6 +448,12 @@ func (r *ProxyUpstreamRuntime) probeGroups(ctx context.Context, force bool) bool
 	}
 	r.mu.Unlock()
 	return r.reconcileAll()
+}
+
+func probeUpstreamOnce(ctx context.Context, probe upstreamProbeFunc, t upstreamProbeTask) (time.Duration, error) {
+	pctx, cancel := context.WithTimeout(ctx, proxyUpstreamProbeTimeout)
+	defer cancel()
+	return probe(pctx, t.endpoint, t.group.ProbeURL)
 }
 
 func (r *ProxyUpstreamRuntime) recordProbeLocked(g ProxyUpstreamGroup, e ProxyUpstreamEndpoint, h *endpointHealth, latency time.Duration, err error, now time.Time) {

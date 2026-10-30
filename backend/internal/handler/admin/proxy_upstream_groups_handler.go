@@ -64,6 +64,7 @@ type proxyUpstreamSlotDTO struct {
 	ID          int64                        `json:"id"`
 	Name        string                       `json:"name"`
 	Position    int                          `json:"position"`
+	Weight      int                          `json:"weight"`
 	EndpointIDs []int64                      `json:"endpoint_ids"`
 	Runtime     *service.UpstreamSlotRuntime `json:"runtime,omitempty"`
 }
@@ -86,6 +87,7 @@ type proxyUpstreamGroupDTO struct {
 type proxyUpstreamSlotRequest struct {
 	ID          int64   `json:"id"`
 	Name        string  `json:"name"`
+	Weight      int     `json:"weight"` // 省略或 0 取默认 1
 	EndpointIDs []int64 `json:"endpoint_ids"`
 }
 
@@ -125,7 +127,7 @@ func (req *proxyUpstreamGroupRequest) apply(g *service.ProxyUpstreamGroup) {
 	if req.Slots != nil {
 		g.Slots = make([]service.ProxyUpstreamSlot, 0, len(*req.Slots))
 		for _, s := range *req.Slots {
-			g.Slots = append(g.Slots, service.ProxyUpstreamSlot{ID: s.ID, Name: s.Name, EndpointIDs: s.EndpointIDs})
+			g.Slots = append(g.Slots, service.ProxyUpstreamSlot{ID: s.ID, Name: s.Name, Weight: s.Weight, EndpointIDs: s.EndpointIDs})
 		}
 	}
 }
@@ -164,7 +166,7 @@ func (h *ProxyChainHandler) groupDTO(g *service.ProxyUpstreamGroup, counts map[i
 		if ids == nil {
 			ids = []int64{}
 		}
-		slots = append(slots, proxyUpstreamSlotDTO{ID: s.ID, Name: s.Name, Position: s.Position, EndpointIDs: ids, Runtime: h.chainService.UpstreamSlotRuntime(s.ID)})
+		slots = append(slots, proxyUpstreamSlotDTO{ID: s.ID, Name: s.Name, Position: s.Position, Weight: s.Weight, EndpointIDs: ids, Runtime: h.chainService.UpstreamSlotRuntime(s.ID)})
 	}
 	return proxyUpstreamGroupDTO{ID: g.ID, Name: g.Name, Status: g.Status, ProbeURL: g.ProbeURL, ProbeIntervalSeconds: g.ProbeIntervalSeconds,
 		FailThreshold: g.FailThreshold, RecoverThreshold: g.RecoverThreshold, FailbackSeconds: g.FailbackSeconds,

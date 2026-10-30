@@ -23,6 +23,8 @@ const (
 	ProxyUpstreamDefaultProbeURL      = "https://www.gstatic.com/generate_204"
 	ProxyUpstreamDefaultProbeInterval = 30
 	ProxyUpstreamDefaultFailThreshold = 3
+	ProxyUpstreamDefaultSlotWeight    = 1
+	ProxyUpstreamMaxSlotWeight        = 100
 	ProxyUpstreamDefaultRecover       = 2
 	ProxyUpstreamDefaultFailback      = 300
 )
@@ -47,6 +49,7 @@ type ProxyUpstreamSlot struct {
 	GroupID      int64
 	Name         string
 	Position     int
+	Weight       int // 1-100，落地按加权 rendezvous hash 选槽
 	EndpointIDs  []int64
 	AlertEventID *int64
 }
