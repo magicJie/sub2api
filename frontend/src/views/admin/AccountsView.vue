@@ -153,6 +153,13 @@
                         </span>
                         <span class="flex-1 text-left">{{ t('admin.accounts.kiroRetireAll') }}</span>
                       </button>
+                      <!-- 配置账号启用：平台筛选只列出启用的平台 -->
+                      <button class="account-tools-menu-item" data-testid="account-enabled-platforms" @click="openPlatformSettings">
+                        <span class="account-tools-menu-icon bg-sky-50 text-sky-600 dark:bg-sky-900/30 dark:text-sky-300">
+                          <Icon name="filter" size="sm" />
+                        </span>
+                        <span class="flex-1 text-left">{{ t('admin.accounts.enabledPlatforms.title') }}</span>
+                      </button>
                       <button class="account-tools-menu-item" @click="openTLSFingerprintProfiles">
                         <span class="account-tools-menu-icon bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200">
                           <Icon name="lock" size="sm" />
@@ -530,6 +537,7 @@
     </ConfirmDialog>
     <ErrorPassthroughRulesModal :show="showErrorPassthrough" @close="showErrorPassthrough = false" />
     <TLSFingerprintProfilesModal :show="showTLSFingerprintProfiles" @close="showTLSFingerprintProfiles = false" />
+    <AccountPlatformSettingsModal :show="showPlatformSettings" @close="showPlatformSettings = false" @saved="handlePlatformSettingsSaved" />
     <TotpStepUpDialog :controller="accountExportStepUp" />
   </AppLayout>
 </template>
@@ -558,6 +566,8 @@ import AccountTableActions from '@/components/admin/account/AccountTableActions.
 import AccountTableFilters from '@/components/admin/account/AccountTableFilters.vue'
 import AccountBulkActionsBar from '@/components/admin/account/AccountBulkActionsBar.vue'
 import AccountActionMenu from '@/components/admin/account/AccountActionMenu.vue'
+import AccountPlatformSettingsModal from '@/components/admin/account/AccountPlatformSettingsModal.vue'
+import { isAccountPlatformEnabled } from '@/components/admin/account/accountEnabledPlatforms'
 import ImportDataModal from '@/components/admin/account/ImportDataModal.vue'
 import ReAuthAccountModal from '@/components/admin/account/ReAuthAccountModal.vue'
 import AccountTestModal from '@/components/admin/account/AccountTestModal.vue'
@@ -656,6 +666,7 @@ const showTest = ref(false)
 const showStats = ref(false)
 const showErrorPassthrough = ref(false)
 const showTLSFingerprintProfiles = ref(false)
+const showPlatformSettings = ref(false)
 const edAcc = ref<Account | null>(null)
 const tempUnschedAcc = ref<Account | null>(null)
 const deletingAcc = ref<Account | null>(null)
@@ -1461,7 +1472,8 @@ const isAnyModalOpen = computed(() => {
     showStats.value ||
     showSchedulePanel.value ||
     showErrorPassthrough.value ||
-    showTLSFingerprintProfiles.value
+    showTLSFingerprintProfiles.value ||
+    showPlatformSettings.value
   )
 })
 
@@ -1698,6 +1710,19 @@ const confirmKiroRetire = async () => {
 const openTLSFingerprintProfiles = () => {
   closeAccountToolsDropdown()
   showTLSFingerprintProfiles.value = true
+}
+
+const openPlatformSettings = () => {
+  closeAccountToolsDropdown()
+  showPlatformSettings.value = true
+}
+
+// 当前筛选的平台被停用时回到全部平台。
+const handlePlatformSettingsSaved = () => {
+  if (params.platform && !isAccountPlatformEnabled(params.platform)) {
+    params.platform = ''
+    debouncedReload()
+  }
 }
 
 const syncPendingListChanges = async () => {
