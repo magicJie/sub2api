@@ -5,7 +5,8 @@
 # 本脚本只负责环境生命周期、数据快照和回归冒烟。
 #
 # 用法：deploy/testenv/testenv.sh <command>
-#   up        用当前源码构建镜像并启动（数据卷保留；启动前自动导出 pre-up 快照）
+#   up        启动环境（数据卷保留；启动前自动导出 pre-up 快照）。设置 SUB2API_TESTENV_IMAGE 时
+#             直接运行该镜像（如发布候选），否则用当前源码构建本地镜像（仅开发自测）
 #   smoke     用 local.env 里配置的 Key 跑网关回归冒烟
 #   e2e       用 local.env 里的 Key 跑 backend/internal/integration 的 e2e 测试
 #   snapshot  把当前数据库导出到 <快照目录>/<name>.sql.gz（默认 baseline）
@@ -16,6 +17,7 @@
 #   status    查看容器状态
 #   logs      跟随日志，可追加服务名
 #   info      打印连接信息
+#   image-info 打印应用容器的 image ID 与发布 label（JSON），供各环境报告比对
 #
 # 生产数据复刻与模拟升级只在独立的 uat 环境里做，见 deploy/uat/README.md。
 set -euo pipefail
@@ -74,6 +76,8 @@ fi
 # 快照属于长期状态，放在仓库外，避免 git clean 误删。
 snapshot_dir=$(cfg SNAPSHOT_DIR "/data/sre/bsj/sub2api/$env_name/snapshots")
 image_var="SUB2API_${env_prefix}_IMAGE"
+# 设置了 SUB2API_<ENV>_IMAGE 即“运行指定镜像”，不构建。
+image_pinned=${!image_var:+1}
 app_image=${!image_var:-sub2api-$env_name:local}
 app_port=$(cfg APP_PORT "${default_ports[0]}")
 pg_port=$(cfg PG_PORT "${default_ports[1]}")
@@ -100,13 +104,76 @@ wait_healthy() {
 
 # 用 docker build 构建镜像：compose v5 的 build 要求 buildx >= 0.17，
 # 而发行版自带的 buildx 可能更旧。
+# 版本号沿用 prod release.py 的口径：<HEAD 可达的最新稳定上游 tag 去掉 v>-<HEAD 7 位短 commit>，
+# 工作区有未提交改动时再加 -dirty。后台检查更新只比较 "-" 前的 x.y.z，后缀不影响判定。
+build_version() {
+  local tag short
+  tag=$(git -C "$repo_root" describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude '*-*' HEAD 2>/dev/null) \
+    || die "找不到 HEAD 可达的稳定版本 tag（v<x.y.z>），请先 git fetch --tags"
+  short=$(git -C "$repo_root" rev-parse --short=7 HEAD)
+  printf '%s-%s' "${tag#v}" "$short"
+  if [ -n "$(git -C "$repo_root" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+    printf -- '-dirty'
+  fi
+}
+
 build_image() {
-  log "构建 sub2api 镜像（首次需要编译前后端，耗时较长）..."
+  local version commit date
+  version=$(build_version)
+  commit=$(git -C "$repo_root" rev-parse HEAD)
+  date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  log "构建 sub2api 镜像 $version（首次需要编译前后端，耗时较长）..."
   # 本机 DNS 常为 127.0.0.1（宿主机代理），默认 bridge 网络的构建容器解析不到外网，默认用 host 网络。
   docker build --network="$(cfg BUILD_NETWORK host)" -t "$app_image" \
+    --build-arg VERSION="$version" \
+    --build-arg COMMIT="$commit" \
+    --build-arg DATE="$date" \
     --build-arg NPM_CONFIG_REGISTRY="${NPM_CONFIG_REGISTRY:-https://registry.npmmirror.com}" \
     --build-arg ALPINE_MIRROR="${ALPINE_MIRROR:-https://mirrors.aliyun.com}" \
     -f "$repo_root/Dockerfile" "$repo_root"
+}
+
+# image_meta IMAGE [TAG]：输出镜像 ID 与发布构建写入的 label（JSON，缺失为 null）。
+image_meta() {
+  docker image inspect "$1" | jq -c --arg tag "${2:-$1}" '.[0] | (.Config.Labels // {}) as $l | {
+    image_id: .Id, tag: $tag,
+    lock: $l["io.sub2api.release.lock"], tree: $l["io.sub2api.release.tree"],
+    revision: $l["org.opencontainers.image.revision"]}'
+}
+
+log_image_meta() {
+  local meta=$1
+  if [ -n "$(jq -r '.lock // empty' <<<"$meta")" ]; then
+    log "镜像 $(jq -r '"\(.tag) id=\(.image_id) lock=\(.lock) tree=\(.tree) revision=\(.revision)"' <<<"$meta")"
+  else
+    log "镜像 $(jq -r '"\(.tag) id=\(.image_id)"' <<<"$meta")（无 io.sub2api.release.lock label：非发布候选，仅开发自测）"
+  fi
+}
+
+# 确定本次运行的应用镜像，结果留在 $app_image_meta。testenv → uat → prod 用同一镜像：
+# 候选只由 /data/sre/bsj/sub2api/prod/release/release.py build 构建一次，各环境通过
+# SUB2API_<ENV>_IMAGE 复用；未指定时 testenv 用当前源码构建本地镜像（仅开发自测），
+# uat 不构建，且只接受带发布 label 的候选。
+prepare_image() {
+  local hint="先用 /data/sre/bsj/sub2api/prod/release/release.py build 产出候选，在 testenv 用 SUB2API_TESTENV_IMAGE=<候选 tag> deploy/testenv/testenv.sh up 验证，再执行 SUB2API_UAT_IMAGE=<同一 tag> $0 $1"
+  if [ -z "$image_pinned" ]; then
+    [ "$env_name" != uat ] || die "uat 不构建镜像，必须设置 $image_var。$hint"
+    if [ "$(cfg SKIP_BUILD)" != 1 ]; then build_image; fi
+  fi
+  docker image inspect "$app_image" >/dev/null 2>&1 || die "镜像不存在: $app_image"
+  app_image_meta=$(image_meta "$app_image")
+  log_image_meta "$app_image_meta"
+  if [ "$env_name" = uat ] && [ -z "$(jq -r '.lock // empty' <<<"$app_image_meta")" ]; then
+    die "uat 只运行发布候选，$app_image 缺少 io.sub2api.release.lock label。$hint"
+  fi
+}
+
+# 一致性以 image ID 为准：确认应用容器实际运行的就是 prepare_image 检查过的镜像。
+require_app_image() {
+  local want running
+  want=$(jq -r .image_id <<<"$app_image_meta")
+  running=$(docker inspect "$app_container" --format '{{.Image}}')
+  [ "$running" = "$want" ] || die "应用容器运行的镜像 $running 不是预期的 $want（$app_image 在启动期间被改指向？）"
 }
 
 # 启动新镜像会自动执行数据库迁移且不可回退，先留一份升级前快照。
@@ -182,9 +249,7 @@ require_bridge_network() {
 
 cmd_up() {
   require_tools
-  if [ "$(cfg SKIP_BUILD)" != "1" ]; then
-    build_image
-  fi
+  prepare_image up
   require_bridge_network
   pre_up_snapshot
   log "启动容器..."
@@ -192,7 +257,17 @@ cmd_up() {
   guard_shared_refresh_tokens
   "${compose[@]}" up -d --no-build --remove-orphans
   wait_healthy
+  require_app_image
   cmd_info
+}
+
+cmd_image_info() {
+  local id tag
+  id=$(docker inspect "$app_container" --format '{{.Image}}' 2>/dev/null) || die "应用容器 $app_container 不存在"
+  tag=$(docker inspect "$app_container" --format '{{.Config.Image}}')
+  app_image_meta=$(image_meta "$id" "$tag" | jq -c --arg c "$app_container" '{container: $c} + .')
+  log_image_meta "$app_image_meta"
+  jq . <<<"$app_image_meta"
 }
 
 cmd_info() {
@@ -525,10 +600,10 @@ cmd_prod_upgrade() {
   require_tools
   umask 077
   local name=${1:-$(date +%Y%m%d)} dir old_image new_image=$app_image
+  prepare_image prod-upgrade
   dir=$(prod_work_dir "$name")
   [ -f "$dir/old-image" ] || die "未找到 $dir/old-image，先执行 prod-clone $name"
   old_image=$(cat "$dir/old-image")
-  if [ "$(cfg SKIP_BUILD)" != 1 ]; then build_image; fi
   require_token_refresh_off
 
   # 1. 与生产同口径的 expand：旧版仍在运行，按新源码补齐迁移账本。预检失败即停止。
@@ -541,8 +616,11 @@ cmd_prod_upgrade() {
   cmd_snapshot "prod-$name-expanded"
 
   # 2. 切到新镜像（相当于生产换镜像）。
-  docker image inspect "$new_image" --format '{{.Id}}' >"$dir/new-image.id"
+  jq . <<<"$app_image_meta" >"$dir/new-image.json"
+  log "新镜像已记录到 $dir/new-image.json"
   recreate_app "$new_image"
+  require_app_image
+  log_image_meta "$app_image_meta"
   cmd_snapshot "prod-$name-upgraded"
   log "升级完成：旧 $old_image → 新 $new_image；回到升级前：$0 restore prod-$name-old 后用旧镜像启动"
 }
@@ -573,6 +651,7 @@ main() {
     status) "${compose[@]}" ps ;;
     logs) "${compose[@]}" logs -f --tail 100 "$@" ;;
     info) cmd_info ;;
+    image-info) cmd_image_info ;;
     *) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; [ -z "$cmd" ] || exit 1 ;;
   esac
 }

@@ -33,13 +33,23 @@ deploy/testenv/testenv.sh smoke
 
 | 命令 | 作用 |
 |---|---|
-| `up` | 用当前源码构建镜像并启动；启动前自动导出 `pre-up-<时间>-<提交>` 快照（见下文）；设 `TESTENV_SKIP_BUILD=1` 跳过构建；构建默认用 npmmirror 与阿里云 Alpine 源，可用 `NPM_CONFIG_REGISTRY`、`ALPINE_MIRROR` 覆盖（`ALPINE_MIRROR=` 置空回到官方源）；构建默认 `--network=host`（本机 DNS 指向 127.0.0.1 时 bridge 网络解析失败），可用 `TESTENV_BUILD_NETWORK=default` 改回 |
+| `up` | 启动环境；设了 `SUB2API_TESTENV_IMAGE` 时直接运行该镜像、不构建（见下文「验证发布候选」），否则用当前源码构建 `sub2api-testenv:local`（仅开发自测）；启动前自动导出 `pre-up-<时间>-<提交>` 快照（见下文）；设 `TESTENV_SKIP_BUILD=1` 跳过构建、运行已有的本地镜像；构建默认用 npmmirror 与阿里云 Alpine 源，可用 `NPM_CONFIG_REGISTRY`、`ALPINE_MIRROR` 覆盖（`ALPINE_MIRROR=` 置空回到官方源）；构建默认 `--network=host`（本机 DNS 指向 127.0.0.1 时 bridge 网络解析失败），可用 `TESTENV_BUILD_NETWORK=default` 改回 |
 | `smoke` | 回归冒烟：健康检查、无效 Key 返回 401，再按 `local.env` 测试 Anthropic Messages（流式/非流式）和 OpenAI Chat/Responses |
 | `e2e` | 用 `local.env` 里的 Key 跑 `backend/internal/integration` 的 e2e 测试，可追加 `-run` 等参数 |
 | `snapshot [name]` / `restore [name]` / `snapshots` | 导出、恢复、列出数据库快照（`<快照目录>/<name>.sql.gz`，默认 `baseline`），恢复时会清空 Redis |
 | `down` | 停止环境，保留数据 |
 | `destroy` | 删除容器和所有数据卷，需设 `TESTENV_CONFIRM_DESTROY=1`；快照文件不受影响 |
 | `status` / `logs [svc]` / `info` | 查看状态、日志、连接信息 |
+| `image-info` | 打印应用容器的 image ID、tag、lock、tree、revision（JSON），供各环境报告比对 |
+
+## 验证发布候选
+
+testenv → uat → prod 使用同一个镜像，只构建一次。各环境的差异（数据、脱敏、token 刷新、网络、compose 环境变量）都在镜像外。
+
+- 候选来源：`/data/sre/bsj/sub2api/prod/release/release.py build`（SRE 会话执行），产出本地 tag `swr.lan.aiminjie.com/amj/sub2api:<ver>-<short>`，带 label `io.sub2api.release.lock`、`io.sub2api.release.tree`、`org.opencontainers.image.revision`。
+- 在 testenv 验证：`SUB2API_TESTENV_IMAGE=<候选 tag> deploy/testenv/testenv.sh up`。脚本不构建，启动前确认镜像存在并打印 image ID 与 lock label，启动后确认容器运行的是同一 image ID。没有 lock label 的镜像会注明“非发布候选，仅开发自测”。
+- 通过后由 SRE 会话在 uat 用同一 tag 演练：`SUB2API_UAT_IMAGE=<同一 tag> deploy/uat/uat.sh prod-upgrade <name>`，见 [`deploy/uat/README.md`](../uat/README.md)。uat 不构建，也不接受缺 lock label 的镜像。
+- 一致性以 image ID 为准：各环境报告记录 `image-info` 输出的 `image_id`，必须相同。
 
 ## 固定配置
 
