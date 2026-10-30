@@ -53,7 +53,7 @@
 - **整组全挂**：组内没有可用槽位时 fail-closed（不直连），巡检判为 transport 故障，只告警，不动账号。
 - **拨号**：沿用 Xray 链，「当前端点（socks5 / http）→ 落地」。切换端点时只换链的第一跳，落地 IP 不变。
 - **多实例**：探测与切换状态在每个实例内存中各自维护，不跨实例同步；各实例网络一致时结果相同，短暂不一致只影响首跳选择，不影响落地 IP。
-- **AIO 侧约定**（2026-10-29）：sub2api 用专用的 AIO 配置（`deploy/aio/`），节点与机场与自用订阅同源，但不带自用分流规则，不改共享在线订阅。开 3 个 listener，各指向一个分组：`xyy`、`bwg`（各只含一个自建节点）、`laomao`（机场，consistent-hashing，`empty-fallback: REJECT`，组内不放 DIRECT）；规则只有 `MATCH,REJECT`。AIO 侧不做跨来源 fallback，备用关系全部放在 sub2api 槽位里。listener 不开认证（容器化部署，只走内部网络，不发布端口）；机场订阅经内部 fallback 组抓取（DIRECT → xyy → bwg），直连不通自动改走自建节点。
+- **AIO 侧约定**（2026-10-29）：桌面与服务端用两套在线配置。服务端配置由 `deploy/aio/` 从桌面订阅生成，节点与机场同源，不带分流规则，不改桌面订阅；sub2api、Ant 等服务端共用这份配置的 listener 槽位。开 3 个 listener（`upstream-xyy` / `upstream-bwg` / `upstream-laomao`），各指向一个分组：`xyy`、`bwg`（各只含一个自建节点）、`laomao`（机场，consistent-hashing，`empty-fallback: REJECT`，组内不放 DIRECT）；规则只有 `MATCH,REJECT`。AIO 侧不做跨来源 fallback，备用关系全部放在 sub2api 槽位里。listener 不开认证（容器化部署，只走内部网络，不发布端口）；机场订阅经内部 fallback 组抓取（DIRECT → xyy → bwg），直连不通自动改走自建节点。
 - **上线槽位**：bwg 暂时故障，前置组先配 1 个槽位「xyy 主、机场备」；bwg 修复后加第 2 个槽位「bwg 主、机场备」。
 
 | 概念 | 说明 | 与账号的关系 |
