@@ -146,6 +146,13 @@
                         </span>
                         <span class="flex-1 text-left">{{ t('admin.accounts.kiroRefreshAllUsage') }}</span>
                       </button>
+                      <!-- Kiro（fork）：退役（删除）全部带「可退役」标记的 Kiro 账号 -->
+                      <button class="account-tools-menu-item" data-testid="kiro-retire-all" @click="openKiroRetireAll">
+                        <span class="account-tools-menu-icon bg-rose-50 text-rose-600 dark:bg-rose-900/30 dark:text-rose-300">
+                          <Icon name="trash" size="sm" />
+                        </span>
+                        <span class="flex-1 text-left">{{ t('admin.accounts.kiroRetireAll') }}</span>
+                      </button>
                       <button class="account-tools-menu-item" @click="openTLSFingerprintProfiles">
                         <span class="account-tools-menu-icon bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200">
                           <Icon name="lock" size="sm" />
@@ -344,6 +351,7 @@
               @account-updated="handleAccountUpdated"
               @usage-loaded="handleAccountUsageLoaded(row.id, $event)"
               @kiro-usage-state="handleKiroUsageState(row.id, $event)"
+              @kiro-retire="openKiroRetire([$event])"
             />
           </template>
           <template #cell-proxy="{ row }">
@@ -502,6 +510,16 @@
       @updated="handleBulkUpdated"
     />
     <TempUnschedStatusModal :show="showTempUnsched" :account="tempUnschedAcc" @close="showTempUnsched = false" @reset="handleTempUnschedReset" />
+    <ConfirmDialog
+      :show="kiroRetireTargets.length > 0"
+      :title="t('admin.accounts.kiroRetireTitle')"
+      :message="kiroRetireMessage"
+      :confirm-text="t('admin.accounts.usageWindow.kiroRetire')"
+      :cancel-text="t('common.cancel')"
+      :danger="true"
+      @confirm="confirmKiroRetire"
+      @cancel="kiroRetireTargets = []"
+    />
     <ConfirmDialog :show="showDeleteDialog" :title="t('admin.accounts.deleteAccount')" :message="t('admin.accounts.deleteConfirm', { name: deletingAcc?.name })" :confirm-text="t('common.delete')" :cancel-text="t('common.cancel')" :danger="true" @confirm="confirmDelete" @cancel="showDeleteDialog = false" />
     <ConfirmDialog :show="showCreateShadowDialog" :title="t('admin.accounts.createSparkShadow')" :message="t('admin.accounts.createSparkShadowConfirm', { name: creatingShadowAcc?.name })" @confirm="confirmCreateSparkShadow" @cancel="showCreateShadowDialog = false" />
     <ConfirmDialog :show="showExportDataDialog" :title="t('admin.accounts.dataExport')" :message="t('admin.accounts.dataExportConfirmMessage')" :confirm-text="t('admin.accounts.dataExportConfirm')" :cancel-text="t('common.cancel')" @confirm="handleExportData" @cancel="showExportDataDialog = false">
@@ -1631,6 +1649,49 @@ const handleKiroRefreshAllUsage = async () => {
     appStore.showError(error?.message || t('admin.accounts.kiroRefreshAllFailed'))
   } finally {
     kiroRefreshAllPending.value = false
+  }
+}
+
+// Kiro（fork）一键退役：删除带「可退役」标记的账号（后端逐个复核标记）。
+const kiroRetireTargets = ref<{ id: number; name: string }[]>([])
+const kiroRetirePending = ref(false)
+const kiroRetireMessage = computed(() => {
+  const list = kiroRetireTargets.value
+  if (list.length === 1) return t('admin.accounts.kiroRetireConfirmOne', { name: list[0].name })
+  const names = list.slice(0, 20).map((a) => a.name).join(', ')
+  const more = list.length > 20 ? t('admin.accounts.kiroRetireMore', { count: list.length - 20 }) : ''
+  return t('admin.accounts.kiroRetireConfirmMany', { count: list.length, names: names + more })
+})
+const openKiroRetire = (accounts: { id: number; name: string }[]) => {
+  kiroRetireTargets.value = accounts.map((a) => ({ id: a.id, name: a.name }))
+}
+const openKiroRetireAll = async () => {
+  closeAccountToolsDropdown()
+  try {
+    const list = await adminAPI.kiro.listRetirableAccounts()
+    if (list.length === 0) {
+      appStore.showInfo(t('admin.accounts.kiroRetireNone'))
+      return
+    }
+    openKiroRetire(list)
+  } catch (error: any) {
+    appStore.showError(error?.message || t('admin.accounts.kiroRetireFailed'))
+  }
+}
+const confirmKiroRetire = async () => {
+  const ids = kiroRetireTargets.value.map((a) => a.id)
+  kiroRetireTargets.value = []
+  if (ids.length === 0 || kiroRetirePending.value) return
+  kiroRetirePending.value = true
+  try {
+    const { deleted, failed } = await adminAPI.kiro.retireAccounts(ids)
+    if (failed.length === 0) appStore.showSuccess(t('admin.accounts.kiroRetireDone', { count: deleted.length }))
+    else appStore.showWarning(t('admin.accounts.kiroRetirePartial', { count: deleted.length, failed: failed.length }))
+    reload()
+  } catch (error: any) {
+    appStore.showError(error?.message || t('admin.accounts.kiroRetireFailed'))
+  } finally {
+    kiroRetirePending.value = false
   }
 }
 

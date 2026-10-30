@@ -112,6 +112,30 @@ export async function refreshAllUsage(): Promise<{ queued: number }> {
   return data
 }
 
+/** 带「可退役」标记（上游额度拒绝）的 kiro 账号 */
+export interface KiroRetirableAccount {
+  id: number
+  name: string
+  rejected_at: string
+  reason: string
+}
+
+export interface KiroRetireResult {
+  deleted: number[]
+  failed: { account_id: number; error: string }[]
+}
+
+export async function listRetirableAccounts(): Promise<KiroRetirableAccount[]> {
+  const { data } = await apiClient.get<KiroRetirableAccount[]>('/admin/kiro/retirable-accounts')
+  return Array.isArray(data) ? data : []
+}
+
+/** 退役（删除）可退役账号；不是 kiro 或标记已清除的账号会失败并返回原因 */
+export async function retireAccounts(accountIds: number[]): Promise<KiroRetireResult> {
+  const { data } = await apiClient.post<KiroRetireResult>('/admin/kiro/retire', { account_ids: accountIds })
+  return data
+}
+
 export default {
   generateAuthUrl,
   generateIDCAuthUrl,
@@ -120,5 +144,7 @@ export default {
   importToken,
   getUsageRefreshSettings,
   updateUsageRefreshSettings,
-  refreshAllUsage
+  refreshAllUsage,
+  listRetirableAccounts,
+  retireAccounts
 }

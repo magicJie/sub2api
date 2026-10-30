@@ -153,4 +153,37 @@ func (r *accountRepository) ClearKiroQuotaRejected(ctx context.Context, accountI
 	return err
 }
 
+// ListKiroRetirableAccounts 列出带「可退役」标记的未删除 kiro 账号（一键退役用）。
+func (r *accountRepository) ListKiroRetirableAccounts(ctx context.Context) ([]service.KiroRetirableAccount, error) {
+	if r == nil || r.sql == nil {
+		return nil, errors.New("account repository SQL executor not configured")
+	}
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT id, name, extra ->> 'kiro_quota_rejected_at', COALESCE(extra ->> 'kiro_quota_rejected_reason', '')
+		FROM accounts
+		WHERE platform = 'kiro' AND deleted_at IS NULL AND extra ? 'kiro_quota_rejected_at'
+		ORDER BY id
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]service.KiroRetirableAccount, 0)
+	for rows.Next() {
+		var item service.KiroRetirableAccount
+		var rejectedAt string
+		if err := rows.Scan(&item.ID, &item.Name, &rejectedAt, &item.Reason); err != nil {
+			return nil, err
+		}
+		at, _ := service.KiroQuotaRejectionFromExtra(map[string]any{service.KiroQuotaRejectedAtExtraKey: rejectedAt})
+		if at == nil {
+			continue // 标记格式不对：网关识别不了，也不当作可退役
+		}
+		item.RejectedAt = *at
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
 var _ service.KiroQuotaRejectionRepository = (*accountRepository)(nil)
+var _ service.KiroRetireRepository = (*accountRepository)(nil)

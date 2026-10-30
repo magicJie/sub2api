@@ -18,5 +18,7 @@ func registerKiroOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		kiro.GET("/usage-refresh/settings", h.Admin.KiroOAuth.GetUsageRefreshSettings)
 		kiro.PUT("/usage-refresh/settings", h.Admin.KiroOAuth.UpdateUsageRefreshSettings)
 		kiro.POST("/usage-refresh/refresh-all", h.Admin.KiroOAuth.RefreshAllUsage)
+		kiro.GET("/retirable-accounts", h.Admin.KiroOAuth.ListRetirableAccounts)
+		kiro.POST("/retire", h.Admin.KiroOAuth.RetireAccounts)
 	}
 }

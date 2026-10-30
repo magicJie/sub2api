@@ -261,6 +261,15 @@
           >
             {{ t('admin.accounts.usageWindow.kiroRetirable') }}
           </span>
+          <button
+            v-if="kiroRetirable"
+            type="button"
+            data-test="kiro-retire"
+            class="rounded border border-rose-300 px-1 text-[10px] font-medium text-rose-700 hover:bg-rose-50 dark:border-rose-700 dark:text-rose-300 dark:hover:bg-rose-900/30"
+            @click.stop="emit('kiro-retire', account)"
+          >
+            {{ t('admin.accounts.usageWindow.kiroRetire') }}
+          </button>
         </div>
         <div v-if="kiroOverageLabel" class="text-[10px] text-amber-600 dark:text-amber-400">
           {{ kiroOverageLabel }}
@@ -862,6 +871,7 @@ const emit = defineEmits<{
   'account-updated': [account: Account]
   'usage-loaded': [usage: AccountUsageInfo]
   'kiro-usage-state': [state: KiroUsageRuntimeState]
+  'kiro-retire': [account: Account]
 }>()
 
 const { t } = useI18n()
