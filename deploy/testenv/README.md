@@ -56,13 +56,13 @@ deploy/testenv/testenv.sh smoke
 ## 持久化
 
 - 数据库、Redis、`/app/data` 存在 Docker 命名卷 `sub2api-testenv_{postgres,redis,app}_data` 中。`up`、`down`、重启 Docker 或主机都不影响这些卷；只有 `destroy`、`docker compose down -v` 和 `docker volume prune` 会删除它们（环境停止时执行 prune 同样会删）。
-- 快照目录默认为 `/data/workspaces/sub2api-testenv/snapshots`（权限 700，文件权限 600），放在仓库外，`git clean` 不会删到。可以用 `TESTENV_SNAPSHOT_DIR` 覆盖。
+- 快照目录默认为 `/data/sre/bsj/sub2api/testenv/snapshots`（权限 700，文件权限 600），放在仓库外，`git clean` 不会删到。可以用 `TESTENV_SNAPSHOT_DIR` 覆盖。
 - 新镜像启动时会自动执行数据库迁移，迁移只能往前升，不能回退。所以 `up` 在启动前会先导出 `pre-up-<时间>-<提交>[-dirty]` 快照，只保留最近 `TESTENV_PRE_UP_KEEP` 份（默认 10）。`baseline` 等手动快照不会被自动清理。设 `TESTENV_SKIP_PRE_UP_SNAPSHOT=1` 可以跳过这一步。
 - 切到较旧分支前，先用 `restore` 恢复到该版本对应的 pre-up 快照，再执行 `up`，避免旧代码读到已经升级过的库。
 
 ## 注意
 
-- 不要把生产在用的 OAuth 账号（Kiro、Claude、OpenAI 等）导入测试环境。refresh token 刷新后会轮换，两边谁先刷新另一边就失效。测试环境要用单独的账号。`up` 和 `restore` 在启动 sub2api 前会比对测试库和生产库的 refresh token 哈希，有重复就拒绝启动；在 `local.env` 设置 `TESTENV_PROD_KUBECONFIG` 启用，`TESTENV_SKIP_RT_GUARD=1` 可跳过。
+- 不要把生产在用的 OAuth 账号（Kiro、Claude、OpenAI 等）导入测试环境，生产数据只进 uatenv。refresh token 刷新后会轮换，两边谁先刷新另一边就失效。测试环境要用单独的账号。`up` 和 `restore` 在启动 sub2api 前会比对测试库和生产库的 refresh token 哈希，有重复就拒绝启动；在 `local.env` 设置 `TESTENV_PROD_KUBECONFIG` 启用，`TESTENV_SKIP_RT_GUARD=1` 可跳过。
 
 - 快照和 `local.env` 都包含真实凭据（上游账号密钥、API Key），已被 git 忽略，不要外传。
 - 冒烟会真实调用上游并消耗额度，每次运行约 5 个请求。
@@ -132,7 +132,7 @@ corepack pnpm@9 test:run
 
 ## 外部 AIO 首跳（transport）
 
-2026-10-28 已授权的 testenv 运行配置：运行目录 `/data/workspaces/sub2api-testenv/aio/`，
+2026-10-28 已授权的 testenv 运行配置：运行目录 `/data/sre/bsj/sub2api/testenv/aio/`，
 独立容器 `sub2api-testenv-aio`，官方镜像 `ghcr.io/metacubex/metacubexd-server:v1.273.1`，
 内置 mihomo 实测为 `v1.19.27`。共享 laptop/home AIO、在线订阅及生产保持原样。
 
@@ -149,9 +149,9 @@ corepack pnpm@9 test:run
 ### 启动、停止与登记
 
 ```bash
-docker compose -f /data/workspaces/sub2api-testenv/aio/compose.yaml up -d
-docker compose -f /data/workspaces/sub2api-testenv/aio/compose.yaml stop
-docker compose -f /data/workspaces/sub2api-testenv/aio/compose.yaml start
+docker compose -f /data/sre/bsj/sub2api/testenv/aio/compose.yaml up -d
+docker compose -f /data/sre/bsj/sub2api/testenv/aio/compose.yaml stop
+docker compose -f /data/sre/bsj/sub2api/testenv/aio/compose.yaml start
 ```
 
 现有后台登记为代理 **37 `testenv-aio-firsthop`**：
@@ -203,13 +203,19 @@ T2 当时使用 `sub2api-testenv:aio-transport-20261028`；此后 testenv 已更
 T2 的 Alpine APK TLS 下载问题与临时本机编译路径仅为历史部署记录。
 
 完整运行定义、验收与故障证据见
-`/data/workspaces/sub2api-testenv/reports/20261028-aio-transport.md`。
+`/data/sre/bsj/sub2api/reports/20261028-aio-transport.md`。
+
+## 生产数据模拟升级
+
+testenv 只放合成数据，不导入生产数据。发版前的生产数据复刻与模拟升级在独立环境 uatenv 中执行（端口 28080，与本环境数据互不共用），由 SRE 会话操作，见 [`deploy/uatenv/README.md`](../uatenv/README.md)。
+
+uatenv 的应用容器会加入本环境的 Docker 网络 `sub2api-testenv_testenv`，以访问其中的生产 mihomo-hop 桥接容器，所以 `destroy` 或删除该网络会影响 uatenv。
 
 ## 模拟在线订阅
 
 2026-10-28 的 T4 演练保留真实在线订阅原样，仅在 testenv 使用私有副本：
 
-- 目录 `/data/workspaces/sub2api-testenv/mock-sub/` 为 0700，文件为 0600，不进 Git。
+- 目录 `/data/sre/bsj/sub2api/testenv/mock-sub/` 为 0700，文件为 0600，不进 Git。
   `config.yaml` 是主订阅副本，`provider.yaml` 是机场快照；副本内将
   `首跳-机场` 改为 chash + REJECT，并把 laomao URL 指向本地文件服务器。
 - `compose.yaml` 使用 `nginx:1.28-alpine`，容器 `sub2api-testenv-mock-sub`；
@@ -221,9 +227,9 @@ T2 的 Alpine APK TLS 下载问题与临时本机编译路径仅为历史部署�
   `proxy: 首跳`，空组 `REJECT`，transport 37 与代理 24..28 的前置保持不变。
 
 ```bash
-docker compose -f /data/workspaces/sub2api-testenv/mock-sub/compose.yaml up -d
-docker compose -f /data/workspaces/sub2api-testenv/mock-sub/compose.yaml stop
-docker compose -f /data/workspaces/sub2api-testenv/mock-sub/compose.yaml start
+docker compose -f /data/sre/bsj/sub2api/testenv/mock-sub/compose.yaml up -d
+docker compose -f /data/sre/bsj/sub2api/testenv/mock-sub/compose.yaml stop
+docker compose -f /data/sre/bsj/sub2api/testenv/mock-sub/compose.yaml start
 ```
 
 修改副本后，在专用 AIO 控制台刷新对应主订阅，或通过核心 API 刷新 laomao provider。
@@ -238,7 +244,7 @@ docker compose -f /data/workspaces/sub2api-testenv/mock-sub/compose.yaml start
 1. 先导出新数据库快照并备份 AIO `data/`，避免丢失后续状态。
 2. 在 `http://127.0.0.1:18083` 的原生 profiles 中，保留模拟 profile，
    将隔离 script 的内容恢复为
-   `/data/workspaces/sub2api-testenv/aio/backups/pre-mock-sub-20261028/isolation.js`：
+   `/data/sre/bsj/sub2api/testenv/aio/backups/pre-mock-sub-20261028/isolation.js`：
    其中包含 T2 的本地 chash 覆盖与真实 provider 经首跳抓取配置。
 3. 对保留的原 remote profile `testenv shared online subscription` 执行刷新并激活，
    等核心就绪并完成 provider 健康检查，确认 listener 仍为 `proxy: 首跳`、五链出口正确。
@@ -250,7 +256,7 @@ docker compose -f /data/workspaces/sub2api-testenv/mock-sub/compose.yaml start
 全库 restore 会回滚后续轮换的 refresh token，订阅回切优先使用原生 profile 操作。
 
 完整流程、映射、故障恢复、回退在途请求影响与发版门禁证据：
-`/data/workspaces/sub2api-testenv/reports/20261028-mock-sub-fullflow.md`。
+`/data/sre/bsj/sub2api/reports/20261028-mock-sub-fullflow.md`。
 
 本次前端全量 unit 在全部断言通过后仍有 `AccountsView.selectAllResults` teardown 未处理拒绝，
 已在 `7e109a756` 复现并保留原样；完整发版门禁继续阻止发布。
