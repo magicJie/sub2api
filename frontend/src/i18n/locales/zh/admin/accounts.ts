@@ -32,6 +32,13 @@ export default {
       kiroRetireDone: '已退役 {count} 个账号',
       kiroRetirePartial: '已退役 {count} 个，{failed} 个未退役（不是 Kiro 账号或标记已在新周期清除）',
       kiroRetireFailed: '退役 Kiro 账号失败',
+      enabledPlatforms: {
+        title: '配置账号启用',
+        hint: '选择要启用的平台，账号列表的平台筛选只列出启用的平台。配置保存在当前浏览器。',
+        selectAll: '全选',
+        clear: '清空',
+        atLeastOne: '至少启用一个平台'
+      },
       viewColumns: '列显示',
       selectedCount: '已选 {count}',
       dataExportConfirmMessage: '导出的数据包含账号与代理的敏感信息，请妥善保存。',

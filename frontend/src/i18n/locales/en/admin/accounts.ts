@@ -32,6 +32,13 @@ export default {
       kiroRetireDone: 'Retired {count} accounts',
       kiroRetirePartial: 'Retired {count}; {failed} not retired (not Kiro, or the marker was cleared in a new cycle)',
       kiroRetireFailed: 'Failed to retire Kiro accounts',
+      enabledPlatforms: {
+        title: 'Enabled Platforms',
+        hint: 'Choose which platforms are enabled. The platform filter only lists enabled platforms. Saved in this browser.',
+        selectAll: 'Select all',
+        clear: 'Clear',
+        atLeastOne: 'Enable at least one platform'
+      },
       viewColumns: 'Columns',
       selectedCount: '{count} selected',
       dataExportConfirmMessage: 'The exported data contains sensitive account and proxy information. Store it securely.',
