@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/proxychain"
 	"github.com/stretchr/testify/require"
 )
 
@@ -483,6 +484,34 @@ func TestProxyEgressHealthRunOnceRespectsConfig(t *testing.T) {
 	now = now.Add(31 * time.Second)
 	svc.runOnce()
 	require.Equal(t, now, svc.lastRun)
+}
+
+// switchingProber 在第一次探测时模拟槽位切换：注销全部链（Generation 递增），旧 URL 认证失败。
+type switchingProber struct {
+	calls []string
+}
+
+func (p *switchingProber) ProbeProxy(_ context.Context, url string) (*ProxyExitInfo, int64, error) {
+	p.calls = append(p.calls, url)
+	if len(p.calls) == 1 {
+		proxychain.Default().Retain(nil)
+		return nil, 0, errors.New("socks connect: username/password authentication failed")
+	}
+	return &ProxyExitInfo{IP: "203.0.113.1"}, 10, nil
+}
+
+// 探测期间槽位切换导致的旧链凭据失效不计为故障：按新链路重取 URL 复测。
+func TestProxyEgressHealth_RetriesAfterChainSwitch(t *testing.T) {
+	svc, repo, _, _ := healthFixture(t)
+	prober := &switchingProber{}
+	svc.prober = prober
+	p := repo.members[0].Proxy
+	withUpstreamGroup(t, &p)
+
+	layer, err := svc.probe(context.Background(), &p)
+	require.NoError(t, err)
+	require.Empty(t, layer)
+	require.Len(t, prober.calls, 2, "链注销后只复测一次")
 }
 
 // 前置组没有可用槽位时，管理端测试直接报链路原因，不拨占位地址。
