@@ -1,0 +1,262 @@
+<!doctype html><html><head><title>Usage · Settings</title></head><body><div data-page="usage">
+<!-- 2026-10-29 ollama.com/settings 用量区块（已删除表单、脚本与账号信息） -->
+<div id="extra-usage" class="flex flex-col gap-6">
+  <div class="space-y-1">
+    <div class="flex items-baseline justify-between gap-4">
+      <h2 class="flex items-center gap-2 text-xl font-medium">Usage credits<span id="usage-plan" class="text-xs font-normal px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-600 capitalize">max</span></h2>
+      
+      <span id="usage-credits-balance" class="text-xl font-medium tabular-nums">$114.68</span>
+      
+    </div>
+    <div class="flex items-center justify-between gap-4">
+      <p class="text-xs text-neutral-500">
+        
+        Monthly credits refill in 2 weeks 
+<span class="group/credits relative inline-flex align-[-3px]">
+  <button type="button" class="rounded-full text-neutral-400 hover:text-neutral-700 focus-visible:text-neutral-700" aria-label="Usage credits breakdown" aria-describedby="usage-credits-breakdown">
+    <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" />
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 11v5" />
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 8h.01" />
+    </svg>
+  </button>
+  <span id="usage-credits-breakdown" role="tooltip" class="pointer-events-none absolute left-1/2 top-full z-20 mt-2 w-64 -translate-x-1/2 rounded-xl border border-neutral-300 bg-white/95 p-3 text-left text-xs font-normal leading-4 text-neutral-900 opacity-0 backdrop-blur-md transition-opacity group-focus-within/credits:opacity-100 group-hover/credits:opacity-100">
+    
+    <span class="flex justify-between gap-4 font-medium"><span>Monthly credits</span><span class="tabular-nums">$114.68</span></span>
+    <span class="mt-0.5 block text-neutral-500">Refills to $300 on November 18, 2026. Unused monthly credits do not carry over.</span>
+    <span class="mt-3 flex justify-between gap-4 font-medium"><span>Added credits</span><span id="extra-usage-balance" class="tabular-nums">$0</span></span>
+    
+    <span class="mt-3 flex justify-between gap-4 border-t border-neutral-200 pt-2 font-medium"><span>Total</span><span class="tabular-nums">$114.68</span></span>
+
+  </span>
+</span>
+
+        
+        
+      </p>
+      
+      <button id="extra-usage-buy-more" type="button"  class="shrink-0 whitespace-nowrap text-xs font-medium text-neutral-900 underline underline-offset-4 hover:text-neutral-600 disabled:cursor-not-allowed disabled:text-neutral-400 disabled:no-underline" aria-haspopup="dialog" aria-controls="extra-usage-purchase-dialog" data-surface="usage-page">Add funds</button>
+      
+    </div>
+    
+  </div>
+
+  
+
+
+
+  <div class="space-y-7 [&_#extra-usage-auto-reload]:border-0 [&_#extra-usage-auto-reload]:pt-0">
+    
+    
+
+<div id="extra-usage-auto-reload" class="border-t border-neutral-200 pt-5">
+  
+  <div id="extra-usage-auto-reload-controls" class="flex items-center justify-between gap-4 group-data-[page=dashboard]/settings:hidden">
+    <div class="min-w-0">
+      <h3 class="text-sm font-medium text-neutral-900">Auto-reload</h3>
+      <p id="extra-usage-auto-reload-summary" class="mt-1 text-sm text-neutral-500">
+        Off
+      </p>
+    </div>
+    <button id="extra-usage-reload-toggle" type="button" role="switch" aria-label="Auto-reload" aria-checked="false"
+      onclick="document.getElementById('extra-usage-reload-dialog').showModal()" aria-haspopup="dialog" aria-controls="extra-usage-reload-dialog"
+      class="relative inline-flex h-6 w-10 shrink-0 items-center rounded-full p-1 transition-colors disabled:opacity-50 bg-neutral-200">
+      <span aria-hidden="true" class="inline-block h-4 w-4 rounded-full bg-white shadow-xs transition-transform translate-x-0"></span>
+    </button>
+  </div>
+  
+  <p id="extra-usage-auto-reload-link" class="hidden text-xs text-neutral-500 group-data-[page=dashboard]/settings:block">
+    <button type="button" onclick="document.getElementById('extra-usage-reload-dialog').showModal()" class="text-neutral-900 underline underline-offset-4 hover:text-neutral-600" aria-haspopup="dialog" aria-controls="extra-usage-reload-dialog">Turn on auto-reload</button>
+  </p>
+
+  
+  
+</div>
+
+    
+
+    
+  </div>
+
+  
+  
+<p id="extra-usage-auto-reload-status"  class="text-sm empty:hidden text-red-600" role="alert"></p>
+
+  
+
+
+
+  
+</div>
+
+  
+
+  
+  
+  <div class="space-y-1 pt-4">
+    <h2 class="text-xl font-medium">Usage breakdown</h2>
+    <p class="text-xs text-neutral-500">
+      
+      This breakdown shows how cloud models and capabilities such as web search
+      consumed your monthly included usage.
+      
+    </p>
+  </div>
+  
+  
+  
+  
+  <div>
+    <div class="flex justify-between mb-2">
+      <span class="text-sm">Monthly credits used</span>
+      <span class="text-sm tabular-nums"
+        >$185.32</span
+      >
+    </div>
+    <div class="relative group" data-usage-meter>
+      <div
+        class="absolute bottom-6 left-[var(--usage-bubble-x,50%)] z-10 inline-flex max-w-[min(260px,100%)] -translate-x-1/2 flex-col items-start gap-0.5 rounded-xl border border-neutral-300 bg-white/95 px-2.5 pt-[7px] pb-2 text-neutral-900 opacity-0 pointer-events-none whitespace-nowrap backdrop-blur-md group-[.usage-meter--active]:opacity-100"
+        data-usage-bubble
+        aria-hidden="true"
+      >
+        <span class="max-w-[190px] overflow-hidden text-ellipsis text-xs font-medium leading-[1.2]" data-usage-model></span>
+        <span class="text-[11px] leading-[1.2] text-neutral-500" data-usage-requests></span>
+      </div>
+      <div
+        class="relative h-3 overflow-hidden rounded-full bg-neutral-200"
+        data-usage-track
+        aria-label="Monthly credits used: $185.32 of $300"
+      >
+        <div
+          class="flex h-full overflow-hidden bg-neutral-950"
+          style="width: 61.8%"
+        >
+          
+          
+          <button
+            type="button"
+            class="relative h-full min-w-[2px] flex-none overflow-hidden border-r border-white p-0 last:border-r-0 focus-visible:outline-hidden"
+            style="width: 0%; background: #3b82f6"
+            data-usage-segment
+            data-model="glm-5.3"
+            data-requests="1"
+            aria-label="glm-5.3: 1 request"
+          ></button>
+          
+          <button
+            type="button"
+            class="relative h-full min-w-[2px] flex-none overflow-hidden border-r border-white p-0 last:border-r-0 focus-visible:outline-hidden"
+            style="width: 0%; background: #3b82f6"
+            data-usage-segment
+            data-model="glm-5.2"
+            data-requests="1"
+            aria-label="glm-5.2: 1 request"
+          ></button>
+          
+          <button
+            type="button"
+            class="relative h-full min-w-[2px] flex-none overflow-hidden border-r border-white p-0 last:border-r-0 focus-visible:outline-hidden"
+            style="width: 100%; background: #4f46e5"
+            data-usage-segment
+            data-model="deepseek-v4.1-flash:1017"
+            data-requests="77558"
+            aria-label="deepseek-v4.1-flash:1017: 77558 requests"
+          ></button>
+          
+          <button
+            type="button"
+            class="relative h-full min-w-[2px] flex-none overflow-hidden border-r border-white p-0 last:border-r-0 focus-visible:outline-hidden"
+            style="width: 0%; background: #525252"
+            data-usage-segment
+            data-model="gpt-oss:120b"
+            data-requests="4"
+            aria-label="gpt-oss:120b: 4 requests"
+          ></button>
+          
+          
+        </div>
+      </div>
+    </div>
+    
+    
+    <div id="monthly-usage-models" class="mt-3 space-y-1.5">
+      <div class="text-xs text-neutral-500">Models used this month</div>
+      
+      <div class="flex min-w-0 items-center gap-2 text-xs">
+        <span
+          class="h-2 w-2 flex-none rounded-xs"
+          style="background: #3b82f6"
+          aria-hidden="true"
+        ></span>
+        <span class="min-w-0 flex-1 truncate text-neutral-700" title="glm-5.3">glm-5.3</span>
+        <span class="flex-none tabular-nums text-neutral-400">
+          1 request
+        </span>
+      </div>
+      
+      <div class="flex min-w-0 items-center gap-2 text-xs">
+        <span
+          class="h-2 w-2 flex-none rounded-xs"
+          style="background: #3b82f6"
+          aria-hidden="true"
+        ></span>
+        <span class="min-w-0 flex-1 truncate text-neutral-700" title="glm-5.2">glm-5.2</span>
+        <span class="flex-none tabular-nums text-neutral-400">
+          1 request
+        </span>
+      </div>
+      
+      <div class="flex min-w-0 items-center gap-2 text-xs">
+        <span
+          class="h-2 w-2 flex-none rounded-xs"
+          style="background: #4f46e5"
+          aria-hidden="true"
+        ></span>
+        <span class="min-w-0 flex-1 truncate text-neutral-700" title="deepseek-v4.1-flash:1017">deepseek-v4.1-flash:1017</span>
+        <span class="flex-none tabular-nums text-neutral-400">
+          77558 requests
+        </span>
+      </div>
+      
+      <div class="flex min-w-0 items-center gap-2 text-xs">
+        <span
+          class="h-2 w-2 flex-none rounded-xs"
+          style="background: #525252"
+          aria-hidden="true"
+        ></span>
+        <span class="min-w-0 flex-1 truncate text-neutral-700" title="gpt-oss:120b">gpt-oss:120b</span>
+        <span class="flex-none tabular-nums text-neutral-400">
+          4 requests
+        </span>
+      </div>
+      
+    </div>
+    
+  </div>
+  
+
+  
+  <form method="POST" action="/settings" class="pt-2" hx-post="/settings" hx-swap="none">
+    <label class="flex items-center gap-2 text-xs text-neutral-700">
+      <input
+        type="checkbox"
+        name="notify-usage-limits"
+        class="rounded border-neutral-300 checked:border-transparent"
+        onchange="this.form.requestSubmit()"
+        checked
+      />
+      <span>Notify me when I'm close to hitting my usage limits</span>
+    </label>
+  </form>
+  
+
+  
+
+  
+
+
+
+  
+<section id="recent-requests-self" class="min-w-0 max-w-full space-y-4 pt-4">
+  <h2 class="text-xl font-medium">
+</div></body></html>

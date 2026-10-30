@@ -22,6 +22,13 @@ import (
 
 const ollamaCloudUsageProbeWritebackTimeout = 10 * time.Second
 
+// 连续 429 退避：上一轮冷却刚结束又撞 429（probe 没学到真实重置时间，如无 web session、
+// 页面缺重置时间、月度额度耗尽），冷却按上一轮时长翻倍，避免每隔几秒重新调度再被拒。
+const (
+	ollama429EscalationCap      = 30 * time.Minute
+	ollama429EscalationMinGrace = 2 * time.Minute
+)
+
 // ollamaCloudUsageProbeScheduler is the single-method surface RateLimitService
 // needs from the Ollama Cloud usage service. It is optional.
 type ollamaCloudUsageProbeScheduler interface {
@@ -60,6 +67,15 @@ func (s *RateLimitService) handleOllamaCloudUsage429(ctx context.Context, accoun
 	if d := retryAfter(headers, now); d > 0 {
 		shortReset = now.Add(d)
 	} else if cooldown, enabled := s.get429FallbackCooldown(ctx, account); enabled {
+		// 用库里的最新限流状态判断是否连续 429；调用方的 account 可能来自调度缓存。
+		prev := account
+		if fresh, err := s.accountRepo.GetByID(ctx, account.ID); err == nil && fresh != nil {
+			prev = fresh
+		}
+		if escalated := ollama429EscalatedCooldown(prev, cooldown, now); escalated > cooldown {
+			slog.Warn("rate_limit_ollama_429_escalated", "account_id", account.ID, "cooldown", escalated)
+			cooldown = escalated
+		}
 		shortReset = now.Add(cooldown)
 	} else {
 		slog.Info("rate_limit_ollama_429_fallback_ignored", "account_id", account.ID, "platform", account.Platform)
@@ -85,6 +101,37 @@ func (s *RateLimitService) handleOllamaCloudUsage429(ctx context.Context, accoun
 		return
 	}
 	s.scheduleOllamaCloudUsageProbe(authoritative)
+}
+
+// ollama429EscalatedCooldown 返回连续 429 时应使用的冷却时长。只有上一轮冷却已结束、且结束不久
+// （不超过上一轮时长的 2 倍，至少 2 分钟）才翻倍；冷却期间到达的并发 429 不叠加。
+func ollama429EscalatedCooldown(prev *Account, base time.Duration, now time.Time) time.Duration {
+	if prev == nil || prev.RateLimitedAt == nil || prev.RateLimitResetAt == nil {
+		return base
+	}
+	prevReset := *prev.RateLimitResetAt
+	prevDur := prevReset.Sub(*prev.RateLimitedAt)
+	if prevDur <= 0 || now.Before(prevReset) {
+		return base
+	}
+	if prevDur > ollama429EscalationCap {
+		prevDur = ollama429EscalationCap
+	}
+	grace := 2 * prevDur
+	if grace < ollama429EscalationMinGrace {
+		grace = ollama429EscalationMinGrace
+	}
+	if now.Sub(prevReset) > grace {
+		return base
+	}
+	next := 2 * prevDur
+	if next < base {
+		next = base
+	}
+	if next > ollama429EscalationCap {
+		next = ollama429EscalationCap
+	}
+	return next
 }
 
 // applyOllamaCloudUsageImmediateCooldown persists the short cooldown with the
@@ -132,7 +179,7 @@ func (s *RateLimitService) scheduleOllamaCloudUsageProbe(account *Account) {
 	if !accepted {
 		// Service stopped or the probe queue is full; the account is already
 		// cooled by the immediate cooldown, so no retry or other action is needed.
-		slog.Debug("ollama_cloud_usage_probe_schedule_rejected", "account_id", account.ID)
+		slog.Warn("ollama_cloud_usage_probe_schedule_rejected", "account_id", account.ID)
 	}
 }
 

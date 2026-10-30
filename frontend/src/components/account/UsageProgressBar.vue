@@ -55,7 +55,7 @@
 
       <!-- Reset time -->
       <span v-if="shouldShowResetTime" class="shrink-0 text-[10px] text-gray-400">
-        {{ resetsAt ? formatResetTime : resetText || formatResetTime }}
+        {{ resetsAt ? formatResetTime : resetText || formatResetTime }}<template v-if="resetDateText"> · {{ resetDateText }}</template>
       </span>
     </div>
   </div>
@@ -79,6 +79,8 @@ const props = withDefaults(
     estimatedTotalCost?: number | null
     showNowWhenIdle?: boolean
     remainingCapacity?: boolean
+    /** 倒计时后附实际重置日期（如 "19d 5h · 11-18"），用于周期较长的窗口 */
+    showResetDate?: boolean
     /** fixed: 定宽居中徽章（账号页纵向对齐）；auto: 限宽截断左对齐（监控页组合标签） */
     labelWidth?: 'fixed' | 'auto'
   }>(),
@@ -225,6 +227,15 @@ const formatResetTime = computed(() => {
   } else {
     return `${diffMins}m`
   }
+})
+
+// 实际重置日期（本地时区 MM-DD；非本年加年份）。
+const resetDateText = computed(() => {
+  if (!props.showResetDate || !props.resetsAt) return ''
+  const date = new Date(props.resetsAt)
+  if (Number.isNaN(date.getTime()) || date.getTime() <= now.value.getTime()) return ''
+  const mmdd = `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+  return date.getFullYear() === now.value.getFullYear() ? mmdd : `${date.getFullYear()}-${mmdd}`
 })
 
 // Window stats formatters
