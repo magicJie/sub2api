@@ -28,9 +28,9 @@ vi.mock('vue-i18n', () => ({
   })
 }))
 
-const mountModal = () =>
+const mountModal = (format?: 'sub2api' | 'kiro-account-manager') =>
   mount(ImportDataModal, {
-    props: { show: true },
+    props: { show: true, ...(format ? { format } : {}) },
     global: {
       stubs: {
         BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' }
@@ -99,7 +99,21 @@ describe('ImportDataModal', () => {
     expect(adminAPI.accounts.importData).not.toHaveBeenCalled()
   })
 
-  it('kiro-account-manager 导出的账号数组转换为 Kiro 账号导入，并提示跳过数', async () => {
+  it('普通导入不再识别 kiro-account-manager 导出', async () => {
+    const { adminAPI } = await import('@/api/admin')
+    const wrapper = mountModal()
+    const input = wrapper.find('input[type="file"]')
+    const kam = [{ id: 'x', label: 'k1', status: 'active', accessToken: 'at', refreshToken: 'rt', authMethod: 'social' }]
+    setInputFiles(input.element, [makeJsonFile('kiro-accounts.json', JSON.stringify(kam))])
+    await input.trigger('change')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(showError).toHaveBeenCalledWith('admin.accounts.dataImportInvalidFile')
+    expect(adminAPI.accounts.importData).not.toHaveBeenCalled()
+  })
+
+  it('Kiro 导入把 kiro-account-manager 导出的账号数组转换为 Kiro 账号，并提示跳过数', async () => {
     const { adminAPI } = await import('@/api/admin')
     vi.mocked(adminAPI.accounts.importData).mockResolvedValue({
       proxy_created: 0,
@@ -108,7 +122,8 @@ describe('ImportDataModal', () => {
       account_created: 1,
       account_failed: 0
     })
-    const wrapper = mountModal()
+    const wrapper = mountModal('kiro-account-manager')
+    expect(wrapper.text()).toContain('admin.accounts.kiroImportHint')
     const input = wrapper.find('input[type="file"]')
     const kam = [
       { id: 'x', email: 'k@example.com', label: 'k1', status: 'active', accessToken: 'at', refreshToken: 'rt', authMethod: 'social', provider: 'Google' },
@@ -124,6 +139,21 @@ describe('ImportDataModal', () => {
     expect(call.data.accounts).toHaveLength(1)
     expect(call.data.accounts[0]).toMatchObject({ name: 'k1', platform: 'kiro', type: 'oauth' })
     expect(call.data.accounts[0].credentials).toMatchObject({ access_token: 'at', refresh_token: 'rt', auth_method: 'social' })
+  })
+
+  it('Kiro 导入拒绝 sub2api 导出数据', async () => {
+    const { adminAPI } = await import('@/api/admin')
+    const wrapper = mountModal('kiro-account-manager')
+    const input = wrapper.find('input[type="file"]')
+    setInputFiles(input.element, [
+      makeJsonFile('data.json', JSON.stringify({ exported_at: '2026-07-05T00:00:00Z', proxies: [], accounts: [{ name: 'a' }] }))
+    ])
+    await input.trigger('change')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(showError).toHaveBeenCalledWith('admin.accounts.kiroImportInvalidFile')
+    expect(adminAPI.accounts.importData).not.toHaveBeenCalled()
   })
 
   it('无有效 JSON 的选择不清空已有选择', async () => {
