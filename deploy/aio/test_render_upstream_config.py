@@ -59,9 +59,18 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(cfg["proxy-providers"]["laomao"]["path"], "./proxy_providers/upstream-laomao.yaml")
         fetch = next(g for g in cfg["proxy-groups"] if g["name"] == "subscription-fetch")
         self.assertEqual(fetch["url"], "https://sub.example.com/")
+        self.assertEqual(cfg["proxy-providers"]["laomao"]["proxy"], "subscription-fetch")
         laomao = next(g for g in cfg["proxy-groups"] if g["name"] == "laomao")
         self.assertEqual(laomao["empty-fallback"], "REJECT")
         self.assertNotIn("DIRECT", laomao.get("proxies", []))
+
+    def test_fetch_group_prefers_own_nodes_over_direct(self):
+        # 全部成员探测失败时 mihomo fallback 用第一个成员；DIRECT 在首位会在直连被阻断时卡住（2026-10-30 uat）。
+        fetch = next(g for g in build()["proxy-groups"] if g["name"] == "subscription-fetch")
+        self.assertEqual(fetch["type"], "fallback")
+        self.assertEqual(fetch["proxies"], ["node-xyy", "node-bwg", "DIRECT"])
+        self.assertEqual((fetch["interval"], fetch["timeout"], fetch["lazy"]), (60, 5000, False))
+        self.assertNotIn("expected-status", fetch)
 
     def test_anytls_session_defaults_only_for_anytls(self):
         xyy, bwg = build()["proxies"]

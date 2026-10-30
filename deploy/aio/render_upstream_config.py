@@ -25,6 +25,7 @@ import yaml
 # 机场节点里的非业务条目（流量、到期提示、官网等）。
 AIRPORT_EXCLUDE = "游戏|bt|剩余|过期|到期|重置|官网|有效期|谷歌学术|不保证可用|请更新|只显示|订阅|发布页|最新域名|推荐"
 PROBE_URL = "https://www.gstatic.com/generate_204"
+FETCH_PROBE_INTERVAL = 60
 ANYTLS_SESSION_DEFAULTS = {
     "idle-session-check-interval": 60,
     "idle-session-timeout": 300,
@@ -71,7 +72,8 @@ def build(args, source):
     if not provider or not provider.get("url"):
         fail(f"源配置中没有带 url 的 proxy-provider {args.airport_provider!r}")
 
-    # 抓取组按订阅域名本身判断可达（只取 scheme+host，不带 token；不限状态码，能建立 HTTPS 即可）。
+    # 抓取组按订阅域名本身判断可达（只取 scheme+host，不带 token；不限状态码，能完成 HTTPS 请求即可，
+    # TLS 握手超时等错误本身就判为不可用）。
     sub = urlsplit(provider["url"])
     fetch_probe = f"{sub.scheme}://{sub.netloc.rsplit('@', 1)[-1]}/"
 
@@ -111,9 +113,12 @@ def build(args, source):
             # 机场：按目标（落地 IP）软绑定节点；成员为空时拒绝，不回退直连。
             {"name": "laomao", "type": "load-balance", "strategy": "consistent-hashing", "use": ["laomao"],
              "url": PROBE_URL, "interval": 300, "lazy": False, "empty-fallback": "REJECT"},
-            # 只用于抓取机场订阅，不挂 listener：直连优先，直连不通时依次经自建节点抓。
-            {"name": "subscription-fetch", "type": "fallback", "proxies": ["DIRECT", "node-xyy", "node-bwg"],
-             "url": fetch_probe, "interval": 300, "lazy": False},
+            # 只用于抓取机场订阅，不挂 listener：自建节点优先，都不通时直连。
+            # mihomo 的 fallback 在全部成员探测失败时用第一个成员，DIRECT 拨号失败也不会触发组重测；
+            # DIRECT 放第一位时，直连被阻断且自建节点启动后首个连接超时（anytls 建会话）就会卡在 DIRECT
+            # 直到下一轮探测（2026-10-30 uat 实测机场 0 节点）。因此自建节点放前面，并缩短探测间隔。
+            {"name": "subscription-fetch", "type": "fallback", "proxies": ["node-xyy", "node-bwg", "DIRECT"],
+             "url": fetch_probe, "interval": FETCH_PROBE_INTERVAL, "timeout": 5000, "lazy": False},
         ],
         "listeners": [
             listener("xyy", args.xyy_port, "xyy"),
