@@ -415,7 +415,7 @@ func (s *ProxyEgressHealthService) handleIncident(ctx context.Context, p *Proxy,
 		if err != nil {
 			return err
 		}
-		policies, err := s.pool.repo.ListPolicies(ctx)
+		policies, err := s.pool.loadPolicies(ctx)
 		if err != nil {
 			return err
 		}
@@ -452,7 +452,8 @@ func (s *ProxyEgressHealthService) handleAccount(ctx context.Context, incident *
 		rec.Message = err.Error()
 		return rec.Action
 	}
-	policy, _ := policyFor(policies, account.Platform)
+	// 分组策略冲突或缺失时不自动换 IP，按暂停处理。
+	policy, _ := policyFor(policies, account.Platform, account.GroupIDs)
 	if policy != nil && policy.Mode == ProxyIPPolicyModeChurn && policy.OnEgressFailure == ProxyIPFailureReassign {
 		proxy, err := s.pool.ReplaceAccountProxy(ctx, account.ID, nil, incident.ProxyID)
 		if err == nil {
@@ -576,11 +577,11 @@ func (s *ProxyPoolService) ReplaceCandidates(ctx context.Context, accountID int6
 }
 
 func (s *ProxyPoolService) replaceCandidates(ctx context.Context, account *Account, excludeProxyID int64) ([]ProxyReplaceCandidate, error) {
-	policies, err := s.repo.ListPolicies(ctx)
+	policies, err := s.loadPolicies(ctx)
 	if err != nil {
 		return nil, err
 	}
-	policy, err := policyFor(policies, account.Platform)
+	policy, err := policyFor(policies, account.Platform, account.GroupIDs)
 	if err != nil {
 		return nil, err
 	}

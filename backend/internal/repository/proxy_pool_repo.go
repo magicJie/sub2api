@@ -337,19 +337,8 @@ func (r *proxyPoolRepository) ListPolicies(ctx context.Context) ([]service.Proxy
 		if err := rows.Scan(&p.ID, &p.Platform, &p.Mode, &poolIDs, &lifetime, &active, &p.OnEgressFailure, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
-		p.PoolIDs = []int64{}
-		if len(poolIDs) > 0 {
-			if err := json.Unmarshal(poolIDs, &p.PoolIDs); err != nil {
-				return nil, err
-			}
-		}
-		if lifetime.Valid {
-			v := int(lifetime.Int64)
-			p.MaxLifetimeAccounts = &v
-		}
-		if active.Valid {
-			v := int(active.Int64)
-			p.MaxActiveAccounts = &v
+		if err := scanIPPolicyLimits(&p, poolIDs, lifetime, active); err != nil {
+			return nil, err
 		}
 		out = append(out, p)
 	}
@@ -391,6 +380,104 @@ func (r *proxyPoolRepository) DeletePolicy(ctx context.Context, platform string)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return service.ErrProxyIPPolicyNotFound
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// 分组 IP 策略（迁移 260），平台取自分组
+// ---------------------------------------------------------------------------
+
+func scanIPPolicyLimits(p *service.ProxyIPPolicy, poolIDs []byte, lifetime, active sql.NullInt64) error {
+	p.PoolIDs = []int64{}
+	if len(poolIDs) > 0 {
+		if err := json.Unmarshal(poolIDs, &p.PoolIDs); err != nil {
+			return err
+		}
+	}
+	if lifetime.Valid {
+		v := int(lifetime.Int64)
+		p.MaxLifetimeAccounts = &v
+	}
+	if active.Valid {
+		v := int(active.Int64)
+		p.MaxActiveAccounts = &v
+	}
+	return nil
+}
+
+func (r *proxyPoolRepository) ListGroupPolicies(ctx context.Context) ([]service.ProxyIPPolicy, error) {
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT gp.id, gp.group_id, g.name, g.platform, gp.mode, gp.pool_ids, gp.max_lifetime_accounts, gp.max_active_accounts,
+			gp.on_egress_failure, gp.created_at, gp.updated_at
+		FROM group_ip_policies gp JOIN groups g ON g.id = gp.group_id
+		WHERE g.deleted_at IS NULL
+		ORDER BY g.platform, g.name, gp.group_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]service.ProxyIPPolicy, 0)
+	for rows.Next() {
+		var p service.ProxyIPPolicy
+		var groupID int64
+		var poolIDs []byte
+		var lifetime, active sql.NullInt64
+		if err := rows.Scan(&p.ID, &groupID, &p.GroupName, &p.Platform, &p.Mode, &poolIDs, &lifetime, &active,
+			&p.OnEgressFailure, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			return nil, err
+		}
+		p.GroupID = &groupID
+		if err := scanIPPolicyLimits(&p, poolIDs, lifetime, active); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (r *proxyPoolRepository) UpsertGroupPolicy(ctx context.Context, p *service.ProxyIPPolicy) error {
+	ids := p.PoolIDs
+	if ids == nil {
+		ids = []int64{}
+	}
+	poolIDs, err := json.Marshal(ids)
+	if err != nil {
+		return err
+	}
+	rows, err := r.sql.QueryContext(ctx, `
+		WITH g AS (SELECT id, name, platform FROM groups WHERE id = $1 AND deleted_at IS NULL),
+		up AS (
+			INSERT INTO group_ip_policies (group_id, mode, pool_ids, max_lifetime_accounts, max_active_accounts, on_egress_failure)
+			SELECT g.id, $2, $3, $4, $5, $6 FROM g
+			ON CONFLICT (group_id) DO UPDATE SET
+				mode = EXCLUDED.mode, pool_ids = EXCLUDED.pool_ids,
+				max_lifetime_accounts = EXCLUDED.max_lifetime_accounts, max_active_accounts = EXCLUDED.max_active_accounts,
+				on_egress_failure = EXCLUDED.on_egress_failure, updated_at = NOW()
+			RETURNING id, created_at, updated_at
+		)
+		SELECT up.id, up.created_at, up.updated_at, g.name, g.platform FROM up, g`,
+		*p.GroupID, p.Mode, poolIDs, p.MaxLifetimeAccounts, p.MaxActiveAccounts, p.OnEgressFailure)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		return service.ErrProxyIPPolicyGroupNotFound
+	}
+	return rows.Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt, &p.GroupName, &p.Platform)
+}
+
+func (r *proxyPoolRepository) DeleteGroupPolicy(ctx context.Context, groupID int64) error {
+	res, err := r.sql.ExecContext(ctx, `DELETE FROM group_ip_policies WHERE group_id = $1`, groupID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return service.ErrProxyIPPolicyGroupNotFound
 	}
 	return nil
 }

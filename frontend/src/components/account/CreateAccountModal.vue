@@ -5326,7 +5326,8 @@ const refreshProxyPoolPreview = async () => {
   const poolId = form.proxy_pool_id
   if (!poolId) return
   try {
-    const proxy = await proxyPoolAPI.previewProxy(poolId, form.platform)
+    // 分组策略优先于平台策略：带上将要绑定的分组。
+    const proxy = await proxyPoolAPI.previewProxy(poolId, form.platform, form.group_ids)
     if (form.proxy_pool_id !== poolId) return
     proxyPoolPreview.value = proxy
     form.proxy_id = proxy.id
@@ -5337,7 +5338,7 @@ const refreshProxyPoolPreview = async () => {
   }
 }
 watch(
-  () => [form.proxy_pool_id, form.platform] as const,
+  () => [form.proxy_pool_id, form.platform, form.group_ids.join(',')] as const,
   ([poolId], [prevPoolId]) => {
     if (!poolId && prevPoolId) form.proxy_id = null
     void refreshProxyPoolPreview()

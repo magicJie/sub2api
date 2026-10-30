@@ -1,7 +1,7 @@
 <template>
   <div class="space-y-6">
     <ProxyIncidentPanel :active="active" @changed="onIncidentsChanged" />
-    <PlatformIPPolicyPanel :policies="policies" :pools="pools" @changed="onPoliciesChanged" />
+    <PlatformIPPolicyPanel :policies="policies" :group-policies="groupPolicies" :pools="pools" @changed="onPoliciesChanged" />
     <div class="flex min-h-[420px] flex-col gap-4 md:flex-row">
       <!-- 左：代理池列表 -->
       <div class="w-full shrink-0 space-y-2 md:w-60">
@@ -123,6 +123,14 @@
                         :title="m.retired_platforms.includes(platform) ? t('admin.proxyPools.retired') : ''"
                       >
                         {{ platform }} {{ m.history_counts[platform] ?? 0 }}{{ limitSuffix(platform) }} / {{ m.active_counts[platform] ?? 0 }}
+                      </span>
+                      <span
+                        v-for="group in m.retired_groups ?? []"
+                        :key="`g:${group}`"
+                        class="badge badge-danger"
+                        :title="t('admin.proxyPools.retiredForGroup')"
+                      >
+                        {{ group }}
                       </span>
                       <span v-if="memberPlatforms(m).length === 0" class="text-xs text-gray-400">-</span>
                     </div>
@@ -255,6 +263,7 @@ const appStore = useAppStore()
 
 const pools = ref<ProxyPool[]>([])
 const policies = ref<ProxyIPPolicy[]>([])
+const groupPolicies = ref<ProxyIPPolicy[]>([])
 const loadingPools = ref(false)
 const selectedPoolId = ref<number | null>(null)
 const members = ref<ProxyPoolMember[]>([])
@@ -361,7 +370,12 @@ const selectPool = (id: number) => {
 
 const loadPolicies = async () => {
   try {
-    policies.value = await proxyPoolAPI.listPolicies()
+    const [platformPolicies, groupOverrides] = await Promise.all([
+      proxyPoolAPI.listPolicies(),
+      proxyPoolAPI.listGroupPolicies()
+    ])
+    policies.value = platformPolicies
+    groupPolicies.value = groupOverrides
   } catch (error) {
     showError(error, t('admin.proxyPools.loadFailed'))
   }

@@ -23,6 +23,12 @@ func registerProxyPoolRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		policies.PUT("/:platform", h.Admin.ProxyPool.UpsertPolicy)
 		policies.DELETE("/:platform", h.Admin.ProxyPool.DeletePolicy)
 	}
+	groupPolicies := admin.Group("/proxy-ip-group-policies")
+	{
+		groupPolicies.GET("", h.Admin.ProxyPool.ListGroupPolicies)
+		groupPolicies.PUT("/:group_id", h.Admin.ProxyPool.UpsertGroupPolicy)
+		groupPolicies.DELETE("/:group_id", h.Admin.ProxyPool.DeleteGroupPolicy)
+	}
 	admin.GET("/proxy-incidents", h.Admin.ProxyPool.ListIncidents)
 	admin.GET("/proxy-incidents/config", h.Admin.ProxyPool.GetEgressHealthConfig)
 	admin.PUT("/proxy-incidents/config", h.Admin.ProxyPool.UpdateEgressHealthConfig)

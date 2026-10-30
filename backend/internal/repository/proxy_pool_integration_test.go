@@ -312,3 +312,42 @@ func (s *ProxyPoolSuite) TestEgressIncidentLifecycle() {
 	s.Require().NoError(err)
 	s.Require().NotEqual(in.ID, in3.ID)
 }
+
+func (s *ProxyPoolSuite) TestGroupPolicyCRUD() {
+	var groupID int64
+	s.Require().NoError(scanSingleRow(s.ctx, s.tx, `
+		INSERT INTO groups (name, platform) VALUES ('ip-policy-pro', 'openai') RETURNING id`, nil, &groupID))
+	one := 1
+	p := &service.ProxyIPPolicy{GroupID: &groupID, Mode: service.ProxyIPPolicyModeSticky, PoolIDs: []int64{},
+		MaxActiveAccounts: &one, OnEgressFailure: service.ProxyIPFailurePause}
+	s.Require().NoError(s.pools.UpsertGroupPolicy(s.ctx, p))
+	s.Require().NotZero(p.ID)
+	s.Require().Equal("openai", p.Platform, "平台取自分组")
+	s.Require().Equal("ip-policy-pro", p.GroupName)
+
+	p.Mode, p.MaxActiveAccounts, p.OnEgressFailure = service.ProxyIPPolicyModeChurn, nil, service.ProxyIPFailureReassign
+	s.Require().NoError(s.pools.UpsertGroupPolicy(s.ctx, p))
+	list, err := s.pools.ListGroupPolicies(s.ctx)
+	s.Require().NoError(err)
+	var got *service.ProxyIPPolicy
+	for i := range list {
+		if *list[i].GroupID == groupID {
+			got = &list[i]
+		}
+	}
+	s.Require().NotNil(got)
+	s.Require().Equal(service.ProxyIPPolicyModeChurn, got.Mode)
+	s.Require().Nil(got.MaxActiveAccounts)
+
+	// 软删除的分组：策略不再列出，也不能新写。
+	s.exec(`UPDATE groups SET deleted_at = NOW() WHERE id = $1`, groupID)
+	list, err = s.pools.ListGroupPolicies(s.ctx)
+	s.Require().NoError(err)
+	for i := range list {
+		s.Require().NotEqual(groupID, *list[i].GroupID)
+	}
+	s.Require().ErrorIs(s.pools.UpsertGroupPolicy(s.ctx, p), service.ErrProxyIPPolicyGroupNotFound)
+
+	s.Require().NoError(s.pools.DeleteGroupPolicy(s.ctx, groupID))
+	s.Require().ErrorIs(s.pools.DeleteGroupPolicy(s.ctx, groupID), service.ErrProxyIPPolicyGroupNotFound)
+}

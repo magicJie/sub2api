@@ -20,7 +20,7 @@ import (
 //   - proxy_account_bindings 由 accounts 上的触发器（迁移 248）在 proxy_id 变化 / 账号删除时维护，
 //     因此所有改代理的路径（手动选择、过期回退、CRS 同步……）都会被记录。
 //   - 从池中分配的绑定标记 locked=true；锁定期间管理端不允许修改账号代理，需先解绑（解除锁定）。
-//   - 分配规则由平台 IP 策略决定（proxy_ip_policy.go）：没有策略的平台不能从池分配；
+//   - 分配规则由 IP 策略决定（proxy_ip_policy.go）：分组策略优先于平台策略，都没有时不能从池分配；
 //     计数按落地 IP 合并，“历史累计”含已解绑、已删除的账号，达到上限即对该平台永久退役。
 
 const (
@@ -105,6 +105,11 @@ type ProxyPoolRepository interface {
 	ListPolicies(ctx context.Context) ([]ProxyIPPolicy, error)
 	UpsertPolicy(ctx context.Context, policy *ProxyIPPolicy) error
 	DeletePolicy(ctx context.Context, platform string) error
+	// ListGroupPolicies 返回分组策略（迁移 260），Platform/GroupName 取自分组；已删除分组的策略不返回。
+	ListGroupPolicies(ctx context.Context) ([]ProxyIPPolicy, error)
+	// UpsertGroupPolicy 按 GroupID 新建或覆盖，并回填 Platform/GroupName；分组不存在时返回 ErrProxyIPPolicyGroupNotFound。
+	UpsertGroupPolicy(ctx context.Context, policy *ProxyIPPolicy) error
+	DeleteGroupPolicy(ctx context.Context, groupID int64) error
 }
 
 type ProxyPoolService struct {
@@ -181,8 +186,8 @@ func (s *ProxyPoolService) DeletePool(ctx context.Context, id int64) error {
 	if pool.IsDefault {
 		return ErrProxyPoolDefaultDelete
 	}
-	// 被平台策略引用的池不能删：直接从 pool_ids 里去掉可能让列表变空，变成“全部池”而放宽限制。
-	policies, err := s.repo.ListPolicies(ctx)
+	// 被策略引用的池不能删：直接从 pool_ids 里去掉可能让列表变空，变成“全部池”而放宽限制。
+	policies, err := s.loadPolicies(ctx)
 	if err != nil {
 		return err
 	}
@@ -202,7 +207,7 @@ func (s *ProxyPoolService) AssignProxies(ctx context.Context, poolID int64, prox
 	return s.repo.AssignProxies(ctx, pool, proxyIDs)
 }
 
-// ListMembers 返回池内代理、计数与当前平台策略，供管理页展示退役状态。
+// ListMembers 返回池内代理、计数与当前平台、分组策略，供管理页展示退役状态。
 func (s *ProxyPoolService) ListMembers(ctx context.Context, poolID int64) (*ProxyPool, []ProxyPoolMember, []ProxyIPPolicy, error) {
 	pool, err := s.repo.GetPool(ctx, poolID)
 	if err != nil {
@@ -212,7 +217,7 @@ func (s *ProxyPoolService) ListMembers(ctx context.Context, poolID int64) (*Prox
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	policies, err := s.repo.ListPolicies(ctx)
+	policies, err := s.loadPolicies(ctx)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -228,23 +233,24 @@ func (s *ProxyPoolService) GetAccountBinding(ctx context.Context, accountID int6
 }
 
 // PreviewProxy 返回下一次分配会选中的代理（不占用），供 OAuth 流程先用该代理完成授权。
-func (s *ProxyPoolService) PreviewProxy(ctx context.Context, poolID int64, platform string) (*Proxy, error) {
+// groupIDs 为将要绑定的分组，用于匹配分组策略。
+func (s *ProxyPoolService) PreviewProxy(ctx context.Context, poolID int64, platform string, groupIDs []int64) (*Proxy, error) {
 	pool, err := s.repo.GetPool(ctx, poolID)
 	if err != nil {
 		return nil, err
 	}
-	return s.pickProxy(ctx, pool, platform, 0, nil, false)
+	return s.pickProxy(ctx, pool, platform, groupIDs, 0, nil, false)
 }
 
-// pickProxy 按平台策略在池内可用落地 IP 中挑选（排序见 sortProxyPoolCandidates）。
-// 平台没有策略或策略不允许该池时拒绝。
+// pickProxy 按账号适用的策略（分组策略优先于平台策略）在池内可用落地 IP 中挑选（排序见 sortProxyPoolCandidates）。
+// 没有适用策略或策略不允许该池时拒绝。
 // preferredID 非空时：strict=true 要求必须是该代理，否则在其可用时优先选它。
-func (s *ProxyPoolService) pickProxy(ctx context.Context, pool *ProxyPool, platform string, excludeAccountID int64, preferredID *int64, strict bool) (*Proxy, error) {
-	policies, err := s.repo.ListPolicies(ctx)
+func (s *ProxyPoolService) pickProxy(ctx context.Context, pool *ProxyPool, platform string, groupIDs []int64, excludeAccountID int64, preferredID *int64, strict bool) (*Proxy, error) {
+	policies, err := s.loadPolicies(ctx)
 	if err != nil {
 		return nil, err
 	}
-	policy, err := policyFor(policies, platform)
+	policy, err := policyFor(policies, platform, groupIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -304,7 +310,7 @@ func (s *ProxyPoolService) AssignAccount(ctx context.Context, accountID, poolID 
 	if binding != nil && binding.Locked {
 		return nil, ErrAccountProxyLocked
 	}
-	proxy, err := s.pickProxy(ctx, pool, account.Platform, accountID, account.ProxyID, false)
+	proxy, err := s.pickProxy(ctx, pool, account.Platform, account.GroupIDs, accountID, account.ProxyID, false)
 	if err != nil {
 		return nil, err
 	}
@@ -341,7 +347,8 @@ func (s *ProxyPoolService) UnbindAccount(ctx context.Context, accountID int64) e
 // beginProxyPoolAccountCreate 在 CreateAccount 开头调用：指定了代理池时挑选代理写入 input.ProxyID，
 // 返回的 release 必须在账号创建（及 finishProxyPoolAccountCreate）之后调用。
 // 同时指定 ProxyID 时（OAuth / 批量 RT 先用预览代理授权），该代理仍可用则沿用，否则回退到池内用量最少的代理。
-func beginProxyPoolAccountCreate(ctx context.Context, input *CreateAccountInput) (func(), error) {
+// groupIDs 为账号最终绑定的分组（含自动绑定的默认分组），用于匹配分组策略。
+func beginProxyPoolAccountCreate(ctx context.Context, input *CreateAccountInput, groupIDs []int64) (func(), error) {
 	if input == nil || input.ProxyPoolID == nil {
 		return func() {}, nil
 	}
@@ -358,7 +365,7 @@ func beginProxyPoolAccountCreate(ctx context.Context, input *CreateAccountInput)
 	if input.ProxyID != nil && *input.ProxyID > 0 {
 		preferred = input.ProxyID
 	}
-	proxy, err := s.pickProxy(ctx, pool, input.Platform, 0, preferred, false)
+	proxy, err := s.pickProxy(ctx, pool, input.Platform, groupIDs, 0, preferred, false)
 	if err != nil {
 		s.mu.Unlock()
 		return nil, err
