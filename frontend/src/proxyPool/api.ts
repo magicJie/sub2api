@@ -24,6 +24,8 @@ export interface ProxyPoolMember {
   active_counts: Record<string, number>
   /** 已达上限、不再分配的平台 */
   retired_platforms: string[]
+  /** 已达上限、不再分配的分组策略（分组名） */
+  retired_groups: string[]
 }
 
 export interface ProxyAccountBinding {
@@ -59,7 +61,11 @@ export type ProxyIPPolicyMode = 'churn' | 'sticky'
 
 export interface ProxyIPPolicy {
   id: number
+  /** 平台策略的平台；分组策略为分组所属平台 */
   platform: string
+  /** 分组策略才有：覆盖该分组内账号的平台策略 */
+  group_id?: number
+  group_name?: string
   mode: ProxyIPPolicyMode
   /** 可取 IP 的代理池，空数组为全部代理池 */
   pool_ids: number[]
@@ -94,6 +100,21 @@ export async function deletePolicy(platform: string): Promise<void> {
   await apiClient.delete(`/admin/proxy-ip-policies/${encodeURIComponent(platform)}`)
 }
 
+/** 分组 IP 策略：按分组覆盖平台策略，平台取自分组 */
+export async function listGroupPolicies(): Promise<ProxyIPPolicy[]> {
+  const { data } = await apiClient.get<ProxyIPPolicy[]>('/admin/proxy-ip-group-policies')
+  return Array.isArray(data) ? data : []
+}
+
+export async function upsertGroupPolicy(groupId: number, payload: ProxyIPPolicyUpsert): Promise<ProxyIPPolicy> {
+  const { data } = await apiClient.put<ProxyIPPolicy>(`/admin/proxy-ip-group-policies/${groupId}`, payload)
+  return data
+}
+
+export async function deleteGroupPolicy(groupId: number): Promise<void> {
+  await apiClient.delete(`/admin/proxy-ip-group-policies/${groupId}`)
+}
+
 export async function listPools(): Promise<ProxyPool[]> {
   const { data } = await apiClient.get<ProxyPool[]>('/admin/proxy-pools')
   return Array.isArray(data) ? data : []
@@ -124,10 +145,10 @@ export async function assignProxies(id: number, proxyIds: number[]): Promise<voi
   await apiClient.post(`/admin/proxy-pools/${id}/proxies`, { proxy_ids: proxyIds })
 }
 
-/** 下一次分配会选中的代理（不占用）；OAuth 授权需先用它换取 token。 */
-export async function previewProxy(id: number, platform: string): Promise<Proxy> {
+/** 下一次分配会选中的代理（不占用）；OAuth 授权需先用它换取 token。groupIds 用于匹配分组策略。 */
+export async function previewProxy(id: number, platform: string, groupIds: number[] = []): Promise<Proxy> {
   const { data } = await apiClient.get<Proxy>(`/admin/proxy-pools/${id}/preview`, {
-    params: { platform }
+    params: { platform, group_ids: groupIds.length ? groupIds.join(',') : undefined }
   })
   return data
 }
@@ -263,6 +284,9 @@ export const proxyPoolAPI = {
   listPolicies,
   upsertPolicy,
   deletePolicy,
+  listGroupPolicies,
+  upsertGroupPolicy,
+  deleteGroupPolicy,
   listPools,
   createPool,
   updatePool,

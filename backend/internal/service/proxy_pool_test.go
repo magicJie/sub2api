@@ -12,12 +12,13 @@ import (
 )
 
 type proxyPoolRepoStub struct {
-	pools    map[int64]*ProxyPool
-	policies []ProxyIPPolicy
-	members  []ProxyPoolMember
-	locked   map[int64]bool
-	lockErr  error
-	lockLog  []int64
+	pools         map[int64]*ProxyPool
+	policies      []ProxyIPPolicy
+	groupPolicies []ProxyIPPolicy
+	members       []ProxyPoolMember
+	locked        map[int64]bool
+	lockErr       error
+	lockLog       []int64
 }
 
 func (r *proxyPoolRepoStub) ListPools(context.Context) ([]ProxyPool, error) { return nil, nil }
@@ -54,6 +55,14 @@ func (r *proxyPoolRepoStub) UpsertPolicy(_ context.Context, p *ProxyIPPolicy) er
 	return nil
 }
 func (r *proxyPoolRepoStub) DeletePolicy(context.Context, string) error { return nil }
+func (r *proxyPoolRepoStub) ListGroupPolicies(context.Context) ([]ProxyIPPolicy, error) {
+	return r.groupPolicies, nil
+}
+func (r *proxyPoolRepoStub) UpsertGroupPolicy(_ context.Context, p *ProxyIPPolicy) error {
+	r.groupPolicies = append(r.groupPolicies, *p)
+	return nil
+}
+func (r *proxyPoolRepoStub) DeleteGroupPolicy(context.Context, int64) error { return nil }
 func (r *proxyPoolRepoStub) EgressHostTaken(_ context.Context, host string, exclude int64) (bool, error) {
 	for _, m := range r.members {
 		if m.Proxy.ID != exclude && m.Proxy.Host == host {
@@ -113,12 +122,12 @@ func TestProxyPoolPick_LeastUsedSkipsRetiredAndInactive(t *testing.T) {
 	}
 	svc := withProxyPoolService(t, repo)
 
-	p, err := svc.pickProxy(context.Background(), pool, "kiro", 0, nil, false)
+	p, err := svc.pickProxy(context.Background(), pool, "kiro", nil, 0, nil, false)
 	require.NoError(t, err)
 	require.Equal(t, int64(5), p.ID)
 
 	// openai 策略不限上限：按 openai 计数最少选。
-	p, err = svc.pickProxy(context.Background(), pool, "openai", 0, nil, false)
+	p, err = svc.pickProxy(context.Background(), pool, "openai", nil, 0, nil, false)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), p.ID, "id 1 has openai count 0 and smallest id")
 }
@@ -131,7 +140,7 @@ func TestProxyPoolPick_AllRetired(t *testing.T) {
 		members:  []ProxyPoolMember{poolMember(1, StatusActive, map[string]int64{"kiro": 1})},
 	}
 	svc := withProxyPoolService(t, repo)
-	_, err := svc.pickProxy(context.Background(), pool, "kiro", 0, nil, false)
+	_, err := svc.pickProxy(context.Background(), pool, "kiro", nil, 0, nil, false)
 	require.ErrorIs(t, err, ErrProxyPoolNoAvailable)
 }
 
@@ -149,17 +158,17 @@ func TestProxyPoolPick_StrictPreferred(t *testing.T) {
 	svc := withProxyPoolService(t, repo)
 	two, three, missing := int64(2), int64(3), int64(99)
 
-	p, err := svc.pickProxy(context.Background(), pool, "kiro", 0, &two, true)
+	p, err := svc.pickProxy(context.Background(), pool, "kiro", nil, 0, &two, true)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), p.ID)
 
-	_, err = svc.pickProxy(context.Background(), pool, "kiro", 0, &three, true)
+	_, err = svc.pickProxy(context.Background(), pool, "kiro", nil, 0, &three, true)
 	require.ErrorIs(t, err, ErrProxyPoolProxyNotInPool, "retired proxy cannot be forced")
-	_, err = svc.pickProxy(context.Background(), pool, "kiro", 0, &missing, true)
+	_, err = svc.pickProxy(context.Background(), pool, "kiro", nil, 0, &missing, true)
 	require.ErrorIs(t, err, ErrProxyPoolProxyNotInPool)
 
 	// 非严格：首选不可用时回退到最少用量。
-	p, err = svc.pickProxy(context.Background(), pool, "kiro", 0, &three, false)
+	p, err = svc.pickProxy(context.Background(), pool, "kiro", nil, 0, &three, false)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), p.ID)
 }
@@ -176,7 +185,7 @@ func TestBeginProxyPoolAccountCreate(t *testing.T) {
 	// 未指定代理池：不改动输入。
 	manual := int64(3)
 	input := &CreateAccountInput{Platform: "kiro", ProxyID: &manual}
-	release, err := beginProxyPoolAccountCreate(context.Background(), input)
+	release, err := beginProxyPoolAccountCreate(context.Background(), input, nil)
 	require.NoError(t, err)
 	release()
 	require.Equal(t, int64(3), *input.ProxyID)
@@ -185,7 +194,7 @@ func TestBeginProxyPoolAccountCreate(t *testing.T) {
 
 	poolID := int64(7)
 	input = &CreateAccountInput{Platform: "kiro", ProxyPoolID: &poolID}
-	release, err = beginProxyPoolAccountCreate(context.Background(), input)
+	release, err = beginProxyPoolAccountCreate(context.Background(), input, nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(11), *input.ProxyID)
 	require.NoError(t, finishProxyPoolAccountCreate(context.Background(), input, &Account{ID: 42}))
@@ -195,7 +204,7 @@ func TestBeginProxyPoolAccountCreate(t *testing.T) {
 	// 预览代理不可用（不在池内）时回退到池内代理，而不是报错或沿用池外代理。
 	outside := int64(99)
 	input = &CreateAccountInput{Platform: "kiro", ProxyPoolID: &poolID, ProxyID: &outside}
-	release, err = beginProxyPoolAccountCreate(context.Background(), input)
+	release, err = beginProxyPoolAccountCreate(context.Background(), input, nil)
 	require.NoError(t, err)
 	release()
 	require.Equal(t, int64(11), *input.ProxyID)
@@ -205,7 +214,7 @@ func TestBeginProxyPoolAccountCreate(t *testing.T) {
 	require.Error(t, finishProxyPoolAccountCreate(context.Background(), input, &Account{ID: 43}))
 
 	missing := int64(8)
-	_, err = beginProxyPoolAccountCreate(context.Background(), &CreateAccountInput{Platform: "kiro", ProxyPoolID: &missing})
+	_, err = beginProxyPoolAccountCreate(context.Background(), &CreateAccountInput{Platform: "kiro", ProxyPoolID: &missing}, nil)
 	require.ErrorIs(t, err, ErrProxyPoolNotFound)
 }
 

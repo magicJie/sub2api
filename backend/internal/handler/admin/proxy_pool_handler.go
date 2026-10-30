@@ -3,6 +3,7 @@ package admin
 import (
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
@@ -39,8 +40,11 @@ func proxyPoolDTO(p *service.ProxyPool) ProxyPoolDTO {
 }
 
 type ProxyIPPolicyDTO struct {
-	ID                  int64     `json:"id"`
-	Platform            string    `json:"platform"`
+	ID       int64  `json:"id"`
+	Platform string `json:"platform"`
+	// GroupID / GroupName 仅分组策略有值。
+	GroupID             *int64    `json:"group_id,omitempty"`
+	GroupName           string    `json:"group_name,omitempty"`
 	Mode                string    `json:"mode"`
 	PoolIDs             []int64   `json:"pool_ids"`
 	MaxLifetimeAccounts *int      `json:"max_lifetime_accounts"`
@@ -56,7 +60,7 @@ func proxyIPPolicyDTO(p *service.ProxyIPPolicy) ProxyIPPolicyDTO {
 		ids = []int64{}
 	}
 	return ProxyIPPolicyDTO{
-		ID: p.ID, Platform: p.Platform, Mode: p.Mode, PoolIDs: ids,
+		ID: p.ID, Platform: p.Platform, GroupID: p.GroupID, GroupName: p.GroupName, Mode: p.Mode, PoolIDs: ids,
 		MaxLifetimeAccounts: p.MaxLifetimeAccounts, MaxActiveAccounts: p.MaxActiveAccounts,
 		OnEgressFailure: p.OnEgressFailure, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
 	}
@@ -67,6 +71,8 @@ type ProxyPoolMemberDTO struct {
 	HistoryCounts    map[string]int64 `json:"history_counts"`
 	ActiveCounts     map[string]int64 `json:"active_counts"`
 	RetiredPlatforms []string         `json:"retired_platforms"`
+	// RetiredGroups 已对其退役的分组策略（分组名）。
+	RetiredGroups []string `json:"retired_groups"`
 }
 
 type ProxyAccountBindingDTO struct {
@@ -195,6 +201,7 @@ func (h *ProxyPoolHandler) Members(c *gin.Context) {
 			HistoryCounts:    m.HistoryCounts,
 			ActiveCounts:     m.ActiveCounts,
 			RetiredPlatforms: service.ProxyPoolRetiredPlatforms(policies, m),
+			RetiredGroups:    service.ProxyPoolRetiredGroups(policies, m),
 		})
 	}
 	response.Success(c, gin.H{"pool": proxyPoolDTO(pool), "members": out})
@@ -220,8 +227,9 @@ func (h *ProxyPoolHandler) AssignProxies(c *gin.Context) {
 	response.Success(c, gin.H{"assigned": len(req.ProxyIDs)})
 }
 
-// PreviewProxy GET /api/v1/admin/proxy-pools/:id/preview?platform=kiro
+// PreviewProxy GET /api/v1/admin/proxy-pools/:id/preview?platform=kiro&group_ids=1,2
 // 返回下次分配会选中的代理，OAuth 流程据此先用该代理完成授权，创建账号时再校验并锁定。
+// group_ids 为将要绑定的分组，用于匹配分组策略；不传时只用平台策略。
 func (h *ProxyPoolHandler) PreviewProxy(c *gin.Context) {
 	id, ok := parseProxyPoolIDParam(c, "id")
 	if !ok {
@@ -232,7 +240,12 @@ func (h *ProxyPoolHandler) PreviewProxy(c *gin.Context) {
 		response.BadRequest(c, "platform is required")
 		return
 	}
-	p, err := h.poolService.PreviewProxy(c.Request.Context(), id, platform)
+	groupIDs, err := parseProxyPoolGroupIDs(c.Query("group_ids"))
+	if err != nil {
+		response.BadRequest(c, "Invalid group_ids")
+		return
+	}
+	p, err := h.poolService.PreviewProxy(c.Request.Context(), id, platform, groupIDs)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -331,6 +344,22 @@ func (h *ProxyPoolHandler) UnbindAccount(c *gin.Context) {
 	response.Success(c, gin.H{"message": "Proxy binding unlocked"})
 }
 
+func parseProxyPoolGroupIDs(raw string) ([]int64, error) {
+	out := make([]int64, 0)
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		id, err := strconv.ParseInt(part, 10, 64)
+		if err != nil || id <= 0 {
+			return nil, strconv.ErrSyntax
+		}
+		out = append(out, id)
+	}
+	return out, nil
+}
+
 // ListPolicies GET /api/v1/admin/proxy-ip-policies
 func (h *ProxyPoolHandler) ListPolicies(c *gin.Context) {
 	policies, err := h.poolService.ListPolicies(c.Request.Context())
@@ -370,6 +399,57 @@ func (h *ProxyPoolHandler) UpsertPolicy(c *gin.Context) {
 		return
 	}
 	response.Success(c, proxyIPPolicyDTO(p))
+}
+
+// ListGroupPolicies GET /api/v1/admin/proxy-ip-group-policies
+func (h *ProxyPoolHandler) ListGroupPolicies(c *gin.Context) {
+	policies, err := h.poolService.ListGroupPolicies(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	out := make([]ProxyIPPolicyDTO, 0, len(policies))
+	for i := range policies {
+		out = append(out, proxyIPPolicyDTO(&policies[i]))
+	}
+	response.Success(c, out)
+}
+
+// UpsertGroupPolicy PUT /api/v1/admin/proxy-ip-group-policies/:group_id
+// 分组策略覆盖该分组内账号的平台策略，平台取自分组。
+func (h *ProxyPoolHandler) UpsertGroupPolicy(c *gin.Context) {
+	groupID, ok := parseProxyPoolIDParam(c, "group_id")
+	if !ok {
+		return
+	}
+	var req proxyIPPolicyUpsertRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	p, err := h.poolService.UpsertGroupPolicy(c.Request.Context(), &service.ProxyIPPolicy{
+		GroupID: &groupID, Mode: req.Mode, PoolIDs: req.PoolIDs,
+		MaxLifetimeAccounts: req.MaxLifetimeAccounts, MaxActiveAccounts: req.MaxActiveAccounts,
+		OnEgressFailure: req.OnEgressFailure,
+	})
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, proxyIPPolicyDTO(p))
+}
+
+// DeleteGroupPolicy DELETE /api/v1/admin/proxy-ip-group-policies/:group_id
+func (h *ProxyPoolHandler) DeleteGroupPolicy(c *gin.Context) {
+	groupID, ok := parseProxyPoolIDParam(c, "group_id")
+	if !ok {
+		return
+	}
+	if err := h.poolService.DeleteGroupPolicy(c.Request.Context(), groupID); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"message": "Group IP policy deleted"})
 }
 
 // DeletePolicy DELETE /api/v1/admin/proxy-ip-policies/:platform

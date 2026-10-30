@@ -533,7 +533,7 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	// Never persist ephemeral SSO/password secrets after OAuth conversion.
 	input.Credentials = SanitizeStoredCredentials(input.Platform, input.Credentials)
 
-	releaseProxyPool, err := beginProxyPoolAccountCreate(ctx, input) // 代理池（fork）
+	releaseProxyPool, err := beginProxyPoolAccountCreate(ctx, input, groupIDs) // 代理池（fork）
 	if err != nil {
 		return nil, err
 	}
