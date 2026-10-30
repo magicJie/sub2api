@@ -27,8 +27,8 @@ const group = {
   probe_interval_seconds: 30, fail_threshold: 3, recover_threshold: 2, failback_seconds: 300,
   created_at: '', updated_at: '', proxy_count: 2,
   slots: [
-    { id: 11, name: 'slot-b', position: 1, endpoint_ids: [2], runtime: { available: false, current_endpoint_id: null } },
-    { id: 10, name: 'slot-a', position: 0, endpoint_ids: [2, 1], runtime: { available: true, current_endpoint_id: 1 } },
+    { id: 11, name: 'slot-b', position: 1, weight: 3, endpoint_ids: [2], runtime: { available: false, current_endpoint_id: null } },
+    { id: 10, name: 'slot-a', position: 0, weight: 1, endpoint_ids: [2, 1], runtime: { available: true, current_endpoint_id: 1 } },
   ],
 }
 const mountManager = () => mount(UpstreamManager, {
@@ -58,7 +58,8 @@ describe('upstream group manager', () => {
   it('shows slots in position order with runtime availability and current endpoint', async () => {
     await open()
     const rows = wrapper.findAll('[data-test="slot-row"]')
-    expect(rows.map(r => r.find('td').text())).toEqual(['slot-a', 'slot-b'])
+    expect(rows.map(r => r.find('td').text().split(/\s/)[0])).toEqual(['slot-a', 'slot-b'])
+    expect(rows[1].get('[data-test="slot-weight-share"]').text()).toContain('admin.proxyUpstream.slotWeightShare')
     expect(rows[0].text()).toContain('admin.proxyUpstream.available')
     expect(rows[0].get('[data-test="slot-current"]').text()).toBe('aio-a')
     expect(rows[1].text()).toContain('admin.proxyUpstream.unavailable')
@@ -84,6 +85,20 @@ describe('upstream group manager', () => {
     expect(input).toMatchObject({ name: 'new', probe_interval_seconds: 30, fail_threshold: 3, recover_threshold: 2, failback_seconds: 300 })
     expect(input.slots.map((s: { endpoint_ids: number[] }) => s.endpoint_ids)).toEqual([[1, 2], [1]])
     expect(input.slots[0]).not.toHaveProperty('id')
+    expect(input.slots.map((s: { weight: number }) => s.weight)).toEqual([1, 1])
+  })
+
+  it('sends edited slot weights and rejects out-of-range values', async () => {
+    await open()
+    await button('common.edit').trigger('click')
+    const weights = wrapper.findAll('[data-test="slot-weight"]')
+    await weights[0].setValue('0')
+    await wrapper.get('form').trigger('submit'); await flushPromises()
+    expect(updateGroup).not.toHaveBeenCalled()
+    expect(showError).toHaveBeenCalledWith('admin.proxyUpstream.slotWeightInvalid')
+    await weights[0].setValue('5')
+    await wrapper.get('form').trigger('submit'); await flushPromises()
+    expect(updateGroup.mock.calls[0][1].slots.map((s: { weight: number }) => s.weight)).toEqual([5, 3])
   })
 
   it('refuses to save a slot without endpoints', async () => {
@@ -103,8 +118,8 @@ describe('upstream group manager', () => {
     await wrapper.get('form').trigger('submit'); await flushPromises()
     expect(updateGroup.mock.calls[0][0]).toBe(5)
     expect(updateGroup.mock.calls[0][1].slots).toEqual([
-      { id: 11, name: 'slot-b', endpoint_ids: [2] },
-      { id: 10, name: 'slot-a', endpoint_ids: [2, 1] },
+      { id: 11, name: 'slot-b', weight: 3, endpoint_ids: [2] },
+      { id: 10, name: 'slot-a', weight: 1, endpoint_ids: [2, 1] },
     ])
   })
 

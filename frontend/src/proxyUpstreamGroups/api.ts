@@ -48,6 +48,8 @@ export interface UpstreamSlot {
   id: number
   name: string
   position: number
+  /** 1-100，落地按权重比例分到各槽位 */
+  weight: number
   /** 有序端点列表：第一个为主，其余为备用 */
   endpoint_ids: number[]
   runtime?: UpstreamSlotRuntime
@@ -76,7 +78,7 @@ export interface UpstreamGroupInput {
   fail_threshold: number
   recover_threshold: number
   failback_seconds: number
-  slots: { id?: number; name: string; endpoint_ids: number[] }[]
+  slots: { id?: number; name: string; weight: number; endpoint_ids: number[] }[]
 }
 
 const endpointRoot = '/admin/proxy-upstream-endpoints'

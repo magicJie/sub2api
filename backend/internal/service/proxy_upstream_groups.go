@@ -169,6 +169,12 @@ func validateUpstreamGroup(g *ProxyUpstreamGroup) error {
 		if len(slot.Name) > 255 {
 			return upstreamInvalid("slot name must be at most 255 bytes")
 		}
+		if slot.Weight == 0 {
+			slot.Weight = ProxyUpstreamDefaultSlotWeight
+		}
+		if slot.Weight < 1 || slot.Weight > ProxyUpstreamMaxSlotWeight {
+			return upstreamInvalid("slot weight must be 1-100")
+		}
 		if len(slot.EndpointIDs) == 0 {
 			return upstreamInvalid("each slot requires at least one endpoint")
 		}

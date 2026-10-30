@@ -127,7 +127,7 @@ type queryer interface {
 
 func loadProxyUpstreamSlots(ctx context.Context, q queryer, groupIDs []int64) (map[int64][]service.ProxyUpstreamSlot, error) {
 	rows, err := q.QueryContext(ctx, `
-		SELECT id, group_id, name, position, endpoint_ids, alert_event_id
+		SELECT id, group_id, name, position, weight, endpoint_ids, alert_event_id
 		FROM proxy_upstream_slots WHERE group_id = ANY($1) ORDER BY group_id, position, id`, pq.Array(groupIDs))
 	if err != nil {
 		return nil, err
@@ -138,7 +138,7 @@ func loadProxyUpstreamSlots(ctx context.Context, q queryer, groupIDs []int64) (m
 		var s service.ProxyUpstreamSlot
 		var raw []byte
 		var alert sql.NullInt64
-		if err := rows.Scan(&s.ID, &s.GroupID, &s.Name, &s.Position, &raw, &alert); err != nil {
+		if err := rows.Scan(&s.ID, &s.GroupID, &s.Name, &s.Position, &s.Weight, &raw, &alert); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(raw, &s.EndpointIDs); err != nil {
@@ -265,8 +265,8 @@ func (r *proxyUpstreamRepository) writeGroup(ctx context.Context, g *service.Pro
 		updated := false
 		if s.ID > 0 && !create {
 			res, err := tx.ExecContext(ctx, `
-				UPDATE proxy_upstream_slots SET name = $3, position = $4, endpoint_ids = $5, updated_at = NOW()
-				WHERE id = $1 AND group_id = $2`, s.ID, saved.ID, s.Name, position, raw)
+				UPDATE proxy_upstream_slots SET name = $3, position = $4, endpoint_ids = $5, weight = $6, updated_at = NOW()
+				WHERE id = $1 AND group_id = $2`, s.ID, saved.ID, s.Name, position, raw, s.Weight)
 			if err != nil {
 				return err
 			}
@@ -275,8 +275,8 @@ func (r *proxyUpstreamRepository) writeGroup(ctx context.Context, g *service.Pro
 		}
 		if !updated {
 			if err := tx.QueryRowContext(ctx, `
-				INSERT INTO proxy_upstream_slots (group_id, name, position, endpoint_ids)
-				VALUES ($1, $2, $3, $4) RETURNING id`, saved.ID, s.Name, position, raw).Scan(&s.ID); err != nil {
+				INSERT INTO proxy_upstream_slots (group_id, name, position, endpoint_ids, weight)
+				VALUES ($1, $2, $3, $4, $5) RETURNING id`, saved.ID, s.Name, position, raw, s.Weight).Scan(&s.ID); err != nil {
 				return err
 			}
 		}
