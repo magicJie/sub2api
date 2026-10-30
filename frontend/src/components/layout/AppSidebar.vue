@@ -481,6 +481,11 @@ const PluginIcon = {
   render: () => h(Icon, { name: 'cube' })
 }
 
+// 代理池（fork）：与「IP 管理」的 ServerIcon 区分。
+const ProxyPoolIcon = {
+  render: () => h(Icon, { name: 'database' })
+}
+
 const BellIcon = {
   render: () =>
     h(
@@ -796,7 +801,7 @@ const adminNavItems = computed((): NavItem[] => {
     { path: '/admin/plugins', label: t('nav.plugins'), icon: PluginIcon, featureFlag: flagPluginManagement },
     { path: '/admin/announcements', label: t('nav.announcements'), icon: BellIcon },
     { path: '/admin/proxies', label: t('nav.proxies'), icon: ServerIcon },
-    { path: '/admin/proxy-pools', label: t('nav.proxyPools'), icon: ServerIcon }, // 代理池（fork）
+    { path: '/admin/proxy-pools', label: t('nav.proxyPools'), icon: ProxyPoolIcon }, // 代理池（fork）
     {
       path: '/admin/security-audit',
       label: t('nav.securityAudit'),

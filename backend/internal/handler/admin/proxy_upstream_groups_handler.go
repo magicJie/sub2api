@@ -1,6 +1,6 @@
 package admin
 
-// 链式代理（fork）：前置端点与前置组管理；端点密码只在写入请求中接收，绝不回传。
+// 链式代理（fork）：AIO、AIO 端口（前置端点）与前置组管理；AIO 密码只在写入请求中接收，绝不回传。
 
 import (
 	"strconv"
@@ -11,49 +11,83 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type proxyUpstreamEndpointDTO struct {
-	ID          int64                          `json:"id"`
-	Name        string                         `json:"name"`
-	Protocol    string                         `json:"protocol"`
-	Host        string                         `json:"host"`
-	Port        int                            `json:"port"`
-	Username    string                         `json:"username"`
-	HasPassword bool                           `json:"has_password"`
-	Status      string                         `json:"status"`
-	CreatedAt   time.Time                      `json:"created_at"`
-	UpdatedAt   time.Time                      `json:"updated_at"`
-	Health      service.UpstreamEndpointHealth `json:"health"`
-	GroupNames  []string                       `json:"group_names"`
+type proxyUpstreamAIODTO struct {
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
+	Protocol    string    `json:"protocol"`
+	Host        string    `json:"host"`
+	Username    string    `json:"username"`
+	HasPassword bool      `json:"has_password"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	PortCount   int       `json:"port_count"`
 }
 
-type proxyUpstreamEndpointRequest struct {
+type proxyUpstreamAIORequest struct {
 	Name     *string `json:"name"`
 	Protocol *string `json:"protocol"`
 	Host     *string `json:"host"`
-	Port     *int    `json:"port"`
 	Username *string `json:"username"`
 	Password *string `json:"password"` // 省略或空串表示保持不变
 	Status   *string `json:"status"`
 }
 
+func (req *proxyUpstreamAIORequest) apply(a *service.ProxyUpstreamAIO) {
+	if req.Name != nil {
+		a.Name = *req.Name
+	}
+	if req.Protocol != nil {
+		a.Protocol = *req.Protocol
+	}
+	if req.Host != nil {
+		a.Host = *req.Host
+	}
+	if req.Username != nil {
+		a.Username = *req.Username
+	}
+	if req.Password != nil && *req.Password != "" {
+		a.Password = *req.Password
+	}
+	if req.Status != nil {
+		a.Status = *req.Status
+	}
+}
+
+// proxyUpstreamEndpointDTO 是 AIO 的一个监听端口；protocol / host / username 取自所属 AIO，只读。
+type proxyUpstreamEndpointDTO struct {
+	ID         int64                          `json:"id"`
+	AIOID      int64                          `json:"aio_id"`
+	AIOName    string                         `json:"aio_name"`
+	AIOStatus  string                         `json:"aio_status"`
+	Name       string                         `json:"name"`
+	Protocol   string                         `json:"protocol"`
+	Host       string                         `json:"host"`
+	Port       int                            `json:"port"`
+	Username   string                         `json:"username"`
+	Status     string                         `json:"status"`
+	CreatedAt  time.Time                      `json:"created_at"`
+	UpdatedAt  time.Time                      `json:"updated_at"`
+	Health     service.UpstreamEndpointHealth `json:"health"`
+	GroupNames []string                       `json:"group_names"`
+}
+
+type proxyUpstreamEndpointRequest struct {
+	AIOID  *int64  `json:"aio_id"`
+	Name   *string `json:"name"`
+	Port   *int    `json:"port"`
+	Status *string `json:"status"`
+}
+
 func (req *proxyUpstreamEndpointRequest) apply(e *service.ProxyUpstreamEndpoint) {
+	if req.AIOID != nil {
+		e.AIOID = *req.AIOID
+	}
 	if req.Name != nil {
 		e.Name = *req.Name
 	}
-	if req.Protocol != nil {
-		e.Protocol = *req.Protocol
-	}
-	if req.Host != nil {
-		e.Host = *req.Host
-	}
 	if req.Port != nil {
 		e.Port = *req.Port
-	}
-	if req.Username != nil {
-		e.Username = *req.Username
-	}
-	if req.Password != nil && *req.Password != "" {
-		e.Password = *req.Password
 	}
 	if req.Status != nil {
 		e.Status = *req.Status
@@ -154,9 +188,112 @@ func (h *ProxyChainHandler) endpointDTO(e *service.ProxyUpstreamEndpoint, groups
 			names = append(names, g.Name)
 		}
 	}
-	return proxyUpstreamEndpointDTO{ID: e.ID, Name: e.Name, Protocol: e.Protocol, Host: e.Host, Port: e.Port, Username: e.Username,
-		HasPassword: e.Password != "", Status: e.Status, CreatedAt: e.CreatedAt, UpdatedAt: e.UpdatedAt,
-		Health: h.chainService.UpstreamEndpointHealth(e.ID), GroupNames: names}
+	return proxyUpstreamEndpointDTO{ID: e.ID, AIOID: e.AIOID, AIOName: e.AIOName, AIOStatus: e.AIOStatus, Name: e.Name,
+		Protocol: e.Protocol, Host: e.Host, Port: e.Port, Username: e.Username, Status: e.Status,
+		CreatedAt: e.CreatedAt, UpdatedAt: e.UpdatedAt, Health: h.chainService.UpstreamEndpointHealth(e.ID), GroupNames: names}
+}
+
+func aioDTO(a *service.ProxyUpstreamAIO, endpoints []service.ProxyUpstreamEndpoint) proxyUpstreamAIODTO {
+	count := 0
+	for i := range endpoints {
+		if endpoints[i].AIOID == a.ID {
+			count++
+		}
+	}
+	return proxyUpstreamAIODTO{ID: a.ID, Name: a.Name, Protocol: a.Protocol, Host: a.Host, Username: a.Username,
+		HasPassword: a.Password != "", Status: a.Status, CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt, PortCount: count}
+}
+
+// ListUpstreamAIOs GET /api/v1/admin/proxy-upstream-aios
+func (h *ProxyChainHandler) ListUpstreamAIOs(c *gin.Context) {
+	ctx := c.Request.Context()
+	aios, err := h.chainService.ListUpstreamAIOs(ctx)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	endpoints, err := h.chainService.ListUpstreamEndpoints(ctx)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	out := make([]proxyUpstreamAIODTO, 0, len(aios))
+	for i := range aios {
+		out = append(out, aioDTO(&aios[i], endpoints))
+	}
+	response.Success(c, out)
+}
+
+func (h *ProxyChainHandler) GetUpstreamAIO(c *gin.Context) {
+	id, ok := upstreamPathID(c)
+	if !ok {
+		return
+	}
+	a, err := h.chainService.GetUpstreamAIO(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	h.respondAIO(c, a)
+}
+
+func (h *ProxyChainHandler) respondAIO(c *gin.Context, a *service.ProxyUpstreamAIO) {
+	endpoints, err := h.chainService.ListUpstreamEndpoints(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, aioDTO(a, endpoints))
+}
+
+func (h *ProxyChainHandler) CreateUpstreamAIO(c *gin.Context) {
+	var req proxyUpstreamAIORequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid AIO request")
+		return
+	}
+	a := &service.ProxyUpstreamAIO{}
+	req.apply(a)
+	if err := h.chainService.CreateUpstreamAIO(c.Request.Context(), a); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	h.respondAIO(c, a)
+}
+
+func (h *ProxyChainHandler) UpdateUpstreamAIO(c *gin.Context) {
+	id, ok := upstreamPathID(c)
+	if !ok {
+		return
+	}
+	var req proxyUpstreamAIORequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid AIO request")
+		return
+	}
+	a, err := h.chainService.GetUpstreamAIO(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	req.apply(a)
+	if err := h.chainService.UpdateUpstreamAIO(c.Request.Context(), a); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	h.respondAIO(c, a)
+}
+
+func (h *ProxyChainHandler) DeleteUpstreamAIO(c *gin.Context) {
+	id, ok := upstreamPathID(c)
+	if !ok {
+		return
+	}
+	if err := h.chainService.DeleteUpstreamAIO(c.Request.Context(), id); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"deleted": true})
 }
 
 func (h *ProxyChainHandler) groupDTO(g *service.ProxyUpstreamGroup, counts map[int64]int) proxyUpstreamGroupDTO {

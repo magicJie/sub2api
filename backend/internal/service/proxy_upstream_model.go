@@ -1,6 +1,6 @@
 package service
 
-// 链式代理（fork）：前置端点 / 前置组 / 槽位的持久化模型，见 docs/PROXY_IP_MODEL.md 第 2.2、3.4 节与迁移 257。
+// 链式代理（fork）：AIO / AIO 端口（前置端点）/ 前置组 / 槽位的持久化模型，见 docs/PROXY_IP_MODEL.md 第 2.2、3.4 节与迁移 257、259。
 
 import (
 	"context"
@@ -10,6 +10,9 @@ import (
 )
 
 var (
+	ErrProxyUpstreamAIONotFound        = infraerrors.NotFound("PROXY_UPSTREAM_AIO_NOT_FOUND", "AIO not found")
+	ErrProxyUpstreamAIONameExists      = infraerrors.Conflict("PROXY_UPSTREAM_AIO_NAME_EXISTS", "AIO name already exists")
+	ErrProxyUpstreamAIOInUse           = infraerrors.Conflict("PROXY_UPSTREAM_AIO_IN_USE", "AIO still has ports")
 	ErrProxyUpstreamEndpointNotFound   = infraerrors.NotFound("PROXY_UPSTREAM_ENDPOINT_NOT_FOUND", "upstream endpoint not found")
 	ErrProxyUpstreamEndpointNameExists = infraerrors.Conflict("PROXY_UPSTREAM_ENDPOINT_NAME_EXISTS", "upstream endpoint name already exists")
 	ErrProxyUpstreamEndpointInUse      = infraerrors.Conflict("PROXY_UPSTREAM_ENDPOINT_IN_USE", "upstream endpoint is used by an upstream group slot")
@@ -29,9 +32,26 @@ const (
 	ProxyUpstreamDefaultFailback      = 300
 )
 
-// ProxyUpstreamEndpoint 是外部 AIO 的一个 listener（socks5 / http），不进代理池、不绑账号。
+// ProxyUpstreamAIO 是一个外部 AIO 实例：主机、协议与认证由其下所有监听端口共用。
+type ProxyUpstreamAIO struct {
+	ID        int64
+	Name      string
+	Protocol  string
+	Host      string
+	Username  string
+	Password  string
+	Status    string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// ProxyUpstreamEndpoint 是 AIO 的一个监听端口（socks5 / http），不进代理池、不绑账号。
+// Protocol / Host / Username / Password 取自所属 AIO；AIOStatus 停用时端口一并不可用。
 type ProxyUpstreamEndpoint struct {
 	ID        int64
+	AIOID     int64
+	AIOName   string
+	AIOStatus string
 	Name      string
 	Protocol  string
 	Host      string
@@ -41,6 +61,11 @@ type ProxyUpstreamEndpoint struct {
 	Status    string
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+// active 报告端口本身与所属 AIO 是否都启用（AIOStatus 为空视为启用，兼容未带 AIO 的构造）。
+func (e ProxyUpstreamEndpoint) active() bool {
+	return e.Status == StatusActive && (e.AIOStatus == "" || e.AIOStatus == StatusActive)
 }
 
 // ProxyUpstreamSlot 是前置组里的一条有序端点列表，第一个为主，其余为备。
@@ -70,6 +95,15 @@ type ProxyUpstreamGroup struct {
 }
 
 type ProxyUpstreamRepository interface {
+	ListAIOs(ctx context.Context) ([]ProxyUpstreamAIO, error)
+	GetAIO(ctx context.Context, id int64) (*ProxyUpstreamAIO, error)
+	CreateAIO(ctx context.Context, a *ProxyUpstreamAIO) error
+	// UpdateAIO 同时把主机、协议与认证同步到其下端口的冗余列（供回滚旧版本读取）。
+	UpdateAIO(ctx context.Context, a *ProxyUpstreamAIO) error
+	// DeleteAIO 拒绝删除仍有端口的 AIO。
+	DeleteAIO(ctx context.Context, id int64) error
+
+	// 端口按 AIOID 关联 AIO；所属 AIO 不存在时返回 ErrProxyUpstreamAIONotFound。
 	ListEndpoints(ctx context.Context) ([]ProxyUpstreamEndpoint, error)
 	GetEndpoint(ctx context.Context, id int64) (*ProxyUpstreamEndpoint, error)
 	CreateEndpoint(ctx context.Context, e *ProxyUpstreamEndpoint) error

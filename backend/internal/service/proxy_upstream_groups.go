@@ -1,6 +1,6 @@
 package service
 
-// 链式代理（fork）：前置端点与前置组的管理端操作，见 docs/PROXY_IP_MODEL.md 第 2.2、3.4 节。
+// 链式代理（fork）：AIO、AIO 端口（前置端点）与前置组的管理端操作，见 docs/PROXY_IP_MODEL.md 第 2.2、3.4 节。
 
 import (
 	"context"
@@ -13,6 +13,69 @@ import (
 
 func upstreamInvalid(msg string) error {
 	return infraerrors.BadRequest("PROXY_UPSTREAM_INVALID", msg)
+}
+
+func (s *ProxyChainService) ListUpstreamAIOs(ctx context.Context) ([]ProxyUpstreamAIO, error) {
+	return s.upstreamRepo.ListAIOs(ctx)
+}
+
+func (s *ProxyChainService) GetUpstreamAIO(ctx context.Context, id int64) (*ProxyUpstreamAIO, error) {
+	return s.upstreamRepo.GetAIO(ctx, id)
+}
+
+func (s *ProxyChainService) CreateUpstreamAIO(ctx context.Context, a *ProxyUpstreamAIO) error {
+	if err := validateUpstreamAIO(a); err != nil {
+		return err
+	}
+	return s.upstreamRepo.CreateAIO(ctx, a)
+}
+
+func (s *ProxyChainService) UpdateUpstreamAIO(ctx context.Context, a *ProxyUpstreamAIO) error {
+	if err := validateUpstreamAIO(a); err != nil {
+		return err
+	}
+	if err := s.upstreamRepo.UpdateAIO(ctx, a); err != nil {
+		return err
+	}
+	return s.refreshAndProbe(ctx)
+}
+
+func (s *ProxyChainService) DeleteUpstreamAIO(ctx context.Context, id int64) error {
+	if err := s.upstreamRepo.DeleteAIO(ctx, id); err != nil {
+		return err
+	}
+	return s.Refresh(ctx)
+}
+
+func validateUpstreamAIO(a *ProxyUpstreamAIO) error {
+	a.Name = strings.TrimSpace(a.Name)
+	a.Host = strings.TrimSpace(a.Host)
+	a.Protocol = strings.ToLower(strings.TrimSpace(a.Protocol))
+	if a.Name == "" || len(a.Name) > 255 {
+		return upstreamInvalid("name must contain 1 to 255 bytes")
+	}
+	switch a.Protocol {
+	case "socks5", "socks5h", "http", "https":
+	default:
+		return upstreamInvalid("protocol must be socks5, socks5h, http or https")
+	}
+	if a.Host == "" || len(a.Host) > 255 || strings.ContainsAny(a.Host, "/@ ") {
+		return upstreamInvalid("host is invalid")
+	}
+	if len(a.Username) > 255 || len(a.Password) > 255 {
+		return upstreamInvalid("username and password must be at most 255 bytes")
+	}
+	return validateUpstreamStatus(&a.Status)
+}
+
+func validateUpstreamStatus(status *string) error {
+	if *status == "" {
+		*status = StatusActive
+	}
+	if *status != StatusActive && *status != "inactive" {
+		return upstreamInvalid("status must be active or inactive")
+	}
+	return nil
 }
 
 func (s *ProxyChainService) ListUpstreamEndpoints(ctx context.Context) ([]ProxyUpstreamEndpoint, error) {
@@ -50,34 +113,19 @@ func (s *ProxyChainService) DeleteUpstreamEndpoint(ctx context.Context, id int64
 	return s.Refresh(ctx)
 }
 
+// validateUpstreamEndpoint 只校验端口自身字段；协议、主机与认证由所属 AIO 提供。
 func validateUpstreamEndpoint(e *ProxyUpstreamEndpoint) error {
 	e.Name = strings.TrimSpace(e.Name)
-	e.Host = strings.TrimSpace(e.Host)
-	e.Protocol = strings.ToLower(strings.TrimSpace(e.Protocol))
+	if e.AIOID <= 0 {
+		return upstreamInvalid("aio_id is required")
+	}
 	if e.Name == "" || len(e.Name) > 255 {
 		return upstreamInvalid("name must contain 1 to 255 bytes")
-	}
-	switch e.Protocol {
-	case "socks5", "socks5h", "http", "https":
-	default:
-		return upstreamInvalid("protocol must be socks5, socks5h, http or https")
-	}
-	if e.Host == "" || len(e.Host) > 255 || strings.ContainsAny(e.Host, "/@ ") {
-		return upstreamInvalid("host is invalid")
 	}
 	if e.Port < 1 || e.Port > 65535 {
 		return upstreamInvalid("port must be 1-65535")
 	}
-	if len(e.Username) > 255 || len(e.Password) > 255 {
-		return upstreamInvalid("username and password must be at most 255 bytes")
-	}
-	if e.Status == "" {
-		e.Status = StatusActive
-	}
-	if e.Status != StatusActive && e.Status != "inactive" {
-		return upstreamInvalid("status must be active or inactive")
-	}
-	return nil
+	return validateUpstreamStatus(&e.Status)
 }
 
 func (s *ProxyChainService) ListUpstreamGroups(ctx context.Context) ([]ProxyUpstreamGroup, error) {
