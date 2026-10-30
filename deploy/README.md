@@ -168,6 +168,29 @@ Kubernetes, use a PostgreSQL readiness probe and retain the Sub2API startup
 retry behavior; configure the application liveness probe separately so a
 database recovery period is not treated as a permanent process failure.
 
+### Liveness vs. readiness（`/health` 与 `/ready`）
+
+- `GET /health`：liveness。进程能响应即返回 200，不看依赖状态。用于 Docker
+  `HEALTHCHECK` 与 K8s `livenessProbe`。
+- `GET /ready`：readiness。所有启用前置组的每个槽位都完成至少一轮探测（不论成败）
+  才返回 200，否则返回 503，`pending_slots` 列出未完成的组/槽位；没有前置组时直接
+  200。就绪后锁存，运行中新增组不会让实例回到 503。进程启动超过
+  `server.ready_max_wait_seconds`（默认 120，环境变量 `SERVER_READY_MAX_WAIT_SECONDS`，
+  0 表示不等待）后无论探测状态都返回 200，避免 AIO 全挂时实例永远不就绪（请求本身由
+  槽位 fail-closed）。
+
+K8s 的 `readinessProbe` 应指向 `/ready`，`livenessProbe` 保持 `/health`，否则滚动
+更新时新 Pod 在前置槽位首轮探测完成前就会接流量：
+
+```yaml
+readinessProbe:
+  httpGet: { path: /ready, port: 8080 }
+  periodSeconds: 3
+  failureThreshold: 1
+livenessProbe:
+  httpGet: { path: /health, port: 8080 }
+```
+
 ### Database Migration Notes (PostgreSQL)
 
 - Migrations are applied in lexicographic order (e.g. `001_...sql`, `002_...sql`).

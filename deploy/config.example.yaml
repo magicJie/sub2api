@@ -50,6 +50,9 @@ server:
   # Applies to all requests, especially important for h2c first request memory protection
   # 适用于所有请求，对 h2c 第一请求的内存保护尤为重要
   max_request_body_size: 268435456
+  # Max seconds /ready waits for the first upstream-group probe round after process start (0 = never wait)
+  # /ready 等待前置组启动首轮探测的上限（秒，自进程启动起算；0 表示不等待）
+  ready_max_wait_seconds: 120
   # HTTP/2 Cleartext (h2c) configuration
   # HTTP/2 Cleartext (h2c) 配置
   h2c:

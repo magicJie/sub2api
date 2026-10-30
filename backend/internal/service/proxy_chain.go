@@ -233,7 +233,7 @@ func RefreshProxyChainSnapshot(ctx context.Context) {
 	}
 }
 
-// Start 同步加载一次快照并探测一轮端点，然后周期刷新配置、按各组间隔探测端点。
+// Start 同步加载一次快照，后台立即探测一轮端点，然后周期刷新配置、按各组间隔探测端点。
 func (s *ProxyChainService) Start() {
 	if s == nil || s.proxyRepo == nil {
 		return
@@ -247,6 +247,18 @@ func (s *ProxyChainService) Start() {
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
+		// 启动首轮立即探测，不等第一个 tick；/ready 以这一轮为准。
+		ctx, cancel := context.WithTimeout(context.Background(), 2*proxyUpstreamProbeTimeout)
+		go func() {
+			select {
+			case <-s.stopCh:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+		s.runtime.ProbeAll(ctx)
+		cancel()
+
 		refresh := time.NewTicker(proxyChainRefreshInterval)
 		defer refresh.Stop()
 		probe := time.NewTicker(proxyUpstreamTick)
@@ -268,6 +280,16 @@ func (s *ProxyChainService) Start() {
 			}
 		}
 	}()
+}
+
+// ProxyUpstreamStartupReadiness 报告本实例前置组启动首轮探测是否完成（/ready 用）。
+// 链式代理服务未启动时视为就绪。
+func ProxyUpstreamStartupReadiness() (ready, loaded bool, pending []UpstreamPendingSlot) {
+	rt := activeUpstreamRuntime()
+	if rt == nil {
+		return true, true, nil
+	}
+	return rt.StartupReadiness()
 }
 
 func (s *ProxyChainService) Stop() {
@@ -400,6 +422,8 @@ func (s *ProxyChainService) Refresh(ctx context.Context) error {
 			return err
 		}
 		s.runtime.Replace(groups, endpoints)
+	} else {
+		s.runtime.Replace(nil, nil)
 	}
 	proxyChainState.Store(&proxyChainSnapshot{byID: byID, loaded: true})
 	proxychain.Default().Retain(activeChainHops(byID, s.runtime))

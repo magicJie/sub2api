@@ -114,7 +114,7 @@ func registerRoutes(
 	redisClient *redis.Client,
 ) {
 	// 通用路由（健康检查、状态等）
-	routes.RegisterCommonRoutes(r)
+	routes.RegisterCommonRoutes(r, time.Duration(cfg.Server.ReadyMaxWaitSeconds)*time.Second)
 
 	// API v1
 	v1 := r.Group("/api/v1")
