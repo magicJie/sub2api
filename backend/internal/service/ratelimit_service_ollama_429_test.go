@@ -312,6 +312,41 @@ func TestHandle429_OllamaFallsBackToSecondsCooldown(t *testing.T) {
 	require.False(t, reset.After(after.Add(time.Duration(def)*time.Second)))
 }
 
+// probe 学不到真实重置时间时，冷却刚结束又撞 429：冷却翻倍，不再每 5 秒重新调度一次。
+func TestHandle429_OllamaRepeated429EscalatesCooldown(t *testing.T) {
+	acct := ollama429Account(306, PlatformOllama)
+	repo := newOllama429Repo(acct)
+	scheduler := newOllama429SchedulerStub(true)
+	svc, _ := ollama429Fixture(t, repo, scheduler)
+
+	// 上一轮 5s 冷却 1 秒前刚结束。
+	limitedAt := time.Now().Add(-6 * time.Second)
+	prevReset := limitedAt.Add(5 * time.Second)
+	repo.mutate(acct.ID, func(a *Account) { a.RateLimitedAt, a.RateLimitResetAt = &limitedAt, &prevReset })
+
+	before := time.Now()
+	svc.handle429(context.Background(), acct, http.Header{}, nil)
+	reset := repo.currentReset(acct.ID)
+	require.NotNil(t, reset)
+	require.False(t, reset.Before(before.Add(10*time.Second)), "second consecutive 429 must double the cooldown")
+}
+
+func TestOllama429EscalatedCooldown(t *testing.T) {
+	now := time.Now()
+	base := 5 * time.Second
+	acc := func(limitedAgo, dur time.Duration) *Account {
+		at := now.Add(-limitedAgo)
+		reset := at.Add(dur)
+		return &Account{RateLimitedAt: &at, RateLimitResetAt: &reset}
+	}
+	require.Equal(t, base, ollama429EscalatedCooldown(&Account{}, base, now), "no previous limit")
+	require.Equal(t, base, ollama429EscalatedCooldown(acc(2*time.Second, 5*time.Second), base, now), "still cooling: concurrent 429 does not stack")
+	require.Equal(t, 10*time.Second, ollama429EscalatedCooldown(acc(6*time.Second, 5*time.Second), base, now))
+	require.Equal(t, 16*time.Minute, ollama429EscalatedCooldown(acc(9*time.Minute, 8*time.Minute), base, now))
+	require.Equal(t, ollama429EscalationCap, ollama429EscalatedCooldown(acc(21*time.Minute, 20*time.Minute), base, now))
+	require.Equal(t, base, ollama429EscalatedCooldown(acc(time.Hour, 5*time.Second), base, now), "long quiet gap resets the backoff")
+}
+
 func TestHandle429_OllamaScheduleRejectedStillCooled(t *testing.T) {
 	acct := ollama429Account(303, PlatformOllama)
 	repo := newOllama429Repo(acct)

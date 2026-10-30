@@ -1,35 +1,42 @@
 package service
 
-import "time"
+import (
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// ollama429ExhaustedPercent 是 429 后判定窗口耗尽的阈值：页面按整数四舍五入显示，
+// 上游已拒绝时可能仍显示 99%。只在 429 触发的 probe 中使用。
+const ollama429ExhaustedPercent = 99
+
+var (
+	ollamaRelativeDurationPattern = regexp.MustCompile(`(?i)\b(\d+(?:\.\d+)?|an?)\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?)\b`)
+	ollamaBalanceNumberPattern    = regexp.MustCompile(`-?[0-9][0-9,]*(?:\.[0-9]+)?`)
+)
 
 // ollamaCloudUsageExhaustionResetAt returns the wall-clock time at which an
-// exhausted Ollama Cloud usage window is expected to roll over, i.e. the
-// earliest moment a quota-driven upstream block (a 429 or equivalent) can be
-// expected to clear on its own. It is a pure helper and performs no I/O and no
-// routing; it does not itself trigger anything.
+// exhausted Ollama Cloud usage window is expected to roll over. It is only used
+// after a model 429, so it answers "which exhausted window explains this 429 and
+// when does it clear". It is a pure helper and performs no I/O.
 //
-// Snapshot usability (conservative): the observation is trusted only when it is
-// successful (Status == OK) and fresh. Freshness is expressed as a caller-chosen
-// validity bound minFetchedAt: the snapshot must carry a FetchedAt that is
-// present and not older than minFetchedAt. Passing now.Add(-freshness) keeps
-// old snapshots out of the decision without reading any configuration here.
+// Snapshot usability: the observation is trusted only when it is successful
+// (Status == OK) and FetchedAt is present and not older than minFetchedAt.
 //
 // Window handling:
-//   - Only the legacy five-hour and seven-day hard limits are considered.
-//     Monthly included credits can be exhausted while purchased credits still
-//     allow requests, so monthly usage alone cannot establish a block horizon.
-//   - Only hard-limit windows with UsedPercent >= 100 count as exhausted.
-//   - A window that is not exhausted (or absent from Data) never affects the
-//     result and is ignored even when its ResetAt is missing or in the past.
-//   - The reset of every exhausted window must be known (non-nil, non-zero) and
-//     strictly in the future relative to now. If any exhausted window cannot
-//     produce such a reset, no complete recovery time can be claimed and ok is
-//     false — the caller must not assume a known recovery horizon.
-//   - When more than one window is exhausted, the later of their resets is
-//     returned: the account cannot recover until the last exhausted window rolls.
-//
-// ok is false (zero time) when there is nothing exhausted or the recovery time
-// cannot be determined completely.
+//   - Five-hour and seven-day windows count as exhausted at UsedPercent >= 99
+//     (the page rounds to whole percents).
+//   - The monthly window counts only when it is exhausted and the page shows no
+//     positive purchased balance: purchased credits keep requests flowing after
+//     included credits run out, so a 429 then is not a monthly block.
+//   - A window's reset is its ResetAt, else its relative ResetText ("in 3 hours",
+//     "Refills in 1 week") resolved against FetchedAt.
+//   - The account cannot recover before any exhausted window rolls over, so the
+//     latest known future reset is a safe lower bound and is returned. Exhausted
+//     windows whose reset is unknown or already past are skipped (the caller's
+//     escalating cooldown covers them); ok is false only when no exhausted window
+//     has a known future reset.
 func ollamaCloudUsageExhaustionResetAt(
 	snapshot *OllamaCloudUsageSnapshot,
 	now time.Time,
@@ -41,28 +48,81 @@ func ollamaCloudUsageExhaustionResetAt(
 	if snapshot.FetchedAt == nil || snapshot.FetchedAt.IsZero() || snapshot.FetchedAt.Before(minFetchedAt) {
 		return time.Time{}, false
 	}
+	windows := []*OllamaCloudUsageWindow{snapshot.Data.FiveHour, snapshot.Data.SevenDay}
+	if !ollamaCloudUsageHasPositiveBalance(snapshot.Data.Balance) {
+		windows = append(windows, snapshot.Data.Monthly)
+	}
 
 	var latest time.Time
-	for _, window := range []*OllamaCloudUsageWindow{
-		snapshot.Data.FiveHour,
-		snapshot.Data.SevenDay,
-	} {
-		if window == nil || window.UsedPercent < 100 {
-			// Not exhausted: must not influence the recovery decision.
+	for _, window := range windows {
+		if window == nil || window.UsedPercent < ollama429ExhaustedPercent {
 			continue
 		}
-		if window.ResetAt == nil || window.ResetAt.IsZero() || !window.ResetAt.After(now) {
-			// Exhausted but without a known future reset: cannot claim a complete
-			// recovery time, so give up on the whole snapshot.
-			return time.Time{}, false
+		resetAt := ollamaCloudUsageWindowResetAt(window, *snapshot.FetchedAt)
+		if resetAt.IsZero() || !resetAt.After(now) {
+			continue
 		}
-		candidate := window.ResetAt.UTC()
-		if latest.IsZero() || candidate.After(latest) {
-			latest = candidate
+		if latest.IsZero() || resetAt.After(latest) {
+			latest = resetAt
 		}
 	}
 	if latest.IsZero() {
 		return time.Time{}, false
 	}
 	return latest, true
+}
+
+func ollamaCloudUsageWindowResetAt(window *OllamaCloudUsageWindow, fetchedAt time.Time) time.Time {
+	if window.ResetAt != nil && !window.ResetAt.IsZero() {
+		return window.ResetAt.UTC()
+	}
+	if d, ok := parseOllamaRelativeDuration(window.ResetText); ok {
+		return fetchedAt.Add(d).UTC()
+	}
+	return time.Time{}
+}
+
+// parseOllamaRelativeDuration 解析 "in 3 hours"、"2 hours 15 minutes"、"Refills in 1 week" 等相对时长。
+func parseOllamaRelativeDuration(text string) (time.Duration, bool) {
+	matches := ollamaRelativeDurationPattern.FindAllStringSubmatch(text, -1)
+	if len(matches) == 0 {
+		return 0, false
+	}
+	var total time.Duration
+	for _, m := range matches {
+		n := 1.0
+		if v := strings.ToLower(m[1]); v != "a" && v != "an" {
+			parsed, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				return 0, false
+			}
+			n = parsed
+		}
+		var unit time.Duration
+		switch u := strings.ToLower(m[2]); {
+		case strings.HasPrefix(u, "sec"):
+			unit = time.Second
+		case strings.HasPrefix(u, "min"):
+			unit = time.Minute
+		case strings.HasPrefix(u, "h"):
+			unit = time.Hour
+		case strings.HasPrefix(u, "day"):
+			unit = 24 * time.Hour
+		case strings.HasPrefix(u, "week"):
+			unit = 7 * 24 * time.Hour
+		case strings.HasPrefix(u, "month"):
+			unit = 30 * 24 * time.Hour
+		}
+		total += time.Duration(n * float64(unit))
+	}
+	return total, total > 0
+}
+
+func ollamaCloudUsageHasPositiveBalance(balance string) bool {
+	m := ollamaBalanceNumberPattern.FindString(balance)
+	if m == "" {
+		return false
+	}
+	v, err := strconv.ParseFloat(strings.ReplaceAll(m, ",", ""), 64)
+	return err == nil && v > 0 && !strings.Contains(balance[:strings.Index(balance, m)], "-")
 }

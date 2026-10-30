@@ -12,14 +12,18 @@ import (
 )
 
 var (
-	ollamaUsagePercentPattern  = regexp.MustCompile(`(?i)([0-9]+(?:\.[0-9]+)?)\s*%`)
-	ollamaUsageRatioPattern    = regexp.MustCompile(`(?i)(?:USD\s*)?\$?\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s+of\s+(?:USD\s*)?\$?\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s+(?:used|spent|consumed)`)
-	ollamaCreditsRatioPattern  = regexp.MustCompile(`(?i)^monthly credits used\s*:\s*(?:USD\s*)?\$?\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s+of\s+(?:USD\s*)?\$?\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s*$`)
-	ollamaCreditRefillPattern  = regexp.MustCompile(`(?i)^refills to\s+(?:USD\s*)?\$[0-9][0-9,]*(?:\.[0-9]+)?\s+(in\s+[0-9]+(?:\.[0-9]+)?\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?))\s*\.?$`)
-	ollamaUsageWidthPattern    = regexp.MustCompile(`(?i)(?:^|;)\s*width\s*:\s*([0-9]+(?:\.[0-9]+)?)%`)
-	ollamaBalancePattern       = regexp.MustCompile(`(?i)(?:balance|credits?)(?:\s+[[:alpha:]]+){0,4}\s*[:\n]?\s*((?:USD\s*)?\$?\s*-?[0-9][0-9,]*(?:\.[0-9]{1,4})?)`)
-	ollamaResetPattern         = regexp.MustCompile(`(?i)\breset(?:s|ting)?\s*(?:at|in|on)?\s*[:\-]?\s*([^\n|]+)`)
-	ollamaModelFallbackPattern = regexp.MustCompile(`(?i)^(.+?)\s+([0-9][0-9,]*)\s+requests?$`)
+	ollamaUsagePercentPattern = regexp.MustCompile(`(?i)([0-9]+(?:\.[0-9]+)?)\s*%`)
+	ollamaUsageRatioPattern   = regexp.MustCompile(`(?i)(?:USD\s*)?\$?\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s+of\s+(?:USD\s*)?\$?\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s+(?:used|spent|consumed)`)
+	ollamaCreditsRatioPattern = regexp.MustCompile(`(?i)^monthly credits used\s*:\s*(?:USD\s*)?\$?\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s+of\s+(?:USD\s*)?\$?\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s*$`)
+	ollamaCreditRefillPattern = regexp.MustCompile(`(?i)^refills to\s+(?:USD\s*)?\$[0-9][0-9,]*(?:\.[0-9]+)?\s+(in\s+[0-9]+(?:\.[0-9]+)?\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?))\s*\.?$`)
+	// 当前页面（2026-10）：余额卡片 tooltip 写 "Refills to $300 on November 18, 2026. Unused monthly credits do not carry over."，
+	// 卡片正文写 "Monthly credits refill in 2 weeks"。
+	ollamaCreditRefillDatePattern     = regexp.MustCompile(`(?i)\brefills to\s+(?:USD\s*)?\$[0-9][0-9,]*(?:\.[0-9]+)?\s+on\s+([A-Z][a-z]+\.?\s+[0-9]{1,2},\s*[0-9]{4})`)
+	ollamaCreditRefillRelativePattern = regexp.MustCompile(`(?i)^monthly credits refill\s+(in\s+[0-9]+(?:\.[0-9]+)?\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?))\b`)
+	ollamaUsageWidthPattern           = regexp.MustCompile(`(?i)(?:^|;)\s*width\s*:\s*([0-9]+(?:\.[0-9]+)?)%`)
+	ollamaBalancePattern              = regexp.MustCompile(`(?i)(?:balance|credits?)(?:\s+[[:alpha:]]+){0,4}\s*[:\n]?\s*((?:USD\s*)?\$?\s*-?[0-9][0-9,]*(?:\.[0-9]{1,4})?)`)
+	ollamaResetPattern                = regexp.MustCompile(`(?i)\breset(?:s|ting)?\s*(?:at|in|on)?\s*[:\-]?\s*([^\n|]+)`)
+	ollamaModelFallbackPattern        = regexp.MustCompile(`(?i)^(.+?)\s+([0-9][0-9,]*)\s+requests?$`)
 
 	ollamaFiveHourUsageAliases = []string{"session usage", "5 hour usage", "5-hour usage", "5h usage", "5 hour limit", "5-hour limit"}
 	ollamaSevenDayUsageAliases = []string{"weekly usage", "7 day usage", "7-day usage", "7d usage", "weekly limit", "7 day limit"}
@@ -46,6 +50,7 @@ func parseOllamaCloudUsageHTML(body []byte) (*OllamaCloudUsageData, error) {
 	data.SevenDay = parseOllamaUsageWindow(doc, ollamaSevenDayUsageAliases, true)
 	data.Monthly = parseOllamaUsageWindow(doc, ollamaMonthlyUsageAliases, false)
 	if data.Monthly != nil && data.Monthly.ResetAt == nil && data.Monthly.ResetText == "" {
+		data.Monthly.ResetAt = parseOllamaCreditRefillDate(doc)
 		data.Monthly.ResetText = parseOllamaCreditRefillText(doc)
 	}
 	data.Balance = valueBesideLabel(doc, []string{"balance remaining"}, 80)
@@ -65,6 +70,39 @@ func parseOllamaCloudUsageHTML(body []byte) (*OllamaCloudUsageData, error) {
 	return data, nil
 }
 
+// parseOllamaCreditRefillDate 读取余额卡片里的绝对刷新日期（"Refills to $300 on November 18, 2026"）。
+// 页面只给日期不给时刻，按 UTC 当日 00:00 计；多个不同日期时视为歧义，返回 nil。
+func parseOllamaCreditRefillDate(root *html.Node) *time.Time {
+	dates := make(map[time.Time]struct{})
+	walkHTML(root, func(node *html.Node) {
+		if node.Type != html.ElementNode || !isOllamaParserContainer(node.Data) {
+			return
+		}
+		text := normalizedNodeText(node)
+		if len(text) > 200 {
+			return
+		}
+		match := ollamaCreditRefillDatePattern.FindStringSubmatch(text)
+		if len(match) != 2 {
+			return
+		}
+		value := strings.Join(strings.Fields(strings.ReplaceAll(match[1], ".", "")), " ")
+		for _, layout := range []string{"January 2, 2006", "Jan 2, 2006", "January 2,2006", "Jan 2,2006"} {
+			if parsed, err := time.Parse(layout, value); err == nil {
+				dates[parsed.UTC()] = struct{}{}
+				return
+			}
+		}
+	})
+	if len(dates) != 1 {
+		return nil
+	}
+	for d := range dates {
+		return &d
+	}
+	return nil
+}
+
 // Current credit-based pages put the refill hint in the balance card, outside
 // the monthly meter. Preserve the upstream relative text; rounding "1 week"
 // into a timestamp would invent precision and drift on every refresh.
@@ -72,6 +110,11 @@ func parseOllamaCreditRefillText(root *html.Node) string {
 	hints := make(map[string]struct{})
 	walkHTML(root, func(node *html.Node) {
 		if node.Type != html.ElementNode || !isOllamaParserContainer(node.Data) {
+			return
+		}
+		// "Monthly credits refill in 2 weeks" 与说明 tooltip 同在一个 <p> 里，只看元素自身的文字。
+		if match := ollamaCreditRefillRelativePattern.FindStringSubmatch(ownNodeText(node)); len(match) == 2 {
+			hints["Refills "+strings.ToLower(strings.TrimSpace(match[1]))] = struct{}{}
 			return
 		}
 		text := normalizedNodeText(node)
@@ -530,6 +573,19 @@ func parseOllamaResetTime(value string) *time.Time {
 		}
 	}
 	return nil
+}
+
+// ownNodeText 只取元素的直接文本子节点（不含子元素）。
+func ownNodeText(node *html.Node) string {
+	var parts []string
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		if child.Type == html.TextNode {
+			if value := strings.TrimSpace(child.Data); value != "" {
+				parts = append(parts, value)
+			}
+		}
+	}
+	return strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
 }
 
 func normalizedNodeText(node *html.Node) string {

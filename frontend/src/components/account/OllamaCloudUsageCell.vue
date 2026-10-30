@@ -5,7 +5,7 @@
     data-testid="ollama-cloud-usage-cell"
   >
     <!-- 订阅到期日（复用账号 expires_at，管理员手工填写） -->
-    <AccountExpiryBadge v-if="isOllamaCloudAccount(account)" :expires-at="account.expires_at" />
+    <AccountExpiryBadge v-if="isOllamaCloudAccount(account) && account.expires_at" :expires-at="account.expires_at" />
     <UsageProgressBar
       v-if="snapshot?.data?.five_hour"
       label="5h"
@@ -30,6 +30,7 @@
       :utilization="snapshot.data.monthly.used_percent"
       :resets-at="snapshot.data.monthly.reset_at"
       :reset-text="formatResetText(snapshot.data.monthly.reset_text)"
+      show-reset-date
       color="purple"
       data-testid="ollama-cloud-monthly"
     />

@@ -80,9 +80,9 @@ describe('OllamaCloudUsageCell', () => {
     refreshOllamaCloudUsage.mockReset()
   })
 
-  it('shows the subscription expiry badge, including the unset hint', () => {
+  it('shows the subscription expiry badge only when an expiry is set', () => {
     const unset = mount(OllamaCloudUsageCell, { props: { account: account() } })
-    expect(unset.get('[data-testid="account-expiry-badge"]').attributes('data-level')).toBe('unset')
+    expect(unset.find('[data-testid="account-expiry-badge"]').exists()).toBe(false)
 
     const expiring = mount(OllamaCloudUsageCell, {
       props: { account: { ...account(), expires_at: Math.floor(Date.now() / 1000) + 2 * 86400 } }

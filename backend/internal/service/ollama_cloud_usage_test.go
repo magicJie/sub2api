@@ -1274,6 +1274,29 @@ func TestOllamaCloudUsageIncompleteRefreshPreservesPreviousData(t *testing.T) {
 	}
 }
 
+// 2026-10 真实页面：刷新日期只在余额卡片 tooltip 的 "Refills to $300 on November 18, 2026"。
+func TestParseOllamaCloudUsageHTMLCredits202610(t *testing.T) {
+	body, err := os.ReadFile("testdata/ollama_settings_credits_202610.html")
+	require.NoError(t, err)
+	data, err := parseOllamaCloudUsageHTML(body)
+	require.NoError(t, err)
+	require.NotNil(t, data.Monthly)
+	require.InDelta(t, 61.77, data.Monthly.UsedPercent, 0.01)
+	require.NotNil(t, data.Monthly.ResetAt)
+	require.Equal(t, "2026-11-18T00:00:00Z", data.Monthly.ResetAt.Format(time.RFC3339))
+	require.Equal(t, "Refills in 2 weeks", data.Monthly.ResetText)
+	require.Equal(t, "$114.68", data.Balance)
+	require.Nil(t, data.FiveHour)
+	require.Nil(t, data.SevenDay)
+
+	// 同一页面若月度额度用满且余额为 0：429 后限流到刷新日期。
+	data.Monthly.UsedPercent, data.Balance = 100, "$0"
+	now := time.Date(2026, 10, 29, 17, 0, 0, 0, time.UTC)
+	reset, ok := ollamaCloudUsageExhaustionResetAt(&OllamaCloudUsageSnapshot{Status: OllamaCloudUsageStatusOK, Data: data, FetchedAt: &now}, now, now.Add(-time.Minute))
+	require.True(t, ok)
+	require.Equal(t, "2026-11-18T00:00:00Z", reset.Format(time.RFC3339))
+}
+
 func TestParseOllamaCloudUsageHTMLCreditRefillHintScope(t *testing.T) {
 	monthly := `<section><span>Monthly credits used</span><div data-usage-track aria-label="Monthly credits used: $30 of $300"></div></section>`
 	for _, tt := range []struct{ name, html, want string }{
@@ -1282,6 +1305,7 @@ func TestParseOllamaCloudUsageHTMLCreditRefillHintScope(t *testing.T) {
 		{"same hint duplicated", `<p>Refills to $300 in 1 week.</p><p>Refills to $300 in 1 week.</p>` + monthly, "Refills in 1 week"},
 		{"ambiguous balances", `<p>Refills to $300 in 1 week.</p><p>Refills to $60 in 2 weeks.</p>` + monthly, ""},
 		{"auto reload is not refill date", `<p>Automatically add $300 when credits are low.</p>` + monthly, ""},
+		{"balance card relative wording", `<p>Monthly credits refill in 2 weeks</p>` + monthly, "Refills in 2 weeks"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			d, e := parseOllamaCloudUsageHTML([]byte(tt.html))

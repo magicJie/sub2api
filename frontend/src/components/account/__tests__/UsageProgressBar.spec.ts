@@ -37,6 +37,14 @@ describe('UsageProgressBar', () => {
     expect(wrapper.text()).not.toContain('usage.resetNow')
   })
 
+  it('showResetDate 时倒计时后附实际日期，默认不显示', () => {
+    const props = { label: 'mo', utilization: 60, resetsAt: '2026-04-05T12:00:00Z', color: 'purple' as const }
+    const local = new Date('2026-04-05T12:00:00Z')
+    const mmdd = `${String(local.getMonth() + 1).padStart(2, '0')}-${String(local.getDate()).padStart(2, '0')}`
+    expect(mount(UsageProgressBar, { props: { ...props, showResetDate: true } }).text()).toContain(`19d 12h · ${mmdd}`)
+    expect(mount(UsageProgressBar, { props }).text()).not.toContain(' · ')
+  })
+
   it('showNowWhenIdle=true 但利用率大于 0 时显示倒计时', () => {
     const wrapper = mount(UsageProgressBar, {
       props: {
