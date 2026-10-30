@@ -102,6 +102,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import { adminAPI } from '@/api/admin'
 import { useAppStore } from '@/stores/app'
 import type { AdminDataImportResult, AdminDataPayload } from '@/types'
+import { convertKiroAccountManagerExport, isKiroAccountManagerExport } from '@/kiro/accountManagerImport'
 
 interface Props {
   show: boolean
@@ -275,6 +276,7 @@ const handleImport = async () => {
   importing.value = true
   try {
     const dataPayloads: AdminDataPayload[] = []
+    let kiroSkipped = 0
     for (const sourceFile of files.value) {
       let parsed: unknown
       try {
@@ -285,11 +287,25 @@ const handleImport = async () => {
         )
         return
       }
+      if (isKiroAccountManagerExport(parsed)) {
+        // kiro-account-manager 导出的账号数组：转换成数据导入格式。
+        const converted = convertKiroAccountManagerExport(parsed)
+        kiroSkipped += converted.skipped.length
+        if (converted.payload.accounts.length === 0) {
+          appStore.showError(t('admin.accounts.dataImportKiroNoUsable', { name: sourceFile.name }))
+          return
+        }
+        dataPayloads.push(converted.payload)
+        continue
+      }
       if (!isValidDataPayload(parsed)) {
         appStore.showError(t('admin.accounts.dataImportInvalidFile', { name: sourceFile.name }))
         return
       }
       dataPayloads.push(parsed)
+    }
+    if (kiroSkipped > 0) {
+      appStore.showWarning(t('admin.accounts.dataImportKiroSkipped', { count: kiroSkipped }))
     }
     const dataPayload = mergeDataPayloads(dataPayloads)
 

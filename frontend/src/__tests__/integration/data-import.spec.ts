@@ -99,6 +99,33 @@ describe('ImportDataModal', () => {
     expect(adminAPI.accounts.importData).not.toHaveBeenCalled()
   })
 
+  it('kiro-account-manager 导出的账号数组转换为 Kiro 账号导入，并提示跳过数', async () => {
+    const { adminAPI } = await import('@/api/admin')
+    vi.mocked(adminAPI.accounts.importData).mockResolvedValue({
+      proxy_created: 0,
+      proxy_reused: 0,
+      proxy_failed: 0,
+      account_created: 1,
+      account_failed: 0
+    })
+    const wrapper = mountModal()
+    const input = wrapper.find('input[type="file"]')
+    const kam = [
+      { id: 'x', email: 'k@example.com', label: 'k1', status: 'active', accessToken: 'at', refreshToken: 'rt', authMethod: 'social', provider: 'Google' },
+      { id: 'y', label: 'k2', status: 'banned', accessToken: 'at2', refreshToken: 'rt2', authMethod: 'social' }
+    ]
+    setInputFiles(input.element, [makeJsonFile('kiro-accounts.json', JSON.stringify(kam))])
+    await input.trigger('change')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(showWarning).toHaveBeenCalledWith('admin.accounts.dataImportKiroSkipped')
+    const call = vi.mocked(adminAPI.accounts.importData).mock.calls[0][0]
+    expect(call.data.accounts).toHaveLength(1)
+    expect(call.data.accounts[0]).toMatchObject({ name: 'k1', platform: 'kiro', type: 'oauth' })
+    expect(call.data.accounts[0].credentials).toMatchObject({ access_token: 'at', refresh_token: 'rt', auth_method: 'social' })
+  })
+
   it('无有效 JSON 的选择不清空已有选择', async () => {
     const { adminAPI } = await import('@/api/admin')
     vi.mocked(adminAPI.accounts.importData).mockResolvedValue({
