@@ -370,6 +370,9 @@
                 </span>
               </div>
               <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
+              <span v-if="row.proxy" class="font-mono text-xs text-gray-500 dark:text-gray-400">
+                {{ row.proxy.host }}
+              </span>
               <div v-if="row.proxy && row.proxy.expires_at" class="flex items-center gap-2 text-xs">
                 <span class="text-gray-600 dark:text-gray-300">{{ formatDateTime(row.proxy.expires_at) }}</span>
                 <span :class="proxyExpiryBadge(row.proxy)">{{ proxyExpiryText(row.proxy) }}</span>
