@@ -157,12 +157,14 @@ export async function testProxy(id: number): Promise<{
 }
 
 /**
- * Check proxy quality across common AI targets
+ * Check proxy reachability and current IP reputation
  * @param id - Proxy ID
  * @returns Quality check result
  */
 export async function checkProxyQuality(id: number): Promise<ProxyQualityCheckResult> {
-  const { data } = await apiClient.post<ProxyQualityCheckResult>(`/admin/proxies/${id}/quality-check`)
+  const { data } = await apiClient.post<ProxyQualityCheckResult>(`/admin/proxies/${id}/quality-check`, undefined, {
+    timeout: 60000
+  })
   return data
 }
 

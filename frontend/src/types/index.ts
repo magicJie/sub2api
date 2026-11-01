@@ -998,6 +998,8 @@ export interface Proxy {
   quality_grade?: string
   quality_summary?: string
   quality_checked?: number
+  quality_base_eligible?: boolean
+  quality_ai_platforms?: ProxyAIPlatformAssessment[]
   expires_at: string | null
   fallback_mode: 'none' | 'proxy' | 'direct'
   backup_proxy_id?: number | null
@@ -1035,13 +1037,76 @@ export interface ProxyAccountSummary {
   notes?: string | null
 }
 
+export type ProxyAISurface = 'api' | 'web' | 'code_assist' | string
+
+export type ProxyAIAssessmentStatus =
+  | 'reachable'
+  | 'restricted'
+  | 'challenge'
+  | 'rate_limited'
+  | 'account_limited'
+  | 'unavailable'
+  | 'unknown'
+  | string
+
+export type ProxyAIProbeEvidence =
+  | 'authentication_required'
+  | 'api_reachable'
+  | 'web_reachable'
+  | 'geo_restricted'
+  | 'ip_blocked'
+  | 'waf_challenge'
+  | 'rate_limited'
+  | 'quota_exhausted'
+  | 'account_requirement'
+  | 'provider_overloaded'
+  | 'network_error'
+  | 'access_denied'
+  | 'unexpected_response'
+  | 'invalid_response'
+  | string
+
+export interface ProxyAIPlatformAssessment {
+  target: string
+  platform: 'anthropic' | 'openai' | 'gemini' | 'grok' | string
+  surface: ProxyAISurface
+  status: ProxyAIAssessmentStatus
+  eligible: boolean
+  reason: string
+  evidence: ProxyAIProbeEvidence
+}
+
 export interface ProxyQualityCheckItem {
   target: string
+  platform?: string
+  surface?: ProxyAISurface
   status: 'pass' | 'warn' | 'fail' | 'challenge'
   http_status?: number
   latency_ms?: number
   message?: string
   cf_ray?: string
+  url?: string
+  final_url?: string
+  evidence?: ProxyAIProbeEvidence
+  error_code?: string
+  retry_after?: string
+  observed_at?: number
+}
+
+export interface ProxyIPReputationSource {
+  source: string
+  risk_score?: number
+  observed_at: string
+}
+
+export interface ProxyIPReputation {
+  status: 'current' | 'insufficient'
+  risk_score: number | null
+  signals: string[]
+  sources: ProxyIPReputationSource[]
+  checked_at: number
+  valid_until?: number
+  reason: string
 }
 
 export interface ProxyQualityCheckResult {
@@ -1059,6 +1124,11 @@ export interface ProxyQualityCheckResult {
   challenge_count: number
   checked_at: number
   items: ProxyQualityCheckItem[]
+  reputation?: ProxyIPReputation
+  base_eligible?: boolean
+  eligible?: boolean
+  admission_reason?: string
+  ai_platforms?: ProxyAIPlatformAssessment[]
 }
 
 // Gemini credentials structure for OAuth and API Key authentication

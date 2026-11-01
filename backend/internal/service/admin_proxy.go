@@ -6,13 +6,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
+	"strings"
+	"sync"
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httpclient"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
-	"github.com/Wei-Shaw/sub2api/internal/util/httputil"
 )
 
 // Proxy management implementations
@@ -176,6 +178,20 @@ func (s *adminServiceImpl) UpdateProxy(ctx context.Context, id int64, input *Upd
 	if err := applyProxyChainUpdate(ctx, proxy, &input.ProxyChainUpdateInput); err != nil { // 链式代理（fork）
 		return nil, err
 	}
+	poolChanged := (prev.PoolID == nil) != (proxy.PoolID == nil) ||
+		(prev.PoolID != nil && proxy.PoolID != nil && *prev.PoolID != *proxy.PoolID)
+	if input.PoolIDSet && poolChanged {
+		if s.proxyLatencyCache == nil {
+			return nil, ErrProxyPoolQualityUnavailable
+		}
+		infos, err := s.proxyLatencyCache.GetProxyLatencies(ctx, []int64{proxy.ID})
+		if err != nil {
+			return nil, ErrProxyPoolQualityUnavailable
+		}
+		if !proxyQualityAdmissible(proxy, infos[proxy.ID], time.Now()) {
+			return nil, ErrProxyPoolProxyNotInPool
+		}
+	}
 
 	if err := s.proxyRepo.Update(ctx, proxy); err != nil {
 		return nil, err
@@ -306,7 +322,7 @@ func (s *adminServiceImpl) CheckProxyQuality(ctx context.Context, id int64) (*Pr
 		Score:     100,
 		Grade:     "A",
 		CheckedAt: time.Now().Unix(),
-		Items:     make([]ProxyQualityCheckItem, 0, len(proxyQualityTargets)+1),
+		Items:     make([]ProxyQualityCheckItem, 0, len(proxyQualityTargets)+3),
 	}
 
 	proxyURL := proxy.URL()
@@ -318,7 +334,7 @@ func (s *adminServiceImpl) CheckProxyQuality(ctx context.Context, id int64) (*Pr
 		})
 		result.FailedCount++
 		finalizeProxyQualityResult(result)
-		s.saveProxyQualitySnapshot(ctx, id, result, nil)
+		s.saveProxyQualitySnapshot(ctx, proxy, result, nil)
 		return result, nil
 	}
 
@@ -332,7 +348,7 @@ func (s *adminServiceImpl) CheckProxyQuality(ctx context.Context, id int64) (*Pr
 		})
 		result.FailedCount++
 		finalizeProxyQualityResult(result)
-		s.saveProxyQualitySnapshot(ctx, id, result, nil)
+		s.saveProxyQualitySnapshot(ctx, proxy, result, nil)
 		return result, nil
 	}
 
@@ -348,6 +364,14 @@ func (s *adminServiceImpl) CheckProxyQuality(ctx context.Context, id int64) (*Pr
 	})
 	result.PassedCount++
 
+	if host, err := netip.ParseAddr(strings.TrimSpace(proxy.Host)); err != nil {
+		result.Items = append(result.Items, ProxyQualityCheckItem{Target: "exit_identity", Status: "fail", Message: "静态落地代理 host 必须是出口 IP，域名无法确认固定出口"})
+		result.FailedCount++
+	} else if exit, err := netip.ParseAddr(exitInfo.IP); err != nil || host.Unmap() != exit.Unmap() {
+		result.Items = append(result.Items, ProxyQualityCheckItem{Target: "exit_identity", Status: "fail", Message: "实际出口与登记落地 IP 不一致"})
+		result.FailedCount++
+	}
+
 	client, err := httpclient.GetClient(httpclient.Options{
 		ProxyURL:              proxyURL,
 		Timeout:               proxyQualityRequestTimeout,
@@ -361,12 +385,38 @@ func (s *adminServiceImpl) CheckProxyQuality(ctx context.Context, id int64) (*Pr
 		})
 		result.FailedCount++
 		finalizeProxyQualityResult(result)
-		s.saveProxyQualitySnapshot(ctx, id, result, exitInfo)
+		s.saveProxyQualitySnapshot(ctx, proxy, result, exitInfo)
 		return result, nil
 	}
+	items := make([]ProxyQualityCheckItem, len(proxyQualityTargets))
+	var checks sync.WaitGroup
+	checks.Add(len(proxyQualityTargets) + 1)
+	go func() {
+		defer checks.Done()
+		result.Reputation = fetchProxyIPReputation(ctx, client, "https://ipok.io/api/ip", exitInfo.IP, time.Now())
+	}()
+	for i, target := range proxyQualityTargets {
+		go func() {
+			defer checks.Done()
+			items[i] = runProxyQualityTarget(ctx, client, target)
+		}()
+	}
+	checks.Wait()
+	reputationItem := ProxyQualityCheckItem{Target: "ip_reputation", Status: "pass", Message: result.Reputation.Reason}
+	if result.Reputation.RiskScore == nil {
+		reputationItem.Status = "warn"
+		result.WarnCount++
+	} else if *result.Reputation.RiskScore >= 50 {
+		reputationItem.Status = "fail"
+		reputationItem.Message = fmt.Sprintf("IP 风险 %d/100，达到拒绝准入阈值 50；信号：%s", *result.Reputation.RiskScore, strings.Join(result.Reputation.Signals, ", "))
+		result.FailedCount++
+	} else {
+		reputationItem.Message = fmt.Sprintf("IP 风险 %d/100；%s", *result.Reputation.RiskScore, result.Reputation.Reason)
+		result.PassedCount++
+	}
+	result.Items = append(result.Items, reputationItem)
 
-	for _, target := range proxyQualityTargets {
-		item := runProxyQualityTarget(ctx, client, target)
+	for _, item := range items {
 		result.Items = append(result.Items, item)
 		switch item.Status {
 		case "pass":
@@ -381,74 +431,53 @@ func (s *adminServiceImpl) CheckProxyQuality(ctx context.Context, id int64) (*Pr
 	}
 
 	finalizeProxyQualityResult(result)
-	s.saveProxyQualitySnapshot(ctx, id, result, exitInfo)
+	s.saveProxyQualitySnapshot(ctx, proxy, result, exitInfo)
 	return result, nil
 }
 
 func runProxyQualityTarget(ctx context.Context, client *http.Client, target proxyQualityTarget) ProxyQualityCheckItem {
-	item := ProxyQualityCheckItem{
-		Target: target.Target,
+	item := ProxyQualityCheckItem{Target: target.Target, Platform: target.Platform, Surface: target.Surface, URL: target.URL, ObservedAt: time.Now().Unix()}
+	var requestBody io.Reader
+	if target.Body != "" {
+		requestBody = strings.NewReader(target.Body)
 	}
-
-	req, err := http.NewRequestWithContext(ctx, target.Method, target.URL, nil)
+	req, err := http.NewRequestWithContext(ctx, target.Method, target.URL, requestBody)
 	if err != nil {
-		item.Status = "fail"
-		item.Message = fmt.Sprintf("构建请求失败: %v", err)
+		item.Status, item.Evidence, item.Message = "warn", "invalid_response", "无法构建 AI 检测请求"
 		return item
 	}
 	req.Header.Set("Accept", "application/json,text/html,*/*")
 	req.Header.Set("User-Agent", proxyQualityClientUserAgent)
-
+	if target.Body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if target.Target == "anthropic" {
+		req.Header.Set("anthropic-version", "2023-06-01")
+	}
 	start := time.Now()
 	resp, err := client.Do(req)
-	if err != nil {
-		item.Status = "fail"
-		item.LatencyMs = time.Since(start).Milliseconds()
-		item.Message = fmt.Sprintf("请求失败: %v", err)
-		return item
-	}
-	defer func() { _ = resp.Body.Close() }()
 	item.LatencyMs = time.Since(start).Milliseconds()
+	if err != nil {
+		item.Status, item.Evidence, item.Message = "warn", "network_error", "AI 服务请求失败或超时；本次可达性未确认，需复检"
+		return item
+	}
+	defer resp.Body.Close()
 	item.HTTPStatus = resp.StatusCode
-
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, proxyQualityMaxBodyBytes+1))
-	if readErr != nil {
-		item.Status = "fail"
-		item.Message = fmt.Sprintf("读取响应失败: %v", readErr)
+	item.FinalURL = resp.Request.URL.String()
+	item.RetryAfter = resp.Header.Get("Retry-After")
+	maxBody := proxyQualityMaxBodyBytes
+	if target.Surface == "web" {
+		maxBody = 64 * 1024
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
+	if err != nil {
+		item.Status, item.Evidence, item.Message = "warn", "network_error", "AI 服务响应读取失败，需复检"
 		return item
 	}
-	if int64(len(body)) > proxyQualityMaxBodyBytes {
-		body = body[:proxyQualityMaxBodyBytes]
+	if int64(len(body)) > maxBody {
+		body = body[:maxBody]
 	}
-
-	// Cloudflare challenge 检测
-	if httputil.IsCloudflareChallengeResponse(resp.StatusCode, resp.Header, body) {
-		item.Status = "challenge"
-		item.CFRay = httputil.ExtractCloudflareRayID(resp.Header, body)
-		item.Message = "命中 Cloudflare challenge"
-		return item
-	}
-
-	if _, ok := target.AllowedStatuses[resp.StatusCode]; ok {
-		// 白名单内的状态码均代表目标可达：2xx 表示接口直接可用，
-		// 401/405 等是无鉴权探测的预期结果，同样视为连通正常，不再扣分。
-		item.Status = "pass"
-		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
-			item.Message = fmt.Sprintf("HTTP %d", resp.StatusCode)
-		} else {
-			item.Message = fmt.Sprintf("HTTP %d（目标可达）", resp.StatusCode)
-		}
-		return item
-	}
-
-	if resp.StatusCode == http.StatusTooManyRequests {
-		item.Status = "warn"
-		item.Message = "目标返回 429，可能存在频控"
-		return item
-	}
-
-	item.Status = "fail"
-	item.Message = fmt.Sprintf("非预期状态码: %d", resp.StatusCode)
+	classifyProxyAIResponse(&item, target, resp, body)
 	return item
 }
 
@@ -456,19 +485,42 @@ func finalizeProxyQualityResult(result *ProxyQualityCheckResult) {
 	if result == nil {
 		return
 	}
-	score := 100 - result.WarnCount*10 - result.FailedCount*22 - result.ChallengeCount*30
-	if score < 0 {
+	score := max(0, 100-result.WarnCount*10-result.FailedCount*22-result.ChallengeCount*30)
+	result.Eligible, result.BaseEligible = false, false
+	switch {
+	case result.Reputation == nil || result.Reputation.Status != "current" || result.Reputation.RiskScore == nil:
 		score = 0
+		result.AdmissionReason = "IP 风险证据不足，请重新检测后分配"
+		if result.Reputation != nil {
+			result.AdmissionReason = result.Reputation.Reason
+		}
+	case *result.Reputation.RiskScore >= 50:
+		score = min(score, 100-*result.Reputation.RiskScore)
+		result.AdmissionReason = "IP 风险达到拒绝准入阈值 50"
+	default:
+		score = min(score, 100-*result.Reputation.RiskScore)
+		result.BaseEligible = proxyQualityBaseConnectivityPass(result)
+		for _, item := range result.Items {
+			if item.Platform == "" && item.Target != "ip_reputation" && item.Status != "pass" {
+				result.BaseEligible = false
+			}
+		}
+		result.AdmissionReason = "基础出口或出口身份校验未通过"
+		if result.BaseEligible {
+			result.AdmissionReason = "基础 IP 检查通过；按账号实际使用的 AI 路径分别决定准入"
+		}
+	}
+	assessProxyAIPlatforms(result)
+	if result.BaseEligible && !result.Eligible {
+		result.AdmissionReason = "基础 IP 检查通过，AI 路径尚无可达候选；请查看各服务证据并复检"
 	}
 	result.Score = score
 	result.Grade = proxyQualityGrade(score)
-	result.Summary = fmt.Sprintf(
-		"通过 %d 项，告警 %d 项，失败 %d 项，挑战 %d 项",
-		result.PassedCount,
-		result.WarnCount,
-		result.FailedCount,
-		result.ChallengeCount,
-	)
+	if result.Reputation == nil || result.Reputation.RiskScore == nil {
+		result.Grade = "Unknown"
+	}
+	result.Summary = fmt.Sprintf("通过 %d 项，告警 %d 项，失败 %d 项，挑战 %d 项；%s",
+		result.PassedCount, result.WarnCount, result.FailedCount, result.ChallengeCount, result.AdmissionReason)
 }
 
 func proxyQualityGrade(score int) string {
@@ -490,6 +542,12 @@ func proxyQualityOverallStatus(result *ProxyQualityCheckResult) string {
 	if result == nil {
 		return ""
 	}
+	if result.BaseEligible && result.Eligible {
+		if result.ChallengeCount+result.FailedCount+result.WarnCount > 0 {
+			return "warn"
+		}
+		return "healthy"
+	}
 	if result.ChallengeCount > 0 {
 		return "challenge"
 	}
@@ -497,6 +555,9 @@ func proxyQualityOverallStatus(result *ProxyQualityCheckResult) string {
 		return "failed"
 	}
 	if result.WarnCount > 0 {
+		return "warn"
+	}
+	if !result.Eligible {
 		return "warn"
 	}
 	if result.PassedCount > 0 {
@@ -529,22 +590,28 @@ func proxyQualityBaseConnectivityPass(result *ProxyQualityCheckResult) bool {
 	return false
 }
 
-func (s *adminServiceImpl) saveProxyQualitySnapshot(ctx context.Context, proxyID int64, result *ProxyQualityCheckResult, exitInfo *ProxyExitInfo) {
+func (s *adminServiceImpl) saveProxyQualitySnapshot(ctx context.Context, proxy *Proxy, result *ProxyQualityCheckResult, exitInfo *ProxyExitInfo) {
 	if result == nil {
 		return
 	}
 	score := result.Score
 	checkedAt := result.CheckedAt
 	info := &ProxyLatencyInfo{
-		Success:          proxyQualityBaseConnectivityPass(result),
-		Message:          result.Summary,
-		QualityStatus:    proxyQualityOverallStatus(result),
-		QualityScore:     &score,
-		QualityGrade:     result.Grade,
-		QualitySummary:   result.Summary,
-		QualityCheckedAt: &checkedAt,
-		QualityCFRay:     proxyQualityFirstCFRay(result),
-		UpdatedAt:        time.Now(),
+		Success:             proxyQualityBaseConnectivityPass(result),
+		Message:             result.Summary,
+		QualityStatus:       proxyQualityOverallStatus(result),
+		QualityScore:        &score,
+		QualityGrade:        result.Grade,
+		QualitySummary:      result.Summary,
+		QualityCheckedAt:    &checkedAt,
+		QualityCFRay:        proxyQualityFirstCFRay(result),
+		QualityBaseEligible: result.BaseEligible,
+		QualityAIPlatforms:  result.AIPlatforms,
+		QualityFingerprint:  proxyQualityFingerprint(proxy),
+		UpdatedAt:           time.Now(),
+	}
+	if result.Reputation != nil {
+		info.QualityValidUntil = result.Reputation.ValidUntil
 	}
 	if result.BaseLatencyMs > 0 {
 		latency := result.BaseLatencyMs
@@ -557,7 +624,7 @@ func (s *adminServiceImpl) saveProxyQualitySnapshot(ctx context.Context, proxyID
 		info.Region = exitInfo.Region
 		info.City = exitInfo.City
 	}
-	s.saveProxyLatency(ctx, proxyID, info)
+	s.saveProxyLatency(ctx, proxy.ID, info)
 }
 
 func (s *adminServiceImpl) probeProxyLatency(ctx context.Context, proxy *Proxy) {
@@ -626,6 +693,12 @@ func (s *adminServiceImpl) attachProxyLatency(ctx context.Context, proxies []Pro
 		proxies[i].QualityGrade = info.QualityGrade
 		proxies[i].QualitySummary = info.QualitySummary
 		proxies[i].QualityChecked = info.QualityCheckedAt
+		if info.QualityStatus == "healthy" && !proxyQualityAdmissible(&proxies[i].Proxy, info, time.Now()) {
+			proxies[i].QualityStatus = "warn"
+			proxies[i].QualityScore = nil
+			proxies[i].QualityGrade = "Unknown"
+			proxies[i].QualitySummary = "质量证据已失效或代理配置已变化，请重新检测后分配"
+		}
 	}
 }
 
@@ -649,6 +722,10 @@ func (s *adminServiceImpl) saveProxyLatency(ctx context.Context, proxyID int64, 
 				merged.QualitySummary = existing.QualitySummary
 				merged.QualityCheckedAt = existing.QualityCheckedAt
 				merged.QualityCFRay = existing.QualityCFRay
+				merged.QualityBaseEligible = existing.QualityBaseEligible
+				merged.QualityAIPlatforms = existing.QualityAIPlatforms
+				merged.QualityFingerprint = existing.QualityFingerprint
+				merged.QualityValidUntil = existing.QualityValidUntil
 			}
 		}
 	}

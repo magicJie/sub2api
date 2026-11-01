@@ -257,9 +257,9 @@
                 class="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400"
                 :title="row.quality_summary || undefined"
               >
-                <span>{{ t('admin.proxies.qualityInline', { grade: row.quality_grade || '-', score: row.quality_score ?? '-' }) }}</span>
-                <span class="badge" :class="qualityOverallClass(row.quality_status)">
-                  {{ qualityOverallLabel(row.quality_status) }}
+                <span>{{ qualityInlineText(row) }}</span>
+                <span class="badge" :class="qualityOverallClass(row.quality_status, row)">
+                  {{ qualityOverallLabel(row.quality_status, row) }}
                 </span>
               </div>
             </div>
@@ -974,68 +974,461 @@
     <BaseDialog
       :show="showQualityReportDialog"
       :title="t('admin.proxies.qualityReportTitle')"
-      width="normal"
+      width="wide"
       @close="closeQualityReportDialog"
     >
       <div v-if="qualityReport" class="space-y-4">
+        <!-- Header Summary & Scoped Admission Status -->
         <div class="rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-dark-600 dark:bg-dark-700">
-          <div class="flex items-center justify-between gap-4">
-            <div>
-              <div class="text-sm text-gray-500 dark:text-gray-400">
+          <div class="flex flex-col gap-3">
+            <div class="min-w-0 flex-1">
+              <div class="text-sm font-medium text-gray-900 dark:text-white">
                 {{ qualityReportProxy?.name || '-' }}
               </div>
-              <div class="mt-1 text-sm text-gray-700 dark:text-gray-200">
-                {{ qualityReport.summary }}
+              <div class="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                {{ formatQualityReportSummary(qualityReport) }}
               </div>
             </div>
-            <div class="text-right">
-              <div class="text-2xl font-semibold text-gray-900 dark:text-white">
-                {{ qualityReport.score }}
-              </div>
-              <div class="text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.proxies.qualityGrade', { grade: qualityReport.grade }) }}
-              </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="badge max-w-full whitespace-normal" :class="qualityReportBaseClass(qualityReport)">
+                {{ t('admin.proxies.qualityBaseQualificationLabel') }}: {{ qualityReportBaseLabel(qualityReport) }}
+              </span>
+              <span class="badge max-w-full whitespace-normal" :class="qualityReportEligibleClass(qualityReport)">
+                {{ qualityReportEligibleLabel(qualityReport) }}
+              </span>
             </div>
           </div>
-          <div class="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-600 dark:text-gray-300">
-            <div>{{ t('admin.proxies.qualityExitIP') }}: {{ qualityReport.exit_ip || '-' }}</div>
-            <div>{{ t('admin.proxies.qualityCountry') }}: {{ qualityReport.country || '-' }}</div>
-            <div>
-              {{ t('admin.proxies.qualityBaseLatency') }}:
-              {{ typeof qualityReport.base_latency_ms === 'number' ? `${qualityReport.base_latency_ms}ms` : '-' }}
+
+          <div class="mt-2.5 rounded border border-gray-200 bg-white px-3 py-2 text-xs text-gray-700 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-200">
+            <span class="font-medium">{{ t('admin.proxies.qualityAdmissionLabel') }}:</span>
+            <span class="ml-1">{{ qualityReportAdmissionReason(qualityReport) }}</span>
+          </div>
+
+          <!-- Explicit Unauthenticated Boundary vs Real Login/Inference Notice -->
+          <div class="mt-2.5 rounded border border-blue-200 bg-blue-50/70 px-3 py-2 text-xs text-blue-900 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-200">
+            <div class="font-semibold">{{ t('admin.proxies.qualityBoundaryNoticeTitle') }}</div>
+            <div class="mt-0.5 leading-relaxed text-blue-800 dark:text-blue-300">
+              {{ t('admin.proxies.qualityBoundaryNoticeBody') }}
             </div>
-            <div>{{ t('admin.proxies.qualityCheckedAt') }}: {{ new Date(qualityReport.checked_at * 1000).toLocaleString() }}</div>
+          </div>
+
+          <div class="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-600 dark:text-gray-300 sm:grid-cols-4">
+            <div>
+              <span class="text-gray-500 dark:text-gray-400">{{ t('admin.proxies.qualityExitIP') }}:</span>
+              <span class="ml-1 font-mono font-medium text-gray-800 dark:text-gray-100">{{ qualityReport.exit_ip || '-' }}</span>
+            </div>
+            <div>
+              <span class="text-gray-500 dark:text-gray-400">{{ t('admin.proxies.qualityCountry') }}:</span>
+              <span class="ml-1 font-medium text-gray-800 dark:text-gray-100">{{ qualityReport.country || '-' }}</span>
+            </div>
+            <div>
+              <span class="text-gray-500 dark:text-gray-400">{{ t('admin.proxies.qualityBaseLatency') }}:</span>
+              <span class="ml-1 font-medium text-gray-800 dark:text-gray-100">
+                {{ typeof qualityReport.base_latency_ms === 'number' ? `${qualityReport.base_latency_ms}ms` : '-' }}
+              </span>
+            </div>
+            <div>
+              <span class="text-gray-500 dark:text-gray-400">{{ t('admin.proxies.qualityCheckedAt') }}:</span>
+              <span class="ml-1">{{ formatUnixTimestamp(qualityReport.checked_at) }}</span>
+            </div>
+            <div
+              v-if="qualityReport.reputation?.valid_until && qualityReport.reputation.valid_until > 0"
+              class="col-span-2 sm:col-span-4"
+            >
+              <span class="text-gray-500 dark:text-gray-400">{{ t('admin.proxies.qualityValidUntil') }}:</span>
+              <span class="ml-1">{{ formatUnixTimestamp(qualityReport.reputation.valid_until) }}</span>
+            </div>
           </div>
         </div>
 
-        <div class="max-h-80 overflow-auto rounded-lg border border-gray-200 dark:border-dark-600">
-          <table class="min-w-full divide-y divide-gray-200 text-sm dark:divide-dark-700">
-            <thead class="bg-gray-50 text-xs uppercase text-gray-500 dark:bg-dark-800 dark:text-dark-400">
-              <tr>
-                <th class="whitespace-nowrap px-3 py-2 text-left">{{ t('admin.proxies.qualityTableTarget') }}</th>
-                <th class="whitespace-nowrap px-3 py-2 text-left">{{ t('admin.proxies.qualityTableStatus') }}</th>
-                <th class="whitespace-nowrap px-3 py-2 text-left">HTTP</th>
-                <th class="whitespace-nowrap px-3 py-2 text-left">{{ t('admin.proxies.qualityTableLatency') }}</th>
-                <th class="px-3 py-2 text-left">{{ t('admin.proxies.qualityTableMessage') }}</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-900">
-              <tr v-for="item in qualityReport.items" :key="item.target">
-                <td class="whitespace-nowrap px-3 py-2 text-gray-900 dark:text-white">{{ qualityTargetLabel(item.target) }}</td>
-                <td class="whitespace-nowrap px-3 py-2">
-                  <span class="badge whitespace-nowrap" :class="qualityStatusClass(item.status)">{{ qualityStatusLabel(item.status) }}</span>
-                </td>
-                <td class="whitespace-nowrap px-3 py-2 text-gray-600 dark:text-gray-300">{{ item.http_status ?? '-' }}</td>
-                <td class="whitespace-nowrap px-3 py-2 text-gray-600 dark:text-gray-300">
-                  {{ typeof item.latency_ms === 'number' ? `${item.latency_ms}ms` : '-' }}
-                </td>
-                <td class="px-3 py-2 text-gray-600 dark:text-gray-300">
-                  <span>{{ item.message || '-' }}</span>
-                  <span v-if="item.cf_ray" class="ml-1 text-xs text-gray-400">(cf-ray: {{ item.cf_ray }})</span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+        <!-- Prominent AI Provider & Surface Comparison (Claude / ChatGPT / Gemini / Grok) -->
+        <div class="space-y-3 rounded-lg border border-gray-200 bg-white p-4 dark:border-dark-600 dark:bg-dark-800">
+          <div class="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h4 class="text-sm font-semibold text-gray-900 dark:text-white">
+                {{ t('admin.proxies.qualityAIComparisonTitle') }}
+              </h4>
+              <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.proxies.qualityAIComparisonSubtitle') }}
+              </p>
+            </div>
+          </div>
+
+          <div
+            v-if="!hasAnyAIAssessments(qualityReport)"
+            class="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200"
+          >
+            {{ t('admin.proxies.qualityAIMissingBanner') }}
+          </div>
+
+          <div class="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            <div
+              v-for="group in buildQualityAIProviderGroups(qualityReport)"
+              :key="group.platform"
+              class="flex flex-col rounded-lg border border-gray-200 bg-gray-50/70 p-3 dark:border-dark-600 dark:bg-dark-700/50"
+            >
+              <div class="flex items-center justify-between gap-2 border-b border-gray-200 pb-2 dark:border-dark-600">
+                <div class="text-sm font-semibold text-gray-900 dark:text-white">
+                  {{ group.label }}
+                </div>
+                <span class="badge" :class="group.badgeClass">
+                  {{ group.summaryText }}
+                </span>
+              </div>
+
+              <div class="mt-2.5 divide-y divide-gray-200 dark:divide-dark-600">
+                <div
+                  v-for="row in group.rows"
+                  :key="row.target"
+                  class="space-y-1.5 py-2.5 first:pt-0 last:pb-0"
+                >
+                  <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div class="flex flex-wrap items-center gap-1.5">
+                      <span class="badge" :class="qualitySurfaceBadgeClass(row.surface)">
+                        {{ qualitySurfaceLabel(row.surface) }}
+                      </span>
+                      <span class="text-xs font-medium text-gray-900 dark:text-white">
+                        {{ qualityTargetLabel(row.target) }}
+                      </span>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-1.5">
+                      <span class="badge" :class="qualityAIStatusBadgeClass(row.status, row.eligible)">
+                        {{ qualityAIStatusLabel(row.status) }}
+                      </span>
+                      <span class="badge" :class="row.candidateBadgeClass">
+                        {{ row.candidateLabel }}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div class="text-[11px] text-gray-500 dark:text-gray-400">
+                    {{ row.scopeHint }}
+                  </div>
+
+                  <!-- Evidence, Error Code, HTTP Status, Latency, Retry-After, Observed At -->
+                  <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                    <div class="flex items-center gap-1">
+                      <span class="badge" :class="qualityAIEvidenceBadgeClass(row.evidence, row.eligible)">
+                        {{ qualityAIEvidenceLabel(row.evidence) }}
+                      </span>
+                      <span v-if="row.evidence && row.evidence !== 'missing'" class="font-mono text-[11px] text-gray-400 dark:text-gray-500">
+                        [{{ row.evidence }}]
+                      </span>
+                    </div>
+                    <span class="text-gray-600 dark:text-gray-300">
+                      HTTP: <strong class="font-mono">{{ row.httpStatus ?? '-' }}</strong>
+                    </span>
+                    <span class="text-gray-600 dark:text-gray-300">
+                      {{ t('admin.proxies.qualityTableLatency') }}:
+                      <strong class="font-mono">{{ typeof row.latencyMs === 'number' ? `${row.latencyMs}ms` : '-' }}</strong>
+                    </span>
+                    <span
+                      v-if="row.errorCode"
+                      class="rounded bg-gray-200/80 px-1.5 py-0.5 font-mono text-[11px] text-gray-800 dark:bg-dark-600 dark:text-gray-200"
+                    >
+                      {{ t('admin.proxies.qualityFieldErrorCode') }}: {{ row.errorCode }}
+                    </span>
+                    <span
+                      v-if="row.retryAfter"
+                      class="rounded bg-amber-100 px-1.5 py-0.5 font-mono text-[11px] text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
+                    >
+                      {{ t('admin.proxies.qualityFieldRetryAfter') }}: {{ row.retryAfter }}
+                    </span>
+                    <span
+                      v-if="row.cfRay"
+                      class="font-mono text-[11px] text-gray-400 dark:text-gray-500"
+                    >
+                      cf-ray: {{ row.cfRay }}
+                    </span>
+                    <span
+                      v-if="row.observedAt"
+                      class="text-[11px] text-gray-500 dark:text-gray-400"
+                    >
+                      {{ t('admin.proxies.qualityFieldObservedAt') }}: {{ formatUnixTimestamp(row.observedAt) }}
+                    </span>
+                  </div>
+
+                  <!-- Localized Reason -->
+                  <div class="text-xs text-gray-700 dark:text-gray-200">
+                    {{ row.reason }}
+                  </div>
+
+                  <!-- Scope / Non-fraud / Boundary Callout -->
+                  <div
+                    v-if="row.scopeCallout"
+                    class="rounded px-2 py-1 text-[11px]"
+                    :class="row.scopeCalloutClass"
+                  >
+                    {{ row.scopeCallout }}
+                  </div>
+
+                  <!-- Endpoint & Final URL / Redirect -->
+                  <div
+                    v-if="row.url || row.finalUrl"
+                    class="flex flex-wrap items-center gap-x-3 gap-y-0.5 break-all font-mono text-[11px] text-gray-500 dark:text-gray-400"
+                  >
+                    <span v-if="row.url">
+                      {{ t('admin.proxies.qualityFieldEndpoint') }}: {{ row.url }}
+                    </span>
+                    <span
+                      v-if="row.isRedirected"
+                      class="font-semibold text-amber-700 dark:text-amber-400"
+                    >
+                      {{ t('admin.proxies.qualityFieldRedirectedTo') }}: {{ row.finalUrl }}
+                    </span>
+                    <span v-else-if="row.finalUrl && row.finalUrl !== row.url">
+                      {{ t('admin.proxies.qualityFieldFinalUrl') }}: {{ row.finalUrl }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Other Non-probed Providers Base Qualification Note -->
+          <div class="flex flex-wrap items-center justify-between gap-2 rounded border border-gray-200 bg-gray-50 px-3 py-2 text-xs dark:border-dark-600 dark:bg-dark-700/40">
+            <div>
+              <span class="font-medium text-gray-800 dark:text-gray-200">{{ t('admin.proxies.qualityPlatformOther') }}:</span>
+              <span class="ml-1 text-gray-600 dark:text-gray-300">{{ t('admin.proxies.qualityPlatformOtherHint') }}</span>
+            </div>
+            <span class="badge shrink-0" :class="qualityReportBaseClass(qualityReport)">
+              {{ qualityReportBaseLabel(qualityReport) }}
+            </span>
+          </div>
+        </div>
+
+        <!-- Supporting Context: Generic Connectivity & IP Reputation -->
+        <div class="space-y-3">
+          <div class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+            {{ t('admin.proxies.qualitySupportingSectionTitle') }}
+          </div>
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <!-- Connectivity & Comprehensive Quality -->
+            <div class="rounded-lg border border-gray-200 bg-white p-3.5 dark:border-dark-600 dark:bg-dark-800">
+              <div class="flex items-start justify-between gap-2">
+                <div>
+                  <div class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                    {{ t('admin.proxies.qualityConnectivitySectionTitle') }}
+                  </div>
+                  <div class="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
+                    {{ t('admin.proxies.qualityScaleHint') }}
+                  </div>
+                </div>
+                <div v-if="isReputationUnknown(qualityReport)" class="text-right">
+                  <span class="badge badge-warning">
+                    {{ t('admin.proxies.qualityReputationInsufficient') }}
+                  </span>
+                </div>
+                <div v-else class="text-right">
+                  <div class="text-xl font-semibold text-gray-900 dark:text-white">
+                    {{ qualityReport.score }}<span class="text-xs font-normal text-gray-400">/100</span>
+                  </div>
+                  <div class="text-xs text-gray-500 dark:text-gray-400">
+                    {{ t('admin.proxies.qualityGrade', { grade: qualityReport.grade }) }}
+                  </div>
+                </div>
+              </div>
+              <div class="mt-2 text-xs text-gray-600 dark:text-gray-300">
+                <div v-if="isReputationUnknown(qualityReport)" class="text-amber-600 dark:text-amber-400">
+                  {{ t('admin.proxies.qualityUnknownNoScoreHint') }}
+                </div>
+                <div class="mt-1">
+                  {{
+                    t('admin.proxies.qualityCountsSummary', {
+                      passed: qualityReport.passed_count,
+                      warn: qualityReport.warn_count,
+                      challenge: qualityReport.challenge_count,
+                      failed: qualityReport.failed_count
+                    })
+                  }}
+                </div>
+              </div>
+            </div>
+
+            <!-- IP Risk & Reputation -->
+            <div class="rounded-lg border border-gray-200 bg-white p-3.5 dark:border-dark-600 dark:bg-dark-800">
+              <div class="flex items-start justify-between gap-2">
+                <div>
+                  <div class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                    {{ t('admin.proxies.qualityRiskSectionTitle') }}
+                  </div>
+                  <div class="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
+                    {{ t('admin.proxies.qualityRiskScaleHint') }}
+                  </div>
+                </div>
+                <div v-if="isReputationUnknown(qualityReport)" class="text-right">
+                  <span class="badge badge-warning">
+                    {{ t('admin.proxies.qualityReputationInsufficient') }}
+                  </span>
+                </div>
+                <div v-else-if="typeof qualityReport.reputation?.risk_score === 'number'" class="text-right">
+                  <div class="text-xl font-semibold" :class="qualityReport.reputation.risk_score >= 50 ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-white'">
+                    {{ t('admin.proxies.qualityRiskScoreDisplay', { score: qualityReport.reputation.risk_score }) }}
+                  </div>
+                  <span
+                    class="badge mt-0.5"
+                    :class="qualityReport.reputation.risk_score >= 50 ? 'badge-danger' : 'badge-success'"
+                  >
+                    {{ qualityReport.reputation.risk_score >= 50 ? t('admin.proxies.qualityRiskLevelHigh') : t('admin.proxies.qualityRiskLevelLow') }}
+                  </span>
+                </div>
+              </div>
+              <div class="mt-2 text-xs" :class="isReputationUnknown(qualityReport) ? 'text-amber-600 dark:text-amber-400' : 'text-gray-600 dark:text-gray-300'">
+                {{ translateQualityReason(qualityReport.reputation?.reason || qualityReport.admission_reason) || t('admin.proxies.qualityReputationMissingReason') }}
+              </div>
+            </div>
+          </div>
+
+          <!-- Reputation Signals, Multi-source Observations & IPOK Attribution -->
+          <div class="space-y-3 rounded-lg border border-gray-200 bg-gray-50 p-3.5 text-xs dark:border-dark-600 dark:bg-dark-700/60">
+            <div>
+              <div class="font-medium text-gray-700 dark:text-gray-200">
+                {{ t('admin.proxies.qualityRiskSignals') }}
+              </div>
+              <div v-if="qualityReport.reputation?.signals?.length" class="mt-1.5 flex flex-wrap gap-1.5">
+                <span
+                  v-for="signal in qualityReport.reputation.signals"
+                  :key="signal"
+                  class="badge"
+                  :class="reputationSignalBadgeClass(signal)"
+                >
+                  {{ signal }}
+                </span>
+              </div>
+              <div v-else class="mt-1 text-gray-500 dark:text-gray-400">
+                {{ isReputationUnknown(qualityReport) ? t('admin.proxies.qualitySignalsUnavailable') : t('admin.proxies.qualitySignalsNone') }}
+              </div>
+            </div>
+
+            <div>
+              <div class="font-medium text-gray-700 dark:text-gray-200">
+                {{ t('admin.proxies.qualityRiskSources') }}
+              </div>
+              <div v-if="qualityReport.reputation?.sources?.length" class="mt-1.5 divide-y divide-gray-200 rounded border border-gray-200 bg-white dark:divide-dark-600 dark:border-dark-600 dark:bg-dark-800">
+                <div
+                  v-for="src in qualityReport.reputation.sources"
+                  :key="src.source"
+                  class="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
+                >
+                  <div class="flex items-center gap-2">
+                    <span class="font-medium text-gray-900 dark:text-white">{{ src.source }}</span>
+                    <span
+                      v-if="typeof src.risk_score === 'number'"
+                      class="badge"
+                      :class="sourceRiskBadgeClass(src, qualityReport.checked_at)"
+                    >
+                      {{ t('admin.proxies.qualitySourceRiskScore', { score: src.risk_score }) }}
+                    </span>
+                    <span v-else class="text-gray-400 dark:text-gray-500">
+                      {{ t('admin.proxies.qualitySourceNoScore') }}
+                    </span>
+                  </div>
+                  <div
+                    :class="sourceObservationClass(src, qualityReport.checked_at)"
+                    :title="src.observed_at || undefined"
+                  >
+                    {{ formatSourceObservation(src, qualityReport.checked_at) }}
+                  </div>
+                </div>
+              </div>
+              <div v-else class="mt-1 text-amber-600 dark:text-amber-400">
+                {{ t('admin.proxies.qualitySourcesMissing') }}
+              </div>
+            </div>
+
+            <div class="flex flex-wrap items-center justify-between gap-2 border-t border-gray-200 pt-2 text-gray-500 dark:border-dark-600 dark:text-gray-400">
+              <span>
+                {{ t('admin.proxies.qualityAttributionPrefix') }}
+                <a
+                  href="https://ipok.io"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="font-medium text-primary-600 underline hover:text-primary-700 dark:text-primary-400"
+                >IPOK (https://ipok.io)</a>
+              </span>
+              <a
+                href="https://ipok.io/methodology"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="text-primary-600 underline hover:text-primary-700 dark:text-primary-400"
+              >
+                {{ t('admin.proxies.qualityMethodologyLink') }} (https://ipok.io/methodology)
+              </a>
+            </div>
+          </div>
+        </div>
+
+        <!-- Raw Probe Items Diagnostic Table -->
+        <div class="space-y-1.5">
+          <div class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+            {{ t('admin.proxies.qualityProbeTableTitle') }}
+          </div>
+          <div class="max-h-80 overflow-auto rounded-lg border border-gray-200 dark:border-dark-600">
+            <table class="min-w-full divide-y divide-gray-200 text-sm dark:divide-dark-700">
+              <thead class="bg-gray-50 text-xs uppercase text-gray-500 dark:bg-dark-800 dark:text-dark-400">
+                <tr>
+                  <th class="whitespace-nowrap px-3 py-2 text-left">{{ t('admin.proxies.qualityTableTarget') }}</th>
+                  <th class="whitespace-nowrap px-3 py-2 text-left">{{ t('admin.proxies.qualityTableSurface') }}</th>
+                  <th class="whitespace-nowrap px-3 py-2 text-left">{{ t('admin.proxies.qualityTableStatus') }}</th>
+                  <th class="whitespace-nowrap px-3 py-2 text-left">HTTP</th>
+                  <th class="whitespace-nowrap px-3 py-2 text-left">{{ t('admin.proxies.qualityTableEvidence') }}</th>
+                  <th class="whitespace-nowrap px-3 py-2 text-left">{{ t('admin.proxies.qualityTableLatency') }}</th>
+                  <th class="px-3 py-2 text-left">{{ t('admin.proxies.qualityTableMessage') }}</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-900">
+                <tr v-for="item in qualityReport.items" :key="item.target">
+                  <td class="whitespace-nowrap px-3 py-2 text-gray-900 dark:text-white">
+                    <div>{{ qualityTargetLabel(item.target) }}</div>
+                  </td>
+                  <td class="whitespace-nowrap px-3 py-2">
+                    <span class="badge whitespace-nowrap" :class="qualitySurfaceBadgeClass(item.surface)">
+                      {{ qualitySurfaceLabel(item.surface) }}
+                    </span>
+                  </td>
+                  <td class="whitespace-nowrap px-3 py-2">
+                    <span class="badge whitespace-nowrap" :class="qualityStatusClass(item.status)">
+                      {{ qualityStatusLabel(item.status) }}
+                    </span>
+                  </td>
+                  <td class="whitespace-nowrap px-3 py-2 font-mono text-xs text-gray-600 dark:text-gray-300">
+                    {{ item.http_status ?? '-' }}
+                  </td>
+                  <td class="whitespace-nowrap px-3 py-2 text-xs text-gray-600 dark:text-gray-300">
+                    <div v-if="item.evidence" class="flex flex-col gap-0.5">
+                      <span>{{ qualityAIEvidenceLabel(item.evidence) }}</span>
+                      <span class="font-mono text-[11px] text-gray-400">{{ item.evidence }}</span>
+                    </div>
+                    <span v-else class="text-gray-400">-</span>
+                    <div v-if="item.error_code" class="mt-0.5 font-mono text-[11px] text-amber-700 dark:text-amber-400">
+                      {{ t('admin.proxies.qualityFieldErrorCode') }}: {{ item.error_code }}
+                    </div>
+                  </td>
+                  <td class="whitespace-nowrap px-3 py-2 text-xs text-gray-600 dark:text-gray-300">
+                    <div>{{ typeof item.latency_ms === 'number' ? `${item.latency_ms}ms` : '-' }}</div>
+                    <div v-if="item.observed_at" class="text-[11px] text-gray-400">
+                      {{ formatUnixTimestamp(item.observed_at) }}
+                    </div>
+                  </td>
+                  <td class="px-3 py-2 text-xs text-gray-600 dark:text-gray-300">
+                    <div>{{ translateQualityReason(item.message, item.evidence) || '-' }}</div>
+                    <div v-if="item.retry_after" class="mt-0.5 font-mono text-[11px] text-amber-700 dark:text-amber-400">
+                      {{ t('admin.proxies.qualityFieldRetryAfter') }}: {{ item.retry_after }}
+                    </div>
+                    <div v-if="item.cf_ray" class="mt-0.5 font-mono text-[11px] text-gray-400">
+                      cf-ray: {{ item.cf_ray }}
+                    </div>
+                    <div v-if="item.url || item.final_url" class="mt-0.5 break-all font-mono text-[11px] text-gray-400">
+                      <span v-if="item.url">{{ item.url }}</span>
+                      <span v-if="item.final_url && item.final_url !== item.url" class="ml-1 text-amber-700 dark:text-amber-400">
+                        → {{ item.final_url }}
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
       <template #footer>
@@ -1102,7 +1495,10 @@ import { adminAPI } from '@/api/admin'
 import type {
   Proxy,
   ProxyAccountSummary,
+  ProxyAIPlatformAssessment,
+  ProxyIPReputationSource,
   ProxyProtocol,
+  ProxyQualityCheckItem,
   ProxyQualityCheckResult,
   ProxyUpstreamMode
 } from '@/types'
@@ -1811,23 +2207,140 @@ const applyLatencyResult = (
   target.latency_message = result.message
 }
 
+interface QualityAISurfaceSpec {
+  target: string
+  platform: 'anthropic' | 'openai' | 'gemini' | 'grok'
+  surface: 'api' | 'web' | 'code_assist'
+  scopeKey: string
+  defaultUrl: string
+}
+
+const QUALITY_AI_SURFACE_SPECS: QualityAISurfaceSpec[] = [
+  {
+    target: 'anthropic',
+    platform: 'anthropic',
+    surface: 'api',
+    scopeKey: 'admin.proxies.qualityScopeAnthropicApi',
+    defaultUrl: 'https://api.anthropic.com/v1/models'
+  },
+  {
+    target: 'claude_web',
+    platform: 'anthropic',
+    surface: 'web',
+    scopeKey: 'admin.proxies.qualityScopeClaudeWeb',
+    defaultUrl: 'https://claude.ai/login'
+  },
+  {
+    target: 'openai',
+    platform: 'openai',
+    surface: 'api',
+    scopeKey: 'admin.proxies.qualityScopeOpenAIApi',
+    defaultUrl: 'https://api.openai.com/v1/models'
+  },
+  {
+    target: 'chatgpt',
+    platform: 'openai',
+    surface: 'web',
+    scopeKey: 'admin.proxies.qualityScopeChatGPTWeb',
+    defaultUrl: 'https://chatgpt.com/backend-api/models'
+  },
+  {
+    target: 'gemini',
+    platform: 'gemini',
+    surface: 'api',
+    scopeKey: 'admin.proxies.qualityScopeGeminiApi',
+    defaultUrl: 'https://generativelanguage.googleapis.com/v1beta/models'
+  },
+  {
+    target: 'gemini_code_assist',
+    platform: 'gemini',
+    surface: 'code_assist',
+    scopeKey: 'admin.proxies.qualityScopeGeminiCodeAssist',
+    defaultUrl: 'https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist'
+  },
+  {
+    target: 'gemini_web',
+    platform: 'gemini',
+    surface: 'web',
+    scopeKey: 'admin.proxies.qualityScopeGeminiWeb',
+    defaultUrl: 'https://gemini.google.com/app'
+  },
+  {
+    target: 'grok',
+    platform: 'grok',
+    surface: 'api',
+    scopeKey: 'admin.proxies.qualityScopeGrokApi',
+    defaultUrl: 'https://api.x.ai/v1/models'
+  }
+]
+
+const QUALITY_AI_EXPECTED_TARGETS = QUALITY_AI_SURFACE_SPECS.map((s) => s.target)
+
+const isReputationUnknown = (result?: ProxyQualityCheckResult | null): boolean => {
+  if (!result) return true
+  if (result.grade === 'Unknown') return true
+  if (!result.reputation) return true
+  if (result.reputation.status !== 'current') return true
+  return typeof result.reputation.risk_score !== 'number'
+}
+
+const isRowQualityUnknown = (row?: Proxy | null): boolean => {
+  if (!row) return true
+  if (row.quality_grade === 'Unknown' || !row.quality_grade) return true
+  return typeof row.quality_score !== 'number'
+}
+
+const hasAnyAIAssessments = (result?: ProxyQualityCheckResult | null): boolean => {
+  return Boolean(result && Array.isArray(result.ai_platforms) && result.ai_platforms.length > 0)
+}
+
+const getQualityAITargetCounts = (result?: ProxyQualityCheckResult | null): { eligible: number; total: number } => {
+  const total = Math.max(
+    QUALITY_AI_EXPECTED_TARGETS.length,
+    Array.isArray(result?.ai_platforms) ? result!.ai_platforms!.length : 0
+  )
+  if (!result || isReputationUnknown(result) || !result.base_eligible || !Array.isArray(result.ai_platforms)) {
+    return { eligible: 0, total }
+  }
+  const eligible = result.ai_platforms.filter((a) => a.eligible && a.status === 'reachable').length
+  return { eligible, total }
+}
+
 const summarizeQualityStatus = (result: ProxyQualityCheckResult): Proxy['quality_status'] => {
+  if (isReputationUnknown(result)) return 'warn'
+  if (!hasAnyAIAssessments(result)) {
+    if (result.challenge_count > 0) return 'challenge'
+    if (result.failed_count > 0) return 'failed'
+    return 'warn'
+  }
+  const { eligible, total } = getQualityAITargetCounts(result)
+  if (result.base_eligible && result.eligible && eligible > 0) {
+    if (
+      eligible < total ||
+      result.challenge_count + result.failed_count + result.warn_count > 0
+    ) {
+      return 'warn'
+    }
+    return 'healthy'
+  }
   if (result.challenge_count > 0) return 'challenge'
   if (result.failed_count > 0) return 'failed'
   if (result.warn_count > 0) return 'warn'
-  return 'healthy'
+  return 'warn'
 }
 
 const applyQualityResult = (proxyId: number, result: ProxyQualityCheckResult) => {
   const target = proxies.value.find((proxy) => proxy.id === proxyId)
   if (!target) return
+  const unknown = isReputationUnknown(result)
   target.quality_status = summarizeQualityStatus(result)
-  target.quality_score = result.score
-  target.quality_grade = result.grade
+  target.quality_score = unknown ? undefined : result.score
+  target.quality_grade = unknown ? 'Unknown' : result.grade
   target.quality_summary = result.summary
   target.quality_checked = result.checked_at
+  target.quality_base_eligible = result.base_eligible
+  target.quality_ai_platforms = result.ai_platforms
 }
-
 const formatLocation = (proxy: Proxy) => {
   const parts = [proxy.country, proxy.city].filter(Boolean) as string[]
   return parts.join(' · ')
@@ -1910,9 +2423,27 @@ const handleQualityCheck = async (proxy: Proxy) => {
     }
     applyQualityResult(proxy.id, result)
 
-    appStore.showSuccess(
-      t('admin.proxies.qualityCheckDone', { score: result.score, grade: result.grade })
-    )
+    if (isReputationUnknown(result)) {
+      appStore.showSuccess(
+        t('admin.proxies.qualityCheckDoneUnknown', {
+          reason: translateQualityReason(result.admission_reason || result.reputation?.reason) || t('admin.proxies.qualityReputationInsufficient')
+        })
+      )
+    } else if (!hasAnyAIAssessments(result)) {
+      appStore.showSuccess(
+        t('admin.proxies.qualityCheckDoneLegacy', { score: result.score, grade: result.grade })
+      )
+    } else {
+      const { eligible, total } = getQualityAITargetCounts(result)
+      appStore.showSuccess(
+        t('admin.proxies.qualityCheckDone', {
+          score: result.score,
+          grade: result.grade,
+          eligible,
+          total
+        })
+      )
+    }
   } catch (error: any) {
     const message = error.response?.data?.detail || t('admin.proxies.qualityCheckFailed')
     appStore.showError(message)
@@ -1954,11 +2485,12 @@ const runBatchProxyQualityChecks = async (ids: number[]) => {
           }
         }
         applyQualityResult(current, result)
-        if (result.challenge_count > 0) {
+        const overallStatus = summarizeQualityStatus(result)
+        if (overallStatus === 'challenge') {
           challenge++
-        } else if (result.failed_count > 0) {
+        } else if (overallStatus === 'failed') {
           failed++
-        } else if (result.warn_count > 0) {
+        } else if (overallStatus === 'warn') {
           warn++
         } else {
           healthy++
@@ -2055,32 +2587,508 @@ const expiryLabel = (row: Proxy): string => {
 const expiryBadgeClass = (row: Proxy): string =>
   proxyExpiryBadgeClass(row.expires_at, row.status)
 
-const qualityOverallClass = (status?: string) => {
-  if (status === 'healthy') return 'badge-success'
-  if (status === 'warn') return 'badge-warning'
-  if (status === 'challenge') return 'badge-danger'
+const qualityInlineText = (row: Proxy) => {
+  if (isRowQualityUnknown(row)) {
+    return t('admin.proxies.qualityInlineUnknown')
+  }
+  return t('admin.proxies.qualityInline', {
+    grade: row.quality_grade || '-',
+    score: row.quality_score ?? '-'
+  })
+}
+
+const resolveRowEffectiveQualityStatus = (status?: string, row?: Proxy): string | undefined => {
+  if (!row) return status
+  if (isRowQualityUnknown(row) && status === 'healthy') return 'warn'
+  if (row.quality_base_eligible === false && status === 'healthy') return 'warn'
+  if (Array.isArray(row.quality_ai_platforms)) {
+    if (row.quality_ai_platforms.length === 0 && status === 'healthy') return 'warn'
+    const allEligible =
+      row.quality_ai_platforms.length >= QUALITY_AI_EXPECTED_TARGETS.length &&
+      row.quality_ai_platforms.every((a) => a.eligible && a.status === 'reachable')
+    if (!allEligible && status === 'healthy') return 'warn'
+  }
+  return status
+}
+
+const qualityOverallClass = (status?: string, row?: Proxy) => {
+  const effectiveStatus = resolveRowEffectiveQualityStatus(status, row)
+  if (effectiveStatus === 'healthy') return 'badge-success'
+  if (effectiveStatus === 'warn') return 'badge-warning'
+  if (effectiveStatus === 'challenge') return 'badge-danger'
   return 'badge-danger'
 }
 
-const qualityOverallLabel = (status?: string) => {
-  if (status === 'healthy') return t('admin.proxies.qualityStatusHealthy')
-  if (status === 'warn') return t('admin.proxies.qualityStatusWarn')
-  if (status === 'challenge') return t('admin.proxies.qualityStatusChallenge')
+const qualityOverallLabel = (status?: string, row?: Proxy) => {
+  const effectiveStatus = resolveRowEffectiveQualityStatus(status, row)
+  if (effectiveStatus === 'healthy') return t('admin.proxies.qualityStatusHealthy')
+  if (effectiveStatus === 'warn') return t('admin.proxies.qualityStatusWarn')
+  if (effectiveStatus === 'challenge') return t('admin.proxies.qualityStatusChallenge')
   return t('admin.proxies.qualityStatusFail')
+}
+
+const qualityReportBaseClass = (report: ProxyQualityCheckResult) => {
+  if (isReputationUnknown(report)) return 'badge-warning'
+  if (report.base_eligible) return 'badge-success'
+  return 'badge-danger'
+}
+
+const qualityReportBaseLabel = (report: ProxyQualityCheckResult) => {
+  if (isReputationUnknown(report)) return t('admin.proxies.qualityBaseUnknown')
+  if (report.base_eligible) return t('admin.proxies.qualityBaseQualified')
+  return t('admin.proxies.qualityBaseBlocked')
+}
+
+const qualityReportEligibleClass = (report: ProxyQualityCheckResult) => {
+  if (isReputationUnknown(report)) return 'badge-warning'
+  if (!report.base_eligible) return 'badge-danger'
+  if (!hasAnyAIAssessments(report)) return 'badge-warning'
+  const { eligible, total } = getQualityAITargetCounts(report)
+  if (eligible === 0 || !report.eligible) return 'badge-warning'
+  if (eligible < total || report.challenge_count + report.failed_count + report.warn_count > 0) {
+    return 'badge-warning'
+  }
+  return 'badge-success'
+}
+
+const qualityReportEligibleLabel = (report: ProxyQualityCheckResult) => {
+  if (isReputationUnknown(report)) return t('admin.proxies.qualityEligibleInsufficient')
+  if (!report.base_eligible) return t('admin.proxies.qualityEligibleBlocked')
+  if (!hasAnyAIAssessments(report)) return t('admin.proxies.qualityEligibleMissingAI')
+  const { eligible, total } = getQualityAITargetCounts(report)
+  if (eligible === 0 || !report.eligible) {
+    return t('admin.proxies.qualityEligibleBaseOnly', { eligible: 0, total })
+  }
+  if (eligible < total || report.challenge_count + report.failed_count + report.warn_count > 0) {
+    return t('admin.proxies.qualityEligiblePartialAI', { eligible, total })
+  }
+  return t('admin.proxies.qualityEligibleAllowed', { eligible, total })
+}
+
+const formatUnixTimestamp = (sec?: number): string => {
+  if (typeof sec !== 'number' || sec <= 0) return '-'
+  return new Date(sec * 1000).toLocaleString()
+}
+
+const QUALITY_BACKEND_REASON_KEYS: Record<string, string> = {
+  '已抵达该 AI 服务的鉴权边界；仅验证出口访问，登录与推理仍需有效账号验证': 'authBoundary',
+  '观察到该 AI 的公开应用或登录页面；仅验证网页入口，未验证登录和对话': 'webReachable',
+  '取得该 AI 服务的模型元数据响应；未验证真实推理请求': 'apiReachable',
+  '该 AI 服务明确返回地区或国家限制；此结论只作用于该服务路径': 'geoRestricted',
+  '该 AI 服务明确拒绝此 IP；其他 AI 服务单独判断': 'ipBlocked',
+  '本次请求遇到访问挑战，尚未验证正常访问；挑战原因未归因到 IP 本身': 'wafChallenge',
+  '本次请求受到频控；需复检，单次 429 不作为 IP 黑名单证据': 'rateLimited',
+  '返回账号额度或计费限制，当前路径需复检；未据此判 IP 欺诈': 'quotaExhausted',
+  '服务要求账号计费或组织访问条件；当前探测无法确认该账号可用，未据此判 IP 欺诈': 'accountRequirement',
+  '上游服务异常或过载，当前可达性未确认；需复检': 'providerOverloaded',
+  '该 AI 路径返回访问拒绝，具体原因尚未确认；不推断为 IP 欺诈': 'accessDenied',
+  '响应不足以确认该 AI 服务的出口访问情况，需复检': 'unexpectedResponse',
+  '请求被重定向到其他站点，未确认原 AI 服务路径；需复检': 'redirectedCrossSite',
+  '收到未识别的错误响应，不能作为 AI 接口可达证据；需复检': 'invalidResponse',
+  '代理出口连通正常': 'baseConnectivityOk',
+  '代理探测服务未配置': 'proberNotConfigured',
+  '静态落地代理 host 必须是出口 IP，域名无法确认固定出口': 'exitHostNotIP',
+  '实际出口与登记落地 IP 不一致': 'exitIPMismatch',
+  'IP 风险证据不足，请重新检测后分配': 'reputationInsufficient',
+  'IP 风险达到拒绝准入阈值 50': 'reputationHighRisk',
+  '基础出口或出口身份校验未通过': 'baseCheckFailed',
+  '基础 IP 检查通过；按账号实际使用的 AI 路径分别决定准入': 'basePassScopedAdmission',
+  '基础 IP 检查通过，AI 路径尚无可达候选；请查看各服务证据并复检': 'basePassNoAITargets',
+  '当前多源 IP 风险证据可用': 'reputationCurrentOk',
+  '出口不是有效公网 IP': 'reputationNotPublicIP',
+  '无法构建 IP 信誉检测请求': 'reputationReqBuildErr',
+  'IPOK 请求失败或超时，证据不足': 'reputationTimeout',
+  'IPOK 响应读取失败或超出大小限制': 'reputationReadErr',
+  'IPOK 响应格式无效，证据不足': 'reputationInvalidJson',
+  'IPOK 缺少当前多源风险证据': 'reputationMissingMultiSource',
+  '信誉结果与探测出口 IP 不一致': 'reputationExitMismatch',
+  'IPOK 评估时间缺失或过期': 'reputationAssessedAtStale',
+  '数值风险来源缺少当前有效证据': 'reputationNumericSourceStale',
+  '风险来源时间或评分无效，证据不足': 'reputationSourceTimeOrScoreInvalid',
+  'DNSBL 黑名单检测未完整完成，证据不足': 'reputationDnsblIncomplete'
+}
+
+const QUALITY_EVIDENCE_REASON_KEYS: Record<string, string> = {
+  authentication_required: 'authBoundary',
+  web_reachable: 'webReachable',
+  api_reachable: 'apiReachable',
+  geo_restricted: 'geoRestricted',
+  ip_blocked: 'ipBlocked',
+  waf_challenge: 'wafChallenge',
+  rate_limited: 'rateLimited',
+  quota_exhausted: 'quotaExhausted',
+  account_requirement: 'accountRequirement',
+  provider_overloaded: 'providerOverloaded',
+  access_denied: 'accessDenied',
+  unexpected_response: 'unexpectedResponse',
+  invalid_response: 'invalidResponse',
+  network_error: 'networkError'
+}
+
+const translateQualityReason = (rawReason?: string, evidence?: string, status?: string): string => {
+  const trimmed = rawReason?.trim() || ''
+  if (trimmed && QUALITY_BACKEND_REASON_KEYS[trimmed]) {
+    return t(`admin.proxies.qualityReasonMap.${QUALITY_BACKEND_REASON_KEYS[trimmed]}`)
+  }
+  const highRiskMatch = trimmed.match(/^IP 风险 (\d+)\/100，达到拒绝准入阈值 50；信号：(.*)$/)
+  if (highRiskMatch) {
+    const signals = highRiskMatch[2]?.trim()
+    const base = `${t('admin.proxies.qualityRiskScoreDisplay', { score: highRiskMatch[1] })} · ${t('admin.proxies.qualityReasonMap.reputationHighRisk')}`
+    return signals ? `${base} (${signals})` : base
+  }
+  const lowRiskMatch = trimmed.match(/^IP 风险 (\d+)\/100；(.*)$/)
+  if (lowRiskMatch) {
+    const tail = translateQualityReason(lowRiskMatch[2])
+    return `${t('admin.proxies.qualityRiskScoreDisplay', { score: lowRiskMatch[1] })} · ${tail}`
+  }
+  const ipokHttpMatch = trimmed.match(/^IPOK 返回 HTTP (\d+)（可能额度不足），证据不足$/)
+  if (ipokHttpMatch) {
+    return `IPOK HTTP ${ipokHttpMatch[1]} (${t('admin.proxies.qualityReputationInsufficient')})`
+  }
+  if (status === 'missing') {
+    return t('admin.proxies.qualityReasonMap.missingAssessment')
+  }
+  if (evidence && QUALITY_EVIDENCE_REASON_KEYS[evidence]) {
+    const mapped = t(`admin.proxies.qualityReasonMap.${QUALITY_EVIDENCE_REASON_KEYS[evidence]}`)
+    if (trimmed && evidence === 'network_error') {
+      return `${mapped} (${trimmed})`
+    }
+    if (!trimmed) {
+      return mapped
+    }
+  }
+  return trimmed
+}
+
+const qualityReportAdmissionReason = (report: ProxyQualityCheckResult) => {
+  if (report.admission_reason) return translateQualityReason(report.admission_reason)
+  if (report.reputation?.reason) return translateQualityReason(report.reputation.reason)
+  return t('admin.proxies.qualityReputationMissingReason')
+}
+
+const formatQualityReportSummary = (report: ProxyQualityCheckResult): string => {
+  return t('admin.proxies.qualityCountsSummary', {
+    passed: report.passed_count,
+    warn: report.warn_count,
+    challenge: report.challenge_count,
+    failed: report.failed_count
+  })
+}
+
+const qualitySurfaceLabel = (surface?: string): string => {
+  switch (surface) {
+    case 'api':
+      return t('admin.proxies.qualitySurfaceApi')
+    case 'web':
+      return t('admin.proxies.qualitySurfaceWeb')
+    case 'code_assist':
+      return t('admin.proxies.qualitySurfaceCodeAssist')
+    default:
+      return t('admin.proxies.qualitySurfaceFoundation')
+  }
+}
+
+const qualitySurfaceBadgeClass = (surface?: string): string => {
+  switch (surface) {
+    case 'api':
+      return 'badge-primary'
+    case 'web':
+      return 'badge-gray'
+    case 'code_assist':
+      return 'badge-warning'
+    default:
+      return 'badge-gray'
+  }
+}
+
+const qualityAIStatusLabel = (status?: string): string => {
+  const key = status && ['reachable', 'restricted', 'challenge', 'rate_limited', 'account_limited', 'unavailable', 'unknown', 'missing'].includes(status)
+    ? status
+    : 'unknown'
+  return t(`admin.proxies.qualityAIStatus.${key}`)
+}
+
+const qualityAIStatusBadgeClass = (status?: string, eligible?: boolean): string => {
+  if (status === 'reachable') {
+    return eligible ? 'badge-success' : 'badge-warning'
+  }
+  if (status === 'restricted' || status === 'challenge' || status === 'unavailable') {
+    return 'badge-danger'
+  }
+  return 'badge-warning'
+}
+
+const qualityAIEvidenceLabel = (evidence?: string): string => {
+  const known = [
+    'authentication_required',
+    'api_reachable',
+    'web_reachable',
+    'geo_restricted',
+    'ip_blocked',
+    'waf_challenge',
+    'rate_limited',
+    'quota_exhausted',
+    'account_requirement',
+    'provider_overloaded',
+    'network_error',
+    'access_denied',
+    'unexpected_response',
+    'invalid_response',
+    'missing'
+  ]
+  if (evidence && known.includes(evidence)) {
+    return t(`admin.proxies.qualityAIEvidence.${evidence}`)
+  }
+  return evidence || t('admin.proxies.qualityAIEvidence.missing')
+}
+
+const qualityAIEvidenceBadgeClass = (evidence?: string, eligible?: boolean): string => {
+  if (evidence === 'authentication_required' || evidence === 'api_reachable' || evidence === 'web_reachable') {
+    return eligible ? 'badge-success' : 'badge-warning'
+  }
+  if (evidence === 'geo_restricted' || evidence === 'ip_blocked' || evidence === 'waf_challenge' || evidence === 'access_denied' || evidence === 'network_error') {
+    return 'badge-danger'
+  }
+  return 'badge-warning'
+}
+
+interface QualityAISurfaceRowView {
+  target: string
+  surface: string
+  scopeHint: string
+  status: string
+  eligible: boolean
+  candidateLabel: string
+  candidateBadgeClass: string
+  evidence: string
+  reason: string
+  errorCode: string
+  httpStatus?: number
+  latencyMs?: number
+  cfRay: string
+  retryAfter: string
+  observedAt?: number
+  url: string
+  finalUrl: string
+  isRedirected: boolean
+  scopeCallout: string
+  scopeCalloutClass: string
+}
+
+interface QualityAIProviderGroupView {
+  platform: string
+  label: string
+  summaryText: string
+  badgeClass: string
+  rows: QualityAISurfaceRowView[]
+}
+
+const buildQualityAIProviderGroups = (report: ProxyQualityCheckResult): QualityAIProviderGroupView[] => {
+  const assessmentsByTarget = new Map<string, ProxyAIPlatformAssessment>()
+  for (const assessment of report.ai_platforms || []) {
+    assessmentsByTarget.set(assessment.target, assessment)
+  }
+  const itemsByTarget = new Map<string, ProxyQualityCheckItem>()
+  for (const item of report.items || []) {
+    itemsByTarget.set(item.target, item)
+  }
+
+  const platformOrder: Array<{ platform: 'anthropic' | 'openai' | 'gemini' | 'grok'; labelKey: string }> = [
+    { platform: 'anthropic', labelKey: 'admin.proxies.qualityPlatformAnthropic' },
+    { platform: 'openai', labelKey: 'admin.proxies.qualityPlatformOpenAI' },
+    { platform: 'gemini', labelKey: 'admin.proxies.qualityPlatformGemini' },
+    { platform: 'grok', labelKey: 'admin.proxies.qualityPlatformGrok' }
+  ]
+
+  const repUnknown = isReputationUnknown(report)
+  const baseOk = Boolean(report.base_eligible && !repUnknown)
+
+  return platformOrder.map(({ platform, labelKey }) => {
+    const specs = QUALITY_AI_SURFACE_SPECS.filter((s) => s.platform === platform)
+    let eligibleCount = 0
+    let assessedCount = 0
+    let hardFailCount = 0
+
+    const rows: QualityAISurfaceRowView[] = specs.map((spec) => {
+      const assessment = assessmentsByTarget.get(spec.target)
+      const item = itemsByTarget.get(spec.target)
+      const hasAssessment = Boolean(assessment)
+      if (hasAssessment) assessedCount++
+
+      const status = assessment?.status || 'missing'
+      const evidence = assessment?.evidence || item?.evidence || 'missing'
+      const eligible = Boolean(baseOk && assessment?.eligible && status === 'reachable')
+      if (eligible) eligibleCount++
+      if (status === 'restricted' || status === 'challenge' || status === 'unavailable') {
+        hardFailCount++
+      }
+
+      let candidateLabel = t('admin.proxies.qualityTargetCandidateNo')
+      let candidateBadgeClass = 'badge-danger'
+      if (!hasAssessment) {
+        candidateLabel = t('admin.proxies.qualityTargetCandidateMissing')
+        candidateBadgeClass = 'badge-warning'
+      } else if (eligible) {
+        candidateLabel = t('admin.proxies.qualityTargetCandidateYes')
+        candidateBadgeClass = 'badge-success'
+      } else if (status === 'rate_limited' || status === 'account_limited' || status === 'unknown') {
+        candidateBadgeClass = 'badge-warning'
+      }
+
+      const url = item?.url || spec.defaultUrl
+      const finalUrl = item?.final_url || ''
+      const isRedirected = Boolean(finalUrl && url && finalUrl !== url)
+      const reason = translateQualityReason(assessment?.reason || item?.message, evidence, status)
+
+      let scopeCallout = ''
+      let scopeCalloutClass = ''
+      if (eligible) {
+        scopeCallout = t('admin.proxies.qualityScopeCalloutBoundary')
+        scopeCalloutClass = 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300'
+      } else if (
+        status === 'rate_limited' ||
+        status === 'account_limited' ||
+        evidence === 'rate_limited' ||
+        evidence === 'quota_exhausted' ||
+        evidence === 'account_requirement' ||
+        evidence === 'provider_overloaded'
+      ) {
+        scopeCallout = t('admin.proxies.qualityScopeCalloutTransient')
+        scopeCalloutClass = 'bg-amber-50 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300'
+      } else if (status === 'restricted' || evidence === 'geo_restricted' || evidence === 'ip_blocked' || evidence === 'access_denied') {
+        scopeCallout = t('admin.proxies.qualityScopeCalloutRestricted')
+        scopeCalloutClass = 'bg-red-50 text-red-800 dark:bg-red-950/30 dark:text-red-300'
+      }
+
+      return {
+        target: spec.target,
+        surface: assessment?.surface || item?.surface || spec.surface,
+        scopeHint: t(spec.scopeKey),
+        status,
+        eligible,
+        candidateLabel,
+        candidateBadgeClass,
+        evidence,
+        reason,
+        errorCode: item?.error_code || '',
+        httpStatus: item?.http_status,
+        latencyMs: item?.latency_ms,
+        cfRay: item?.cf_ray || '',
+        retryAfter: item?.retry_after || '',
+        observedAt: item?.observed_at,
+        url,
+        finalUrl,
+        isRedirected,
+        scopeCallout,
+        scopeCalloutClass
+      }
+    })
+
+    const total = rows.length
+    let summaryText = t('admin.proxies.qualityPlatformSummaryCandidate', { eligible: eligibleCount, total })
+    let badgeClass = 'badge-warning'
+    if (assessedCount === 0) {
+      summaryText = t('admin.proxies.qualityPlatformSummaryMissing', { total })
+      badgeClass = 'badge-warning'
+    } else if (eligibleCount === total && total > 0) {
+      badgeClass = 'badge-success'
+    } else if (eligibleCount === 0) {
+      summaryText = t('admin.proxies.qualityPlatformSummaryNone', { total })
+      badgeClass = hardFailCount > 0 || !baseOk ? 'badge-danger' : 'badge-warning'
+    }
+
+    return {
+      platform,
+      label: t(labelKey),
+      summaryText,
+      badgeClass,
+      rows
+    }
+  })
+}
+
+const reputationSignalBadgeClass = (signal: string) => {
+  const normalized = signal.toLowerCase()
+  if (['tor', 'blacklist', 'proxy', 'vpn', 'abuser', 'abuse'].includes(normalized)) {
+    return 'badge-danger'
+  }
+  return 'badge-warning'
+}
+
+const getSourceObservationState = (
+  src: ProxyIPReputationSource,
+  checkedAtSec?: number
+): { state: 'current' | 'stale' | 'missing'; formatted?: string } => {
+  if (!src.observed_at || !src.observed_at.trim()) {
+    return { state: 'missing' }
+  }
+  const parsed = Date.parse(src.observed_at)
+  if (Number.isNaN(parsed)) {
+    return { state: 'missing' }
+  }
+  const formatted = new Date(parsed).toLocaleString()
+  const refMs = checkedAtSec ? checkedAtSec * 1000 : Date.now()
+  const ageMs = refMs - parsed
+  if (ageMs >= 72 * 3600 * 1000 || ageMs < -60 * 1000) {
+    return { state: 'stale', formatted }
+  }
+  return { state: 'current', formatted }
+}
+
+const formatSourceObservation = (src: ProxyIPReputationSource, checkedAtSec?: number) => {
+  const info = getSourceObservationState(src, checkedAtSec)
+  if (info.state === 'missing') {
+    return t('admin.proxies.qualitySourceDateMissing')
+  }
+  if (info.state === 'stale') {
+    return t('admin.proxies.qualitySourceDateStale', { time: info.formatted })
+  }
+  return t('admin.proxies.qualitySourceObservedAt', { time: info.formatted })
+}
+
+const sourceObservationClass = (src: ProxyIPReputationSource, checkedAtSec?: number) => {
+  const info = getSourceObservationState(src, checkedAtSec)
+  if (info.state !== 'current') {
+    return 'text-amber-600 dark:text-amber-400'
+  }
+  return 'text-gray-500 dark:text-gray-400'
+}
+
+const sourceRiskBadgeClass = (src: ProxyIPReputationSource, checkedAtSec?: number) => {
+  if (typeof src.risk_score !== 'number') return 'badge-gray'
+  if (src.risk_score >= 50) return 'badge-danger'
+  const obs = getSourceObservationState(src, checkedAtSec)
+  if (obs.state !== 'current') return 'badge-warning'
+  if (src.risk_score >= 25) return 'badge-warning'
+  return 'badge-success'
 }
 
 const qualityTargetLabel = (target: string) => {
   switch (target) {
     case 'base_connectivity':
       return t('admin.proxies.qualityTargetBase')
-    case 'openai':
-      return 'OpenAI'
+    case 'ip_reputation':
+      return t('admin.proxies.qualityTargetReputation')
+    case 'exit_identity':
+      return t('admin.proxies.qualityTargetExitIdentity')
+    case 'http_client':
+      return t('admin.proxies.qualityTargetHttpClient')
     case 'anthropic':
-      return 'Anthropic'
+      return t('admin.proxies.qualityTargetAnthropic')
+    case 'claude_web':
+      return t('admin.proxies.qualityTargetClaudeWeb')
+    case 'openai':
+      return t('admin.proxies.qualityTargetOpenAI')
+    case 'chatgpt':
+      return t('admin.proxies.qualityTargetChatGPT')
     case 'gemini':
-      return 'Gemini'
+      return t('admin.proxies.qualityTargetGemini')
+    case 'gemini_web':
+      return t('admin.proxies.qualityTargetGeminiWeb')
+    case 'gemini_code_assist':
+      return t('admin.proxies.qualityTargetGeminiCodeAssist')
     case 'grok':
-      return 'Grok'
+      return t('admin.proxies.qualityTargetGrok')
     case 'kimi':
       return 'Kimi'
     case 'zhipu':

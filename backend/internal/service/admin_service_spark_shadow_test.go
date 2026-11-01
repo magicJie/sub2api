@@ -616,7 +616,8 @@ func TestDeleteAccount_CascadeToShadow(t *testing.T) {
 func TestUpdateAccount_PropagatesProxyToShadow(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
-	svc := &adminServiceImpl{accountRepo: repo}
+	svc := accountAdmissionService(repo, 42)
+	svc.proxyLatencyCache.(*accountAdmissionCache).info.QualityAIPlatforms = []ProxyAIPlatformAssessment{{Target: "chatgpt", Status: "reachable", Eligible: true}}
 
 	oldProxy := int64(7)
 	parent := &Account{
@@ -694,7 +695,8 @@ func TestUpdateAccount_RejectsCredentialWriteToShadow(t *testing.T) {
 func TestBulkUpdateAccounts_PropagatesProxyToShadow(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
-	svc := &adminServiceImpl{accountRepo: repo}
+	svc := accountAdmissionService(repo, 99)
+	svc.proxyLatencyCache.(*accountAdmissionCache).info.QualityAIPlatforms = []ProxyAIPlatformAssessment{{Target: "chatgpt", Status: "reachable", Eligible: true}}
 
 	oldProxy := int64(7)
 	parent := &Account{

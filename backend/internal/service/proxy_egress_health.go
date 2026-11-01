@@ -534,7 +534,7 @@ type ProxyReplaceCandidate struct {
 	SameCountry   bool
 }
 
-// ReplaceCandidates 列出账号可换的落地 IP：策略允许的池内、对该平台可用、排除当前代理和有未恢复故障的代理，
+// ReplaceCandidates 列出账号可换的落地 IP：策略允许的池内、质量准入通过、对该平台可用、排除当前代理和有未恢复故障的代理，
 // 与当前 IP 同国家（来自探测缓存）的优先，其余按策略排序。
 func (s *ProxyPoolService) ReplaceCandidates(ctx context.Context, accountID int64) ([]ProxyReplaceCandidate, error) {
 	account, err := s.accountRepo.GetByID(ctx, accountID)
@@ -552,25 +552,16 @@ func (s *ProxyPoolService) ReplaceCandidates(ctx context.Context, accountID int6
 	if err != nil {
 		return nil, err
 	}
-	if s.latencyCache != nil && exclude > 0 && len(cands) > 0 {
-		ids := []int64{exclude}
-		for i := range cands {
-			ids = append(ids, cands[i].Proxy.ID)
+	if exclude > 0 && len(cands) > 0 {
+		infos, err := s.qualitySnapshots(ctx, []int64{exclude})
+		if err != nil {
+			return nil, err
 		}
-		if infos, err := s.latencyCache.GetProxyLatencies(ctx, ids); err == nil {
-			country := func(id int64) string {
-				if info := infos[id]; info != nil {
-					return info.CountryCode
-				}
-				return ""
+		if current := infos[exclude]; current != nil && current.CountryCode != "" {
+			for i := range cands {
+				cands[i].SameCountry = cands[i].Country == current.CountryCode
 			}
-			if cur := country(exclude); cur != "" {
-				for i := range cands {
-					cands[i].Country = country(cands[i].Proxy.ID)
-					cands[i].SameCountry = cands[i].Country == cur
-				}
-				sort.SliceStable(cands, func(i, j int) bool { return cands[i].SameCountry && !cands[j].SameCountry })
-			}
+			sort.SliceStable(cands, func(i, j int) bool { return cands[i].SameCountry && !cands[j].SameCountry })
 		}
 	}
 	return cands, nil
@@ -622,11 +613,23 @@ func (s *ProxyPoolService) replaceCandidates(ctx context.Context, account *Accou
 			members = append(members, m)
 		}
 	}
+	ids := make([]int64, len(members))
+	for i := range members {
+		ids[i] = members[i].Proxy.ID
+	}
+	infos, err := s.qualitySnapshots(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
 	sortProxyPoolCandidates(policies, policy, members)
+	target := proxyQualityTargetForAccount(account)
 	for _, m := range members {
+		if !proxyQualityAdmissibleForTarget(&m.Proxy, infos[m.Proxy.ID], target, now) {
+			continue
+		}
 		pool := poolOf[m.Proxy.ID]
 		out = append(out, ProxyReplaceCandidate{Proxy: m.Proxy, PoolID: pool.ID, PoolName: pool.Name,
-			HistoryCounts: m.HistoryCounts, ActiveCounts: m.ActiveCounts})
+			HistoryCounts: m.HistoryCounts, ActiveCounts: m.ActiveCounts, Country: infos[m.Proxy.ID].CountryCode})
 	}
 	return out, nil
 }

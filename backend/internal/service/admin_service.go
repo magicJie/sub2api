@@ -598,20 +598,25 @@ type ProxyTestResult struct {
 }
 
 type ProxyQualityCheckResult struct {
-	ProxyID        int64                   `json:"proxy_id"`
-	Score          int                     `json:"score"`
-	Grade          string                  `json:"grade"`
-	Summary        string                  `json:"summary"`
-	ExitIP         string                  `json:"exit_ip,omitempty"`
-	Country        string                  `json:"country,omitempty"`
-	CountryCode    string                  `json:"country_code,omitempty"`
-	BaseLatencyMs  int64                   `json:"base_latency_ms,omitempty"`
-	PassedCount    int                     `json:"passed_count"`
-	WarnCount      int                     `json:"warn_count"`
-	FailedCount    int                     `json:"failed_count"`
-	ChallengeCount int                     `json:"challenge_count"`
-	CheckedAt      int64                   `json:"checked_at"`
-	Items          []ProxyQualityCheckItem `json:"items"`
+	ProxyID         int64                       `json:"proxy_id"`
+	Score           int                         `json:"score"`
+	Grade           string                      `json:"grade"`
+	Summary         string                      `json:"summary"`
+	ExitIP          string                      `json:"exit_ip,omitempty"`
+	Country         string                      `json:"country,omitempty"`
+	CountryCode     string                      `json:"country_code,omitempty"`
+	BaseLatencyMs   int64                       `json:"base_latency_ms,omitempty"`
+	PassedCount     int                         `json:"passed_count"`
+	WarnCount       int                         `json:"warn_count"`
+	FailedCount     int                         `json:"failed_count"`
+	ChallengeCount  int                         `json:"challenge_count"`
+	CheckedAt       int64                       `json:"checked_at"`
+	Items           []ProxyQualityCheckItem     `json:"items"`
+	Reputation      *ProxyIPReputation          `json:"reputation,omitempty"`
+	Eligible        bool                        `json:"eligible"`
+	AdmissionReason string                      `json:"admission_reason"`
+	BaseEligible    bool                        `json:"base_eligible"`
+	AIPlatforms     []ProxyAIPlatformAssessment `json:"ai_platforms"`
 }
 
 type ProxyQualityCheckItem struct {
@@ -621,6 +626,14 @@ type ProxyQualityCheckItem struct {
 	LatencyMs  int64  `json:"latency_ms,omitempty"`
 	Message    string `json:"message,omitempty"`
 	CFRay      string `json:"cf_ray,omitempty"`
+	Platform   string `json:"platform,omitempty"`
+	Surface    string `json:"surface,omitempty"`
+	URL        string `json:"url,omitempty"`
+	FinalURL   string `json:"final_url,omitempty"`
+	Evidence   string `json:"evidence,omitempty"`
+	ErrorCode  string `json:"error_code,omitempty"`
+	RetryAfter string `json:"retry_after,omitempty"`
+	ObservedAt int64  `json:"observed_at,omitempty"`
 }
 
 // ProxyExitInfo represents proxy exit information from ip-api.com
@@ -639,51 +652,6 @@ type ProxyExitInfoProber interface {
 
 type groupExistenceBatchReader interface {
 	ExistsByIDs(ctx context.Context, ids []int64) (map[int64]bool, error)
-}
-
-type proxyQualityTarget struct {
-	Target          string
-	URL             string
-	Method          string
-	AllowedStatuses map[int]struct{}
-}
-
-var proxyQualityTargets = []proxyQualityTarget{
-	{
-		Target: "openai",
-		URL:    "https://api.openai.com/v1/models",
-		Method: http.MethodGet,
-		AllowedStatuses: map[int]struct{}{
-			http.StatusUnauthorized: {},
-		},
-	},
-	{
-		Target: "anthropic",
-		URL:    "https://api.anthropic.com/v1/messages",
-		Method: http.MethodGet,
-		AllowedStatuses: map[int]struct{}{
-			http.StatusUnauthorized:     {},
-			http.StatusMethodNotAllowed: {},
-			http.StatusNotFound:         {},
-			http.StatusBadRequest:       {},
-		},
-	},
-	{
-		Target: "gemini",
-		URL:    "https://generativelanguage.googleapis.com/$discovery/rest?version=v1beta",
-		Method: http.MethodGet,
-		AllowedStatuses: map[int]struct{}{
-			http.StatusOK: {},
-		},
-	},
-	{
-		Target: "grok",
-		URL:    "https://api.x.ai/v1/models",
-		Method: http.MethodGet,
-		AllowedStatuses: map[int]struct{}{
-			http.StatusUnauthorized: {},
-		},
-	},
 }
 
 const (

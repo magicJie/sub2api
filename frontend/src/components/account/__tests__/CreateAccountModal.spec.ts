@@ -19,6 +19,9 @@ const {
   setOllamaAutoRefreshMock,
   refreshOllamaUsageMock,
   authIsSimpleMode,
+  proxyPoolPreviewMock,
+  generateGeminiAuthUrlMock,
+  exchangeGeminiCodeMock,
 } = vi.hoisted(() => ({
   createAccountMock: vi.fn(),
   probeUpstreamBillingMock: vi.fn(),
@@ -31,6 +34,9 @@ const {
   setOllamaAutoRefreshMock: vi.fn(),
   refreshOllamaUsageMock: vi.fn(),
   authIsSimpleMode: { value: true },
+  proxyPoolPreviewMock: vi.fn(),
+  generateGeminiAuthUrlMock: vi.fn(),
+  exchangeGeminiCodeMock: vi.fn(),
 }))
 
 vi.mock('@/stores/app', () => ({
@@ -72,11 +78,23 @@ vi.mock('@/api/admin', () => ({
     kiro: {
       importToken: importKiroTokenMock,
     },
+    gemini: {
+      getCapabilities: vi.fn().mockResolvedValue({ ai_studio_oauth_enabled: false }),
+      generateAuthUrl: generateGeminiAuthUrlMock,
+      exchangeCode: exchangeGeminiCodeMock,
+    },
   },
 }))
 
 vi.mock('@/api/admin/accounts', () => ({
   getAntigravityDefaultModelMapping: vi.fn().mockResolvedValue([]),
+}))
+
+vi.mock('@/proxyPool/api', () => ({
+  default: {
+    listPools: vi.fn().mockResolvedValue([]),
+    previewProxy: proxyPoolPreviewMock,
+  },
 }))
 
 vi.mock('vue-i18n', async () => {
@@ -98,16 +116,20 @@ const BaseDialogStub = defineComponent({
 const OAuthAuthorizationFlowStub = defineComponent({
   name: 'OAuthAuthorizationFlow',
   props: {
+    error: String,
     showManualOption: Boolean,
     showCodexSessionImportOption: Boolean,
     showAgentIdentityOption: Boolean,
     showCodexPatOption: Boolean,
     initialInputMethod: String,
   },
-  data: () => ({ inputMethod: 'manual' }),
-  emits: ['import-codex-session', 'import-codex-pat'],
+  data: () => ({ inputMethod: 'manual', projectId: '', authCode: 'auth-code', oauthState: 'oauth-state' }),
+  emits: ['import-codex-session', 'import-codex-pat', 'generate-url'],
   template: `
     <div>
+      <p v-if="error" role="alert">{{ error }}</p>
+      <input data-testid="oauth-project-id" v-model="projectId" />
+      <button data-testid="generate-oauth-url" @click="$emit('generate-url')">generate</button>
       <button data-testid="import-codex-session" @click="$emit('import-codex-session', 'session-json')">session</button>
       <button data-testid="import-codex-pat" @click="$emit('import-codex-pat', 'pat-token')">pat</button>
     </div>
@@ -220,6 +242,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     probeUpstreamBillingMock.mockReset().mockResolvedValue({})
     syncUpstreamModelsMock.mockReset().mockResolvedValue({ models: [], metadata: {} })
     showWarningMock.mockReset()
+    proxyPoolPreviewMock.mockReset().mockResolvedValue({ id: 9, name: 'quality proxy' })
     importCodexSessionMock.mockReset().mockResolvedValue({
       created: 1,
       updated: 0,
@@ -235,6 +258,31 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
   })
 
   afterEach(() => vi.useRealTimers())
+
+  it('blocks account creation and shows final-path rejection after Gemini OAuth discovery', async () => {
+    generateGeminiAuthUrlMock.mockReset().mockResolvedValue({
+      auth_url: 'https://accounts.google.com/auth', session_id: 'session', state: 'oauth-state',
+    })
+    exchangeGeminiCodeMock.mockReset().mockResolvedValue({
+      access_token: 'token', oauth_type: 'code_assist',
+    })
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'Gemini')
+    wrapper.getComponent('[data-testid="create-proxy-pool-select"]').vm.$emit('update:modelValue', 1)
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Gemini account')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+    await wrapper.get('[data-testid="generate-oauth-url"]').trigger('click')
+    await flushPromises()
+    const rejection = new Error('No qualified proxy for the discovered AI path')
+    proxyPoolPreviewMock.mockRejectedValueOnce(rejection)
+    await selectButtonByText(wrapper, 'admin.accounts.oauth.completeAuth')
+    await flushPromises()
+    expect(createAccountMock).not.toHaveBeenCalled()
+    expect(wrapper.emitted('created')).toBeUndefined()
+    expect(wrapper.get('[role="alert"]').text()).toBe(rejection.message)
+    wrapper.unmount()
+  })
 
   it('saves Kiro inference region separately from the imported login region', async () => {
     const wrapper = mountModal()

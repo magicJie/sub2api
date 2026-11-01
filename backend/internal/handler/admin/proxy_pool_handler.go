@@ -245,7 +245,18 @@ func (h *ProxyPoolHandler) PreviewProxy(c *gin.Context) {
 		response.BadRequest(c, "Invalid group_ids")
 		return
 	}
-	p, err := h.poolService.PreviewProxy(c.Request.Context(), id, platform, groupIDs)
+	accountType := c.DefaultQuery("type", service.AccountTypeOAuth)
+	if accountType == "" {
+		accountType = service.AccountTypeOAuth
+	}
+	use := &service.Account{
+		Platform: platform, Type: accountType,
+		Credentials: map[string]any{"oauth_type": c.Query("oauth_type"), "base_url": c.Query("base_url")},
+	}
+	if projectIDs, present := c.Request.URL.Query()["project_id"]; present {
+		use.Credentials["project_id"] = projectIDs[0]
+	}
+	p, err := h.poolService.PreviewProxy(c.Request.Context(), id, use, groupIDs)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

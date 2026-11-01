@@ -3344,7 +3344,7 @@
           <ProxyAdBanner />
         </div>
         <!-- 代理池（fork）：选了代理池时代理由池分配并锁定 -->
-        <Select v-model="form.proxy_pool_id" :options="accountPoolOptions" class="mb-2" />
+        <Select v-model="form.proxy_pool_id" data-testid="create-proxy-pool-select" :options="accountPoolOptions" class="mb-2" />
         <p v-if="form.proxy_pool_id" class="input-hint">
           {{ t('admin.proxyPools.poolHint') }}
           <span v-if="proxyPoolPreview" class="font-medium text-gray-700 dark:text-gray-200">
@@ -4357,7 +4357,7 @@ import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
 import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
-import proxyPoolAPI from '@/proxyPool/api' // 代理池（fork）
+import proxyPoolAPI, { type ProxyPreviewUse } from '@/proxyPool/api' // 代理池（fork）
 import { extractI18nErrorMessage } from '@/utils/apiError'
 import { useProxyPoolOptions } from '@/proxyPool/useProxyPools'
 import GroupSelector from '@/components/common/GroupSelector.vue'
@@ -5320,28 +5320,40 @@ const canExchangeCode = computed(() => {
 const { loadPools: loadProxyPools, accountPoolOptions } = useProxyPoolOptions()
 const proxyPoolPreview = ref<Proxy | null>(null)
 const proxyPoolPreviewError = ref('')
-const refreshProxyPoolPreview = async () => {
+const proxyPoolPreviewUse = computed<ProxyPreviewUse>(() => ({
+  platform: form.platform,
+  type: accountCategory.value === 'oauth-based' ? form.type : accountCategory.value,
+  oauth_type: form.platform === 'gemini' ? geminiOAuthType.value : undefined,
+  base_url: accountCategory.value === 'apikey' ? apiKeyBaseUrl.value : undefined,
+  // An empty pre-auth input leaves the project to OAuth discovery.
+  project_id: form.platform === 'gemini' && accountCategory.value === 'oauth-based'
+    ? oauthFlowRef.value?.projectId?.trim() || undefined
+    : undefined
+}))
+const refreshProxyPoolPreview = async (use: ProxyPreviewUse): Promise<boolean> => {
   proxyPoolPreview.value = null
   proxyPoolPreviewError.value = ''
   const poolId = form.proxy_pool_id
-  if (!poolId) return
+  if (!poolId) return true
   try {
     // 分组策略优先于平台策略：带上将要绑定的分组。
-    const proxy = await proxyPoolAPI.previewProxy(poolId, form.platform, form.group_ids)
-    if (form.proxy_pool_id !== poolId) return
+    const proxy = await proxyPoolAPI.previewProxy(poolId, use, form.group_ids)
+    if (form.proxy_pool_id !== poolId) return false
     proxyPoolPreview.value = proxy
     form.proxy_id = proxy.id
+    return true
   } catch (error) {
-    if (form.proxy_pool_id !== poolId) return
+    if (form.proxy_pool_id !== poolId) return false
     form.proxy_id = null
     proxyPoolPreviewError.value = extractI18nErrorMessage(error, t, 'admin.proxyPools.errors', '')
+    return false
   }
 }
 watch(
-  () => [form.proxy_pool_id, form.platform, form.group_ids.join(',')] as const,
-  ([poolId], [prevPoolId]) => {
+  () => [form.proxy_pool_id, proxyPoolPreviewUse.value, form.group_ids.join(',')] as const,
+  ([poolId, use], [prevPoolId]) => {
     if (!poolId && prevPoolId) form.proxy_id = null
-    void refreshProxyPoolPreview()
+    void refreshProxyPoolPreview(use)
   }
 )
 
@@ -6583,6 +6595,10 @@ const handleGenerateUrl = async () => {
   if (form.platform === 'openai') {
     await openaiOAuth.generateAuthUrl(form.proxy_id)
   } else if (form.platform === 'gemini') {
+    if (!await refreshProxyPoolPreview(proxyPoolPreviewUse.value)) {
+      geminiOAuth.error.value = proxyPoolPreviewError.value
+      return
+    }
     await geminiOAuth.generateAuthUrl(
       form.proxy_id,
       oauthFlowRef.value?.projectId,
@@ -7510,6 +7526,16 @@ const handleGeminiExchange = async (authCode: string) => {
 
     const credentials = geminiOAuth.buildCredentials(tokenInfo)
     const extra = geminiOAuth.buildExtraInfo(tokenInfo)
+    if (!await refreshProxyPoolPreview({
+      platform: 'gemini',
+      type: 'oauth',
+      oauth_type: typeof credentials.oauth_type === 'string' ? credentials.oauth_type : undefined,
+      base_url: typeof credentials.base_url === 'string' ? credentials.base_url : undefined,
+      project_id: typeof credentials.project_id === 'string' ? credentials.project_id : ''
+    })) {
+      geminiOAuth.error.value = proxyPoolPreviewError.value
+      return
+    }
     await createAccountAndFinish('gemini', 'oauth', credentials, extra)
   } catch (error: any) {
     geminiOAuth.error.value = error.response?.data?.detail || t('admin.accounts.oauth.authFailed')

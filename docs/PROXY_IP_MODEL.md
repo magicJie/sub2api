@@ -115,11 +115,21 @@
 
 ## 4. 分配规则
 
-候选 = 策略允许的池内、`role=egress`、代理 active 未过期、对该平台未退役、该平台在用数 < `max_active_accounts`。
+候选 = 策略允许的池内、代理 active 未过期、通过当前基础 IP 资格与账号实际 AI 访问路径的专项准入、对该平台未退役、该平台在用数 < `max_active_accounts`。
 
 - churn：优先该平台历史计数最少的 IP（尽量把每个 IP 的额度均匀用满）。
 - sticky：优先**已对其他 churn 平台退役**的 IP，其次总在用账号数少的 IP。这样 kiro 用满的 IP 优先被长期平台吃掉，新 IP 留给 kiro。
 - 换 IP（人工）时额外默认过滤同国家，可放宽到不限。
+
+### 4.1 IP 质量准入（2026-11-01）
+
+完整检测流程、两种分数、硬风险下限、证据时效、缓存规则及实际拦截范围见 [IP 质量检测逻辑（当前实现）](IP_QUALITY_CHECK.md)。
+
+库存登记与可分配资格分开：新建、批量导入可以先登记代理，随后执行「质量检测」。池分配、预览、换 IP 以及账号直接新绑定代理，按账号实际访问路径选择 Claude API、ChatGPT/Codex、Gemini API/Code Assist 等对应分项；不同 AI 服务独立判断。Gemini OAuth 以最终 `project_id` 去空白后是否非空选择 Code Assist / Gemini API；有项目时忽略 `base_url`，无项目时尊重第三方端点。移池只要求基础资格。已有绑定的无关编辑保持原状，改变实际访问目标（含增删 `project_id`）时重新校验。
+
+授权前的 Gemini 池预览区分项目未知与已知为空：请求省略 `project_id` 时，仅 `code_assist` / `google_one` 使用 Code Assist 作为项目发现的引导路径；显式空字符串按无项目处理，非空项目按 Code Assist 处理。建号和更新按最终凭据再次校验。Grok 质量分项当前探测 `api.x.ai`；Grok CLI 专用主机尚未直接探测。
+
+信誉查询经待测代理请求 IPOK `/api/ip` 自查，由各出口分别使用自查额度。AI 专项证据比较、第三方端点覆盖范围、复检与快照写入失败的边界，以上述实现文档为准。
 
 ## 5. 健康与故障
 

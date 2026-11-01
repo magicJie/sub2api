@@ -79,3 +79,59 @@ func TestAdminProxyPartialUpdateValidatesMergedFallback(t *testing.T) {
 		})
 	}
 }
+
+func TestAdminProxyMoveRequiresCurrentQuality(t *testing.T) {
+	for _, tc := range []struct {
+		name                                       string
+		missingCache, changedCredentials, eligible bool
+	}{
+		{name: "missing cache", missingCache: true},
+		{name: "changed credentials", changedCredentials: true},
+		{name: "verified move", eligible: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			one, two := int64(1), int64(2)
+			original := &Proxy{ID: 9, Protocol: "socks5", Host: "8.8.8.8", Port: 1080, Status: StatusActive, PoolID: &one}
+			poolRepo := &proxyPoolRepoStub{pools: map[int64]*ProxyPool{1: {ID: 1}, 2: {ID: 2}},
+				members: []ProxyPoolMember{{Proxy: *original}}}
+			poolService := withProxyPoolService(t, poolRepo)
+			repo := &updatingProxyRepoStub{proxyRepoStub: &proxyRepoStub{}, proxy: original}
+			svc := &adminServiceImpl{proxyRepo: repo, proxyLatencyCache: poolService.latencyCache}
+			if tc.missingCache {
+				svc.proxyLatencyCache = nil
+			}
+			input := &UpdateProxyInput{PoolIDSet: true, PoolID: &two}
+			if tc.changedCredentials {
+				password := "new-password"
+				input.Password = &password
+			}
+			_, err := svc.UpdateProxy(context.Background(), 9, input)
+			if tc.eligible {
+				require.NoError(t, err)
+				require.Equal(t, &two, repo.proxy.PoolID)
+			} else {
+				require.Error(t, err)
+				require.Zero(t, repo.updateCalls)
+				require.Equal(t, &one, repo.proxy.PoolID)
+			}
+		})
+	}
+}
+
+func TestProxyConnectionProbeDoesNotRenewQualityEvidence(t *testing.T) {
+	now := time.Now()
+	proxy := Proxy{ID: 9, Protocol: "socks5", Host: "8.8.8.8", Port: 1080}
+	cache := poolQualityFixture([]ProxyPoolMember{{Proxy: proxy}})
+	checked := now.Add(-23 * time.Hour).Unix()
+	validUntil := now.Add(time.Minute).Unix()
+	cache.infos[9].QualityCheckedAt = &checked
+	cache.infos[9].QualityValidUntil = validUntil
+	svc := &adminServiceImpl{proxyLatencyCache: cache}
+	svc.saveProxyLatency(context.Background(), 9, &ProxyLatencyInfo{
+		Success: true, IPAddress: proxy.Host, UpdatedAt: now,
+	})
+	require.Equal(t, checked, *cache.infos[9].QualityCheckedAt)
+	require.Equal(t, validUntil, cache.infos[9].QualityValidUntil)
+	require.True(t, proxyQualityAdmissible(&proxy, cache.infos[9], now))
+	require.False(t, proxyQualityAdmissible(&proxy, cache.infos[9], now.Add(time.Minute)))
+}

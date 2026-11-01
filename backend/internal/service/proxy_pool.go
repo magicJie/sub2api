@@ -32,9 +32,10 @@ var (
 	ErrProxyPoolNotFound           = infraerrors.NotFound("PROXY_POOL_NOT_FOUND", "proxy pool not found")
 	ErrProxyPoolNameExists         = infraerrors.Conflict("PROXY_POOL_NAME_EXISTS", "proxy pool name already exists")
 	ErrProxyPoolDefaultDelete      = infraerrors.BadRequest("PROXY_POOL_DEFAULT_UNDELETABLE", "default proxy pool cannot be deleted")
-	ErrProxyPoolNoAvailable        = infraerrors.Conflict("PROXY_POOL_NO_AVAILABLE_PROXY", "no available proxy in pool for this platform (all retired, inactive or expired)")
-	ErrProxyPoolProxyNotInPool     = infraerrors.BadRequest("PROXY_POOL_PROXY_UNAVAILABLE", "proxy is not an available member of the proxy pool for this platform")
+	ErrProxyPoolNoAvailable        = infraerrors.Conflict("PROXY_POOL_NO_AVAILABLE_PROXY", "no available proxy in pool for this platform; candidates must be active, unexpired, within policy limits and pass a fresh full quality check with low-risk IP reputation")
+	ErrProxyPoolProxyNotInPool     = infraerrors.BadRequest("PROXY_POOL_PROXY_UNAVAILABLE", "proxy must be an available pool member with a fresh full quality check and low-risk IP reputation")
 	ErrProxyPoolUnavailable        = infraerrors.ServiceUnavailable("PROXY_POOL_UNAVAILABLE", "proxy pool service is not available")
+	ErrProxyPoolQualityUnavailable = infraerrors.ServiceUnavailable("PROXY_POOL_QUALITY_UNAVAILABLE", "proxy quality cache is unavailable; restore the cache and run a full quality check before allocating or moving proxies")
 	ErrAccountProxyLocked          = infraerrors.Conflict("ACCOUNT_PROXY_LOCKED", "account proxy is locked by proxy pool binding; unbind it first")
 	ErrProxyPoolShadowAccount      = infraerrors.BadRequest("PROXY_POOL_SHADOW_ACCOUNT", "shadow account inherits proxy from its parent account")
 	ErrProxyPoolLimitInvalid       = infraerrors.BadRequest("PROXY_POOL_LIMIT_INVALID", "platform limit must be >= 1")
@@ -115,7 +116,7 @@ type ProxyPoolRepository interface {
 type ProxyPoolService struct {
 	repo        ProxyPoolRepository
 	accountRepo AccountRepository
-	// latencyCache 提供探测到的国家，换 IP 时同国家优先（可为空）。
+	// latencyCache 提供分配准入所需的质量快照和换 IP 时同国家优先的信息。
 	latencyCache ProxyLatencyCache
 	// mu 串行化“挑选代理 → 写入账号 → 锁定绑定”，避免并发创建超出平台上限（单实例内）。
 	mu sync.Mutex
@@ -204,6 +205,43 @@ func (s *ProxyPoolService) AssignProxies(ctx context.Context, poolID int64, prox
 	if err != nil {
 		return err
 	}
+	if len(proxyIDs) == 0 {
+		return s.repo.AssignProxies(ctx, pool, proxyIDs)
+	}
+	pools, err := s.repo.ListPools(ctx)
+	if err != nil {
+		return err
+	}
+	selected := make(map[int64]*Proxy, len(proxyIDs))
+	for _, id := range proxyIDs {
+		selected[id] = nil
+	}
+	for i := range pools {
+		members, err := s.repo.ListMembers(ctx, &pools[i], 0)
+		if err != nil {
+			return err
+		}
+		for j := range members {
+			if _, ok := selected[members[j].Proxy.ID]; ok {
+				selected[members[j].Proxy.ID] = &members[j].Proxy
+			}
+		}
+	}
+	for _, proxy := range selected {
+		if proxy == nil {
+			return ErrProxyPoolProxyNotInPool
+		}
+	}
+	infos, err := s.qualitySnapshots(ctx, proxyIDs)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	for id, proxy := range selected {
+		if !proxyQualityAdmissible(proxy, infos[id], now) {
+			return ErrProxyPoolProxyNotInPool
+		}
+	}
 	return s.repo.AssignProxies(ctx, pool, proxyIDs)
 }
 
@@ -234,23 +272,48 @@ func (s *ProxyPoolService) GetAccountBinding(ctx context.Context, accountID int6
 
 // PreviewProxy 返回下一次分配会选中的代理（不占用），供 OAuth 流程先用该代理完成授权。
 // groupIDs 为将要绑定的分组，用于匹配分组策略。
-func (s *ProxyPoolService) PreviewProxy(ctx context.Context, poolID int64, platform string, groupIDs []int64) (*Proxy, error) {
+func (s *ProxyPoolService) PreviewProxy(ctx context.Context, poolID int64, account *Account, groupIDs []int64) (*Proxy, error) {
 	pool, err := s.repo.GetPool(ctx, poolID)
 	if err != nil {
 		return nil, err
 	}
-	return s.pickProxy(ctx, pool, platform, groupIDs, 0, nil, false)
+	qualityTarget := proxyQualityTargetForAccount(account)
+	if account != nil && account.Platform == PlatformGemini && (account.Type == AccountTypeOAuth || account.Type == "") {
+		if _, projectKnown := account.Credentials["project_id"]; !projectKnown {
+			switch account.GeminiOAuthType() {
+			case "code_assist", "google_one":
+				// OAuth discovery needs Code Assist before the final project ID is known.
+				qualityTarget = "gemini_code_assist"
+			}
+		}
+	}
+	return s.pickProxy(ctx, pool, account, groupIDs, 0, nil, false, qualityTarget)
+}
+
+// qualitySnapshots 批量读取准入证据；缓存不可用时拒绝新分配和移池。
+func (s *ProxyPoolService) qualitySnapshots(ctx context.Context, proxyIDs []int64) (map[int64]*ProxyLatencyInfo, error) {
+	if len(proxyIDs) == 0 {
+		return nil, nil
+	}
+	if s.latencyCache == nil {
+		return nil, ErrProxyPoolQualityUnavailable
+	}
+	infos, err := s.latencyCache.GetProxyLatencies(ctx, proxyIDs)
+	if err != nil {
+		return nil, ErrProxyPoolQualityUnavailable.WithCause(err)
+	}
+	return infos, nil
 }
 
 // pickProxy 按账号适用的策略（分组策略优先于平台策略）在池内可用落地 IP 中挑选（排序见 sortProxyPoolCandidates）。
 // 没有适用策略或策略不允许该池时拒绝。
 // preferredID 非空时：strict=true 要求必须是该代理，否则在其可用时优先选它。
-func (s *ProxyPoolService) pickProxy(ctx context.Context, pool *ProxyPool, platform string, groupIDs []int64, excludeAccountID int64, preferredID *int64, strict bool) (*Proxy, error) {
+func (s *ProxyPoolService) pickProxy(ctx context.Context, pool *ProxyPool, account *Account, groupIDs []int64, excludeAccountID int64, preferredID *int64, strict bool, qualityTarget string) (*Proxy, error) {
 	policies, err := s.loadPolicies(ctx)
 	if err != nil {
 		return nil, err
 	}
-	policy, err := policyFor(policies, platform, groupIDs)
+	policy, err := policyFor(policies, account.Platform, groupIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -261,10 +324,18 @@ func (s *ProxyPoolService) pickProxy(ctx context.Context, pool *ProxyPool, platf
 	if err != nil {
 		return nil, err
 	}
+	ids := make([]int64, len(members))
+	for i := range members {
+		ids[i] = members[i].Proxy.ID
+	}
+	infos, err := s.qualitySnapshots(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
 	now := time.Now()
 	candidates := make([]ProxyPoolMember, 0, len(members))
 	for i := range members {
-		if proxyPoolMemberAvailable(policy, &members[i], now) {
+		if proxyPoolMemberAvailable(policy, &members[i], now) && proxyQualityAdmissibleForTarget(&members[i].Proxy, infos[members[i].Proxy.ID], qualityTarget, now) {
 			candidates = append(candidates, members[i])
 		}
 	}
@@ -310,7 +381,7 @@ func (s *ProxyPoolService) AssignAccount(ctx context.Context, accountID, poolID 
 	if binding != nil && binding.Locked {
 		return nil, ErrAccountProxyLocked
 	}
-	proxy, err := s.pickProxy(ctx, pool, account.Platform, account.GroupIDs, accountID, account.ProxyID, false)
+	proxy, err := s.pickProxy(ctx, pool, account, account.GroupIDs, accountID, account.ProxyID, false, proxyQualityTargetForAccount(account))
 	if err != nil {
 		return nil, err
 	}
@@ -365,7 +436,8 @@ func beginProxyPoolAccountCreate(ctx context.Context, input *CreateAccountInput,
 	if input.ProxyID != nil && *input.ProxyID > 0 {
 		preferred = input.ProxyID
 	}
-	proxy, err := s.pickProxy(ctx, pool, input.Platform, groupIDs, 0, preferred, false)
+	account := &Account{Platform: input.Platform, Type: input.Type, Credentials: input.Credentials}
+	proxy, err := s.pickProxy(ctx, pool, account, groupIDs, 0, preferred, false, proxyQualityTargetForAccount(account))
 	if err != nil {
 		s.mu.Unlock()
 		return nil, err

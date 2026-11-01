@@ -145,10 +145,23 @@ export async function assignProxies(id: number, proxyIds: number[]): Promise<voi
   await apiClient.post(`/admin/proxy-pools/${id}/proxies`, { proxy_ids: proxyIds })
 }
 
+export interface ProxyPreviewUse {
+  platform: string
+  type: string
+  oauth_type?: string
+  base_url?: string
+  /** Absent before OAuth discovery; empty when credentials have no project. */
+  project_id?: string
+}
+
 /** 下一次分配会选中的代理（不占用）；OAuth 授权需先用它换取 token。groupIds 用于匹配分组策略。 */
-export async function previewProxy(id: number, platform: string, groupIds: number[] = []): Promise<Proxy> {
+export async function previewProxy(
+  id: number,
+  use: ProxyPreviewUse,
+  groupIds: number[] = []
+): Promise<Proxy> {
   const { data } = await apiClient.get<Proxy>(`/admin/proxy-pools/${id}/preview`, {
-    params: { platform, group_ids: groupIds.length ? groupIds.join(',') : undefined }
+    params: { ...use, group_ids: groupIds.length ? groupIds.join(',') : undefined }
   })
   return data
 }

@@ -36,11 +36,11 @@ func TestProxyPoolPick_RequiresPolicyAndAllowedPool(t *testing.T) {
 	svc := withProxyPoolService(t, repo)
 	ctx := context.Background()
 
-	_, err := svc.pickProxy(ctx, pool, "opencode", nil, 0, nil, false)
+	_, err := svc.pickProxy(ctx, pool, &Account{Platform: "opencode"}, nil, 0, nil, false, proxyQualityTargetForAccount(&Account{Platform: "opencode"}))
 	require.ErrorIs(t, err, ErrProxyIPPolicyMissing, "没有策略的平台不能从池分配")
-	_, err = svc.pickProxy(ctx, other, "kiro", nil, 0, nil, false)
+	_, err = svc.pickProxy(ctx, other, &Account{Platform: "kiro"}, nil, 0, nil, false, proxyQualityTargetForAccount(&Account{Platform: "kiro"}))
 	require.ErrorIs(t, err, ErrProxyIPPolicyPoolDenied)
-	p, err := svc.pickProxy(ctx, pool, "kiro", nil, 0, nil, false)
+	p, err := svc.pickProxy(ctx, pool, &Account{Platform: "kiro"}, nil, 0, nil, false, proxyQualityTargetForAccount(&Account{Platform: "kiro"}))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), p.ID)
 }
@@ -63,12 +63,12 @@ func TestProxyPoolPick_StickyPrefersChurnUsedUp(t *testing.T) {
 	ctx := context.Background()
 
 	// 长期平台：优先 kiro 用满的 IP；3 号对 ollama 已满（max_active=1）被跳过。
-	p, err := svc.pickProxy(ctx, pool, "ollama", nil, 0, nil, false)
+	p, err := svc.pickProxy(ctx, pool, &Account{Platform: "ollama"}, nil, 0, nil, false, proxyQualityTargetForAccount(&Account{Platform: "ollama"}))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), p.ID)
 
 	// 消耗型平台：已退役的 1、3 不可用，只剩新 IP。
-	p, err = svc.pickProxy(ctx, pool, "kiro", nil, 0, nil, false)
+	p, err = svc.pickProxy(ctx, pool, &Account{Platform: "kiro"}, nil, 0, nil, false, proxyQualityTargetForAccount(&Account{Platform: "kiro"}))
 	require.NoError(t, err)
 	require.Equal(t, int64(2), p.ID)
 }
@@ -153,16 +153,16 @@ func TestProxyPoolPick_GroupPolicy(t *testing.T) {
 	ctx := context.Background()
 
 	// plus（churn，上限 3）：1 号已用满退役，只能拿新 IP。
-	p, err := svc.pickProxy(ctx, pool, "openai", []int64{10}, 0, nil, false)
+	p, err := svc.pickProxy(ctx, pool, &Account{Platform: "openai"}, []int64{10}, 0, nil, false, proxyQualityTargetForAccount(&Account{Platform: "openai"}))
 	require.NoError(t, err)
 	require.Equal(t, int64(2), p.ID)
 
 	// 平台策略（sticky）：优先被同平台 churn 分组用满的 1 号，把新 IP 留给消耗型分组。
-	p, err = svc.pickProxy(ctx, pool, "openai", nil, 0, nil, false)
+	p, err = svc.pickProxy(ctx, pool, &Account{Platform: "openai"}, nil, 0, nil, false, proxyQualityTargetForAccount(&Account{Platform: "openai"}))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), p.ID)
 
 	// pro 分组策略只允许 2 号池。
-	_, err = svc.pickProxy(ctx, pool, "openai", []int64{20}, 0, nil, false)
+	_, err = svc.pickProxy(ctx, pool, &Account{Platform: "openai"}, []int64{20}, 0, nil, false, proxyQualityTargetForAccount(&Account{Platform: "openai"}))
 	require.ErrorIs(t, err, ErrProxyIPPolicyPoolDenied)
 }
