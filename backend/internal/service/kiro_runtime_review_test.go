@@ -4,10 +4,13 @@ package service
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	kirocooldown "github.com/Wei-Shaw/sub2api/internal/kiro/cooldown"
@@ -72,4 +75,103 @@ func TestKiroForwardModelCapacityPreservesAccountAvailability(t *testing.T) {
 			})
 		}
 	}
+}
+
+type kiroRuntimeStateRepo struct {
+	mockAccountRepoForGemini
+	persisted Account
+}
+
+func (r *kiroRuntimeStateRepo) GetByID(context.Context, int64) (*Account, error) {
+	snapshot := r.persisted
+	return &snapshot, nil
+}
+
+func (r *kiroRuntimeStateRepo) SetError(_ context.Context, _ int64, message string) error {
+	r.persisted.Status = StatusError
+	r.persisted.ErrorMessage = message
+	return nil
+}
+
+func (r *kiroRuntimeStateRepo) SetTempUnschedulable(_ context.Context, _ int64, until time.Time, reason string) error {
+	r.persisted.TempUnschedulableUntil = &until
+	r.persisted.TempUnschedulableReason = reason
+	return nil
+}
+
+func (r *kiroRuntimeStateRepo) SetRateLimited(_ context.Context, _ int64, until time.Time) error {
+	r.persisted.RateLimitResetAt = &until
+	return nil
+}
+
+func TestKiroForwardPermanentRefreshErrorOwnsAccountState(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		for _, stream := range []bool{false, true} {
+			name := http.StatusText(status)
+			if stream {
+				name += "/stream"
+			}
+			t.Run(name, func(t *testing.T) {
+				account := kiroBridgeTestAccount()
+				account.Status = StatusActive
+				account.Credentials["refresh_token"] = "revoked-refresh"
+				account.Credentials["expires_at"] = time.Now().Add(time.Hour).Format(time.RFC3339)
+				repo := &kiroRuntimeStateRepo{persisted: *account}
+				provider := NewKiroTokenProvider(repo, nil, nil)
+				provider.kiroOAuthService = &stubKiroAccountTokenRefresher{err: errors.New("invalid_grant")}
+				svc := &GatewayService{
+					accountRepo: repo,
+					httpUpstream: &queuedHTTPUpstream{responses: []*http.Response{
+						newJSONResponse(status, `{"message":"token expired"}`),
+					}},
+					kiroTokenProvider: provider,
+					kiroCooldownStore: &kiroUsageCooldownStore{},
+					rateLimitService: NewRateLimitService(repo, nil, &config.Config{}, nil, nil),
+				}
+				body := []byte(`{"model":"claude-sonnet-4.6","messages":[{"role":"user","content":"hello"}]}`)
+				parsed, err := ParseGatewayRequest(NewRequestBodyRef(body), "anthropic")
+				require.NoError(t, err)
+				parsed.Stream = stream
+				recorder := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(recorder)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+				_, err = svc.Forward(t.Context(), c, account, parsed)
+				require.Error(t, err)
+				require.Equal(t, StatusError, account.Status)
+				require.Equal(t, StatusError, repo.persisted.Status)
+				require.NotEmpty(t, repo.persisted.ErrorMessage)
+				require.Nil(t, repo.persisted.TempUnschedulableUntil)
+				require.Empty(t, repo.persisted.TempUnschedulableReason)
+				require.Nil(t, repo.persisted.RateLimitResetAt)
+			})
+		}
+	}
+}
+
+func TestKiroForwardGenericForbiddenTemporarilyUnavailable(t *testing.T) {
+	account := kiroBridgeTestAccount()
+	account.Status = StatusActive
+	repo := &kiroRuntimeStateRepo{persisted: *account}
+	svc := &GatewayService{
+		accountRepo: repo,
+		httpUpstream: &queuedHTTPUpstream{responses: []*http.Response{
+			newJSONResponse(http.StatusForbidden, `{"message":"permission denied"}`),
+		}},
+		kiroCooldownStore: &kiroUsageCooldownStore{},
+		rateLimitService: NewRateLimitService(repo, nil, &config.Config{}, nil, nil),
+	}
+	body := []byte(`{"model":"claude-sonnet-4.6","messages":[{"role":"user","content":"hello"}]}`)
+	parsed, err := ParseGatewayRequest(NewRequestBodyRef(body), "anthropic")
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+	_, err = svc.Forward(t.Context(), c, account, parsed)
+	require.Error(t, err)
+	require.Equal(t, StatusActive, repo.persisted.Status)
+	require.Empty(t, repo.persisted.ErrorMessage)
+	require.NotNil(t, repo.persisted.TempUnschedulableUntil)
+	require.True(t, repo.persisted.TempUnschedulableUntil.After(time.Now()))
+	require.True(t, repo.persisted.TempUnschedulableUntil.Before(time.Now().Add(11*time.Minute)))
+	require.Nil(t, repo.persisted.RateLimitResetAt)
 }

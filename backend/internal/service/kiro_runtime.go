@@ -859,7 +859,7 @@ func prepareKiroPayloadBodyForRequestModel(anthropicBody []byte, requestModel st
 }
 
 func (s *GatewayService) markKiroAuthTemporarilyUnavailable(ctx context.Context, account *Account, statusCode int, body string) {
-	if s == nil || s.accountRepo == nil || account == nil {
+	if s == nil || s.accountRepo == nil || account == nil || account.Status == StatusError {
 		return
 	}
 	until := time.Now().Add(10 * time.Minute)
@@ -1040,7 +1040,10 @@ func (s *GatewayService) classifyKiroHTTPErrorAndRecordOps(ctx context.Context, 
 	}
 	// 402 / 额度类 429：限流到 reset 并打「可退役」标记；限流性质的 429 不在此处理。
 	quotaRejected := s.markKiroQuotaRejectedIfNeeded(ctx, account, resp.StatusCode, string(respBody))
-	kiroStateHandled := quotaRejected
+	// A permanent refresh failure already belongs to TokenProvider's error state.
+	authStateHandled := account != nil && account.Status == StatusError &&
+		(resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden)
+	kiroStateHandled := quotaRejected || authStateHandled
 	if resp.StatusCode == http.StatusTooManyRequests && classification.Category == kiroErrorRateLimited && !quotaRejected {
 		kiroStateHandled = true
 		if resp.Header.Get("x-kiro-cooldown") == "" && s.kiroCooldownStore != nil {
@@ -1049,15 +1052,16 @@ func (s *GatewayService) classifyKiroHTTPErrorAndRecordOps(ctx context.Context, 
 			}
 		}
 	}
-	if resp.StatusCode == http.StatusForbidden {
+	if (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) &&
+		!authStateHandled && !quotaRejected && classification.Category != kiroErrorModelCapacity {
 		kiroStateHandled = true
-		if isKiroSuspendedBody(respBody) {
+		if resp.StatusCode == http.StatusForbidden && isKiroSuspendedBody(respBody) {
 			if resp.Header.Get("x-kiro-cooldown") == "" && s.kiroCooldownStore != nil {
 				if _, err := s.markKiroSuspended(ctx, buildKiroAccountKey(account)); err != nil {
 					return nil, err
 				}
 			}
-		} else if classification.Category == kiroErrorAuthError {
+		} else {
 			s.markKiroAuthTemporarilyUnavailable(ctx, account, resp.StatusCode, string(respBody))
 		}
 	}
