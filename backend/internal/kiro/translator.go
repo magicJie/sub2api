@@ -57,6 +57,11 @@ type Usage struct {
 	inputTokensReported bool
 }
 
+// InputTokensReported distinguishes an upstream-reported zero from missing input usage.
+func (u *Usage) InputTokensReported() bool {
+	return u.inputTokensReported
+}
+
 type StreamResult struct {
 	Usage         Usage
 	StopReason    string

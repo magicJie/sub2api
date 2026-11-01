@@ -890,8 +890,8 @@ func kiroModelContextWindow(account *Account, mappedModel string) int64 {
 
 func kiroUsageToClaude(usage kiropkg.Usage, fallbackInput int) ClaudeUsage {
 	inputTokens := usage.InputTokens
-	// 缓存模拟全部命中时 input 本就是 0，不能再回填估算值，否则 cache 部分会被重复计费。
-	if inputTokens == 0 && usage.CacheReadInputTokens == 0 && usage.CacheCreationInputTokens == 0 {
+	// Preserve reported zeros and cache-only input; estimate only missing usage.
+	if !usage.InputTokensReported() && inputTokens == 0 && usage.CacheReadInputTokens == 0 && usage.CacheCreationInputTokens == 0 {
 		inputTokens = fallbackInput
 	}
 	return ClaudeUsage{
