@@ -1041,7 +1041,7 @@ func (s *GatewayService) classifyKiroHTTPErrorAndRecordOps(ctx context.Context, 
 	// 402 / 额度类 429：限流到 reset 并打「可退役」标记；限流性质的 429 不在此处理。
 	quotaRejected := s.markKiroQuotaRejectedIfNeeded(ctx, account, resp.StatusCode, string(respBody))
 	kiroStateHandled := quotaRejected
-	if resp.StatusCode == http.StatusTooManyRequests && !quotaRejected {
+	if resp.StatusCode == http.StatusTooManyRequests && classification.Category == kiroErrorRateLimited && !quotaRejected {
 		kiroStateHandled = true
 		if resp.Header.Get("x-kiro-cooldown") == "" && s.kiroCooldownStore != nil {
 			if _, err := s.markKiro429(ctx, buildKiroAccountKey(account)); err != nil {

@@ -456,9 +456,17 @@ func (s *GatewayService) doKiroMCPJSONRequest(ctx context.Context, account *Acco
 		}
 
 		if resp.StatusCode == http.StatusTooManyRequests {
-			if _, err := s.markKiro429(ctx, accountKey); err != nil {
-				_ = resp.Body.Close()
-				return nil, currentToken, err
+			respBody, readErr := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if readErr != nil {
+				return nil, currentToken, readErr
+			}
+			resetHTTPResponseBody(resp, respBody)
+			if classifyKiroHTTPError(resp.StatusCode, string(respBody)).Category == kiroErrorRateLimited {
+				if _, err := s.markKiro429(ctx, accountKey); err != nil {
+					_ = resp.Body.Close()
+					return nil, currentToken, err
+				}
 			}
 		}
 		if resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode >= 500 {
