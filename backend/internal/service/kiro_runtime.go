@@ -288,6 +288,9 @@ func (s *GatewayService) forwardKiroMessagesAttempt(ctx context.Context, c *gin.
 		})
 		return nil, err
 	}
+	if err := s.markKiroSuccess(ctx, buildKiroAccountKey(account)); err != nil {
+		return nil, err
+	}
 	s.saveKiroContinuation(ctx, account, parsed, parseResult.Continuation)
 	logKiroUsageObservation(account, mappedModel, parseResult.Usage)
 
@@ -365,6 +368,10 @@ func (s *GatewayService) openKiroAnthropicStreamResponse(ctx context.Context, ac
 		streamResult, streamErr := kiropkg.StreamEventStreamAsAnthropicWithContext(ctx, resp.Body, pw, mappedModel, inputTokens, requestCtx)
 		if streamErr != nil {
 			_ = pw.CloseWithError(streamErr)
+			return
+		}
+		if err := s.markKiroSuccess(ctx, buildKiroAccountKey(account)); err != nil {
+			_ = pw.CloseWithError(err)
 			return
 		}
 		if streamResult != nil {
@@ -484,6 +491,17 @@ func (s *GatewayService) executeKiroUpstreamWithParsed(ctx context.Context, acco
 					continue
 				}
 				return nil, requestCtx, err
+			}
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				replayBody, inspectErr := kiropkg.InspectEventStreamStart(resp.Body)
+				resp.Body = replayBody
+				if streamErr, ok := kiropkg.AsStreamError(inspectErr); ok {
+					_ = resp.Body.Close()
+					resp = kiroStreamErrorResponse(streamErr, resp.Header)
+				} else if inspectErr != nil {
+					_ = resp.Body.Close()
+					return nil, requestCtx, inspectErr
+				}
 			}
 
 			if resp.StatusCode == http.StatusTooManyRequests {
@@ -610,12 +628,6 @@ func (s *GatewayService) executeKiroUpstreamWithParsed(ctx context.Context, acco
 				return resp, requestCtx, nil
 			}
 
-			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				if err := s.markKiroSuccess(ctx, accountKey); err != nil {
-					_ = resp.Body.Close()
-					return nil, requestCtx, err
-				}
-			}
 			return resp, requestCtx, nil
 		}
 	}

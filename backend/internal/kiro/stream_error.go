@@ -10,8 +10,11 @@ package kiro
 // 参考 magpie-community/plugins packages/kiro（MIT）。
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 )
@@ -37,6 +40,17 @@ func AsStreamError(err error) (*StreamError, bool) {
 		return streamErr, true
 	}
 	return nil, false
+}
+
+// InspectEventStreamStart decodes the first frame with the regular exception
+// decoder and returns a reader that replays every byte consumed by the probe.
+func InspectEventStreamStart(body io.ReadCloser) (io.ReadCloser, error) {
+	var consumed bytes.Buffer
+	_, err := readEventStreamMessage(bufio.NewReader(io.TeeReader(body, &consumed)))
+	return struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(consumed.Bytes()), body), body}, err
 }
 
 // kiroExceptionEventTypes 是以 :event-type 形式出现的异常事件（部分版本不带 :message-type）。

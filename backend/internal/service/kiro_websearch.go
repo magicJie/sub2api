@@ -165,6 +165,9 @@ func (s *GatewayService) streamKiroWebSearchAsAnthropic(
 		if streamErr != nil {
 			return streamErr
 		}
+		if err := s.markKiroSuccess(ctx, buildKiroAccountKey(account)); err != nil {
+			return err
+		}
 
 		analysis := kiropkg.AnalyzeBufferedStream(chunks)
 		if analysis.HasWebSearchToolUse && strings.TrimSpace(analysis.WebSearchQuery) != "" && iteration+1 < kiroMaxWebSearchIterations {
@@ -261,6 +264,9 @@ func (s *GatewayService) executeKiroWebSearch(ctx context.Context, account *Acco
 		}()
 		if parseErr != nil {
 			return nil, parseErr
+		}
+		if err := s.markKiroSuccess(ctx, buildKiroAccountKey(account)); err != nil {
+			return nil, err
 		}
 		if requestID == "" {
 			requestID = buildKiroRequestID(resp)

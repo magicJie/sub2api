@@ -130,6 +130,7 @@ func TestKiroStreamingFailureRetainsUsageAndTypedError(t *testing.T) {
 			require.Contains(t, rec.Body.String(), "rate_limit_error")
 			require.NotContains(t, rec.Body.String(), "upstream_error")
 			require.Equal(t, 1, store.mark429Calls)
+			require.Zero(t, store.successCalls)
 		})
 	}
 }

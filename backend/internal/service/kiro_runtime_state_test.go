@@ -3,6 +3,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,6 +23,7 @@ type stubKiroCooldownStore struct {
 	reserveWait  time.Duration
 	reserveErr   error
 	successErr   error
+	successCalls int
 	mark429TTL   time.Duration
 	mark429Err   error
 	mark429Calls int
@@ -82,6 +84,7 @@ func (s *stubKiroCooldownStore) ReserveRequest(context.Context, string) (time.Du
 }
 
 func (s *stubKiroCooldownStore) MarkSuccess(context.Context, string) error {
+	s.successCalls++
 	return s.successErr
 }
 
@@ -334,11 +337,52 @@ func kiro429TestPayload(t *testing.T) []byte {
 
 const kiroThrottleBody = `{"message":"Too many requests, please wait before trying again."}`
 
+func TestKiroHTTP200ExceptionIsClassifiedBeforeSuccess(t *testing.T) {
+	stubKiroRetrySleep(t)
+	frame := buildKiroBridgeEventStreamFrame(t, "throttlingException", map[string]any{"message": "Too many requests"})
+	responses := make([]*http.Response, 3)
+	for i := range responses {
+		responses[i] = &http.Response{StatusCode: http.StatusOK, Header: make(http.Header),
+			Body: io.NopCloser(bytes.NewReader(frame))}
+	}
+	svc, account, upstream, store := newKiro429TestService(t, responses...)
+	resp, _, err := svc.executeKiroUpstream(t.Context(), account, kiro429TestPayload(t), "claude-sonnet-4.6", "claude-sonnet-4.6", "token", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
+	require.Len(t, upstream.requests, 3)
+	require.Equal(t, 1, store.mark429Calls)
+	require.Zero(t, store.successCalls)
+}
+
+func TestKiroFirstFrameProbeReplaysAllBytesWithoutMarkingSuccess(t *testing.T) {
+	stream := kiroBridgeSuccessEventStream(t)
+	svc, account, _, store := newKiro429TestService(t, &http.Response{StatusCode: http.StatusOK,
+		Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(stream))})
+	resp, _, err := svc.executeKiroUpstream(t.Context(), account, kiro429TestPayload(t), "claude-sonnet-4.6", "claude-sonnet-4.6", "token", nil)
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, stream, body)
+	require.Zero(t, store.successCalls)
+}
+
+func TestKiroSuccessRecordedOnlyAfterCompleteStream(t *testing.T) {
+	svc, account, _, store := newKiro429TestService(t, &http.Response{StatusCode: http.StatusOK,
+		Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(kiroBridgeSuccessEventStream(t)))})
+	account.Credentials = map[string]any{"access_token": "token"}
+	body := kiro429TestPayload(t)
+	resp, _, err := svc.openKiroAnthropicStreamResponse(t.Context(), account, nil, body, "claude-sonnet-4.6", "claude-sonnet-4.6", nil, nil)
+	require.NoError(t, err)
+	_, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, 1, store.successCalls)
+}
+
 func TestExecuteKiroUpstreamRateLimit429RetriesSameAccount(t *testing.T) {
 	sleeps := stubKiroRetrySleep(t)
 	svc, account, upstream, store := newKiro429TestService(t,
 		newJSONResponse(http.StatusTooManyRequests, kiroThrottleBody),
-		newJSONResponse(http.StatusOK, `{}`),
+		&http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(kiroBridgeSuccessEventStream(t)))},
 	)
 
 	resp, _, err := svc.executeKiroUpstream(context.Background(), account, kiro429TestPayload(t), "claude-sonnet-4-6", "claude-sonnet-4-6", "test-token", nil)
