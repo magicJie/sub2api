@@ -50,3 +50,23 @@ func TestSearchResultsReferToTheirServerToolUse(t *testing.T) {
 		})
 	}
 }
+
+func TestSearchRewritesPreserveToolIntegerArguments(t *testing.T) {
+	body := []byte(`{"tools":[{"name":"web_search","type":"web_search_20250305"}],"messages":[{"role":"user","content":"start"},{"role":"assistant","content":[{"type":"tool_use","id":"old","name":"lookup","input":{"id":9007199254740993}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"old","content":"ok"}]}]}`)
+	body, err := ReplaceWebSearchToolDescription(body)
+	require.NoError(t, err)
+	body, err = InjectToolResultsClaude(body, "search", "query", nil)
+	require.NoError(t, err)
+	require.Equal(t, "9007199254740993", gjson.GetBytes(body, "messages.1.content.0.input.id").Raw)
+
+	response, err := InjectSearchIndicatorsInResponse([]byte(`{"content":[{"type":"tool_use","id":"old","name":"lookup","input":{"id":9007199254740993}}]}`), []SearchIndicator{{ToolUseID: "search", Query: "query"}})
+	require.NoError(t, err)
+	require.Equal(t, "9007199254740993", gjson.GetBytes(response, "content.2.input.id").Raw)
+
+	chunk, forward := AdjustSSEChunk([]byte("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"input\":{\"id\":9007199254740993}}}\n\n"), 2)
+	require.True(t, forward)
+	_, data, found := strings.Cut(string(chunk), "data: ")
+	require.True(t, found)
+	require.Equal(t, int64(2), gjson.Get(data, "index").Int())
+	require.Equal(t, "9007199254740993", gjson.Get(data, "content_block.input.id").Raw)
+}

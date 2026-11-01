@@ -3,6 +3,9 @@ package kiro
 import (
 	"encoding/json"
 	"strings"
+
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 type BufferedStreamResult struct {
@@ -281,16 +284,12 @@ func adjustEventPayload(payload string, indexOffset int) string {
 	if payload == "" || indexOffset == 0 {
 		return payload
 	}
-	var event map[string]any
-	if err := json.Unmarshal([]byte(payload), &event); err != nil {
-		return payload
-	}
-	switch eventType, _ := event["type"].(string); eventType {
+	event := gjson.Parse(payload)
+	switch event.Get("type").String() {
 	case "content_block_start", "content_block_delta", "content_block_stop":
-		if idx, ok := event["index"].(float64); ok {
-			event["index"] = int(idx) + indexOffset
-			if adjusted, err := json.Marshal(event); err == nil {
-				return string(adjusted)
+		if idx := event.Get("index"); idx.Type == gjson.Number {
+			if adjusted, err := sjson.Set(payload, "index", idx.Int()+int64(indexOffset)); err == nil {
+				return adjusted
 			}
 		}
 	}

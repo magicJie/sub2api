@@ -1,6 +1,7 @@
 package kiro
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -140,7 +141,9 @@ func GenerateToolUseID() string {
 
 func ReplaceWebSearchToolDescription(body []byte) ([]byte, error) {
 	var payload map[string]any
-	if err := json.Unmarshal(body, &payload); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	if err := decoder.Decode(&payload); err != nil {
 		return body, err
 	}
 	rawTools, ok := payload["tools"].([]any)
@@ -188,7 +191,9 @@ func ReplaceWebSearchToolDescription(body []byte) ([]byte, error) {
 
 func InjectToolResultsClaude(claudePayload []byte, toolUseID, query string, results *WebSearchResults) ([]byte, error) {
 	var payload map[string]any
-	if err := json.Unmarshal(claudePayload, &payload); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(claudePayload))
+	decoder.UseNumber()
+	if err := decoder.Decode(&payload); err != nil {
 		return claudePayload, fmt.Errorf("parse claude payload: %w", err)
 	}
 
@@ -242,7 +247,9 @@ func InjectSearchIndicatorsInResponse(responsePayload []byte, searches []SearchI
 	}
 
 	var response map[string]any
-	if err := json.Unmarshal(responsePayload, &response); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(responsePayload))
+	decoder.UseNumber()
+	if err := decoder.Decode(&response); err != nil {
 		return responsePayload, err
 	}
 	content, _ := response["content"].([]any)
