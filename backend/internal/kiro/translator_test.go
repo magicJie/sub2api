@@ -843,23 +843,6 @@ func TestStreamEventStreamAsAnthropicKeepsToolUseMatchingRequestSchema(t *testin
 	require.Contains(t, out.String(), `"id":"toolu_script"`)
 }
 
-func TestStreamEventStreamAsAnthropicDropsToolUseMissingSchemaRequiredField(t *testing.T) {
-	stream := bytes.NewBuffer(nil)
-	_, _ = stream.Write(buildEventStreamFrame(t, "toolUseEvent", map[string]any{
-		"toolUseEvent": map[string]any{
-			"toolUseId": "toolu_missing",
-			"name":      "Write",
-			"input":     `{"file_path":"/tmp/a"}`,
-			"stop":      true,
-		},
-	}))
-
-	var out bytes.Buffer
-	result, err := StreamEventStreamAsAnthropicWithContext(context.Background(), stream, &out, "claude-sonnet-4-5", 9, schemaToolContext("Write", "file_path", "content"))
-	require.NoError(t, err)
-	require.Equal(t, "end_turn", result.StopReason)
-	require.NotContains(t, out.String(), `"id":"toolu_missing"`)
-}
 
 func TestParseNonStreamingEventStreamKeepsToolUseMatchingRequestSchema(t *testing.T) {
 	stream := bytes.NewBuffer(nil)
@@ -915,26 +898,6 @@ func TestBuildKiroPayloadRecordsToolRequiredFields(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestParseNonStreamingEventStreamSkipsTruncatedToolUse(t *testing.T) {
-	stream := bytes.NewBuffer(nil)
-	_, _ = stream.Write(buildEventStreamFrame(t, "toolUseEvent", map[string]any{
-		"toolUseEvent": map[string]any{
-			"toolUseId": "toolu_truncated",
-			"name":      "write_to_file",
-			"input":     `{"path":"main.go","content":"package main`,
-			"stop":      true,
-		},
-	}))
-
-	result, err := ParseNonStreamingEventStreamWithContext(stream, "claude-sonnet-4-5", KiroRequestContext{})
-	require.NoError(t, err)
-	require.Equal(t, "end_turn", result.StopReason)
-
-	content := gjson.GetBytes(result.ResponseBody, "content").Array()
-	require.Len(t, content, 1)
-	require.Equal(t, "text", content[0].Get("type").String())
-	require.NotContains(t, string(result.ResponseBody), `"type":"tool_use"`)
-}
 
 
 func TestParseNonStreamingEventStreamThinkingOnlyResponse(t *testing.T) {
@@ -1158,24 +1121,6 @@ func TestStreamEventStreamAsAnthropicStreamsToolUseFragments(t *testing.T) {
 	require.Contains(t, output, `event: content_block_stop`)
 }
 
-func TestStreamEventStreamAsAnthropicStreamsIncompleteToolUseFragment(t *testing.T) {
-	stream := bytes.NewBuffer(nil)
-	_, _ = stream.Write(buildEventStreamFrame(t, "toolUseEvent", map[string]any{
-		"toolUseEvent": map[string]any{
-			"toolUseId": "toolu_incomplete",
-			"name":      "write_file",
-			"input":     `{"path":`,
-			"stop":      true,
-		},
-	}))
-
-	var out bytes.Buffer
-	result, err := StreamEventStreamAsAnthropicWithContext(context.Background(), stream, &out, "claude-sonnet-4-5", 9, KiroRequestContext{})
-	require.NoError(t, err)
-	require.Equal(t, "end_turn", result.StopReason)
-	require.NotContains(t, out.String(), `"id":"toolu_incomplete"`)
-	require.NotContains(t, out.String(), `"type":"input_json_delta"`)
-}
 
 func TestStreamEventStreamAsAnthropicKeepsToolNameFromSeparateStartFrame(t *testing.T) {
 	stream := bytes.NewBuffer(nil)
@@ -2417,5 +2362,36 @@ func TestMixedToolsRestoreWebSearchName(t *testing.T) {
 		require.NoError(t, err)
 		require.Contains(t, out.String(), `"name":"web_search"`)
 		require.NotContains(t, out.String(), `"name":"remote_web_search"`)
+	}
+}
+
+func TestIncompleteToolCallsFailBothResponseModes(t *testing.T) {
+	for _, input := range []string{`{"path":`, `{"path":"a"}`} {
+		for _, stop := range []bool{false, true} {
+			for _, eventType := range []string{"toolUseEvent", "assistantResponseEvent"} {
+				for _, reason := range []string{"end_turn", "max_tokens"} {
+					t.Run(fmt.Sprintf("%s/%t/%s/%s", input, stop, eventType, reason), func(t *testing.T) {
+						event := map[string]any{"toolUseId":"id", "name":"Write", "input":input, "stop":stop}
+						if eventType == "assistantResponseEvent" {
+							event = map[string]any{"toolUses":[]any{event}}
+						}
+						frame := buildEventStreamFrame(t, eventType, event)
+						frame = append(frame, buildEventStreamFrame(t, "messageStopEvent", map[string]any{"stop_reason":reason})...)
+						requestCtx := schemaToolContext("Write", "path", "content")
+						_, err := ParseNonStreamingEventStreamWithContext(bytes.NewReader(frame), "model", requestCtx)
+						require.Error(t, err)
+						streamErr, ok := AsStreamError(err)
+						require.True(t, ok)
+						require.Equal(t, http.StatusBadGateway, streamErr.StatusCode)
+						var out bytes.Buffer
+						_, err = StreamEventStreamAsAnthropicWithContext(context.Background(), bytes.NewReader(frame), &out, "model", 0, requestCtx)
+						require.Error(t, err)
+						require.Contains(t, out.String(), "event: error")
+						require.NotContains(t, out.String(), "event: message_stop")
+						require.NotContains(t, out.String(), `"type":"tool_use"`)
+					})
+				}
+			}
+		}
 	}
 }

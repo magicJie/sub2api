@@ -471,6 +471,11 @@ func ParseNonStreamingEventStreamWithContext(body io.Reader, model string, reque
 	if requestCtx.ToolChoiceNone && len(toolUses) > 0 {
 		return nil, &StreamError{Message: "upstream emitted a tool call while tool_choice is none", StatusCode: http.StatusBadGateway}
 	}
+	for _, tool := range toolUses {
+		if err := validateResponseToolUse(tool, requestCtx); err != nil {
+			return nil, err
+		}
+	}
 	if usage.InputTokens == 0 && requestCtx.EstimatedInputTokens > 0 {
 		usage.InputTokens = requestCtx.EstimatedInputTokens
 		usage.TotalTokens = usage.InputTokens + usage.OutputTokens
@@ -613,13 +618,17 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 		invalid := streamingToolInvalid[toolUseID]
 		discardStreamingTool(toolUseID)
 		if invalid || name == "" || inputBuf == nil {
-			return nil
+			err := &StreamError{Message: "upstream tool call is incomplete", StatusCode: http.StatusBadGateway}
+			_ = writeEvent("error", anthropicStreamErrorEvent(err))
+			return err
 		}
 
 		responseName := restoreResponseToolName(normalizeResponseToolName(name), requestCtx)
 		inputJSON, input, ok := normalizeStreamingToolInput(inputBuf.String())
 		if !ok || missingRequiredToolFields(requestCtx, responseName, input) {
-			return nil
+			err := &StreamError{Message: "upstream tool input is incomplete or missing required fields", StatusCode: http.StatusBadGateway}
+			_ = writeEvent("error", anthropicStreamErrorEvent(err))
+			return err
 		}
 		processedIDs[toolUseID] = true
 		if err := ensureMessageStart(); err != nil {
@@ -778,8 +787,10 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 		})
 	}
 	emitToolUse := func(tool KiroToolUse) error {
-		if tool.IsTruncated || strings.TrimSpace(tool.Name) == "" || missingRequiredToolFields(requestCtx, restoreResponseToolName(tool.Name, requestCtx), tool.Input) {
-			return nil
+		if err := validateResponseToolUse(tool, requestCtx); err != nil {
+			streamErr, _ := AsStreamError(err)
+			_ = writeEvent("error", anthropicStreamErrorEvent(streamErr))
+			return err
 		}
 		if err := closeOpenStreamingTool(); err != nil {
 			return err
@@ -1062,9 +1073,6 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 			return nil
 		case kiroSemanticAssistantTU:
 			if evt.ToolUse == nil || processedIDs[evt.ToolUse.ToolUseID] {
-				return nil
-			}
-			if !isEmittableToolUse(*evt.ToolUse) {
 				return nil
 			}
 			discardStreamingTool(evt.ToolUse.ToolUseID)
@@ -2280,15 +2288,7 @@ func parseEventStreamWithReasoning(body io.Reader) (string, []KiroToolUse, Usage
 
 	closeReasoning()
 	if currentTool != nil && currentTool.ToolUseID != "" && !processedIDs[currentTool.ToolUseID] {
-		completed, _ := processToolUseEvent(map[string]any{
-			"toolUseEvent": map[string]any{
-				"toolUseId": currentTool.ToolUseID,
-				"name":      currentTool.Name,
-				"stop":      true,
-				"input":     currentTool.InputBuffer.String(),
-			},
-		}, currentTool, processedIDs)
-		toolUses = append(toolUses, completed...)
+		toolUses = append(toolUses, finalizeRawToolUse(currentTool.ToolUseID, currentTool.Name, currentTool.InputBuffer.String()))
 	}
 	cleanText := content.String()
 	toolUses = deduplicateToolUses(toolUses)
@@ -2354,9 +2354,6 @@ func buildClaudeResponse(content string, toolUses []KiroToolUse, model string, u
 	blocks = append(blocks, extractThinkingBlocksWithSignatures(content, reasoningMeta.Signatures)...)
 	usableTools := 0
 	for _, tool := range toolUses {
-		if tool.IsTruncated || missingRequiredToolFields(requestCtx, restoreResponseToolName(tool.Name, requestCtx), tool.Input) {
-			continue
-		}
 		usableTools++
 		blocks = append(blocks, map[string]any{
 			"type":  "tool_use",
@@ -2776,6 +2773,7 @@ func processToolUseEvent(event map[string]any, currentTool *toolUseState, proces
 	name := getString(tu, "name")
 	isStop, _ := tu["stop"].(bool)
 
+	var completed []KiroToolUse
 	var inputFragment string
 	var inputMap map[string]any
 	if inputRaw, ok := tu["input"]; ok {
@@ -2792,6 +2790,10 @@ func processToolUseEvent(event map[string]any, currentTool *toolUseState, proces
 			if processedIDs[toolUseID] {
 				return nil, currentTool
 			}
+			if currentTool != nil {
+				completed = append(completed, finalizeRawToolUse(currentTool.ToolUseID, currentTool.Name, currentTool.InputBuffer.String()))
+				processedIDs[currentTool.ToolUseID] = true
+			}
 			currentTool = &toolUseState{ToolUseID: toolUseID, Name: name}
 		}
 	}
@@ -2804,10 +2806,10 @@ func processToolUseEvent(event map[string]any, currentTool *toolUseState, proces
 		_, _ = currentTool.InputBuffer.Write(encoded)
 	}
 	if !isStop || currentTool == nil {
-		return nil, currentTool
+		return completed, currentTool
 	}
 	processedIDs[currentTool.ToolUseID] = true
-	return []KiroToolUse{finalizeRawToolUse(currentTool.ToolUseID, currentTool.Name, currentTool.InputBuffer.String())}, nil
+	return append(completed, finalizeRawToolUse(currentTool.ToolUseID, currentTool.Name, currentTool.InputBuffer.String())), nil
 }
 
 func extractSemanticEvents(eventType string, event map[string]any, lastContentFragment *string) []kiroSemanticEvent {
@@ -3179,6 +3181,13 @@ func normalizeResponseToolName(name string) string {
 		return "remote_web_search"
 	}
 	return name
+}
+
+func validateResponseToolUse(tool KiroToolUse, requestCtx KiroRequestContext) error {
+	if !isEmittableToolUse(tool) || missingRequiredToolFields(requestCtx, restoreResponseToolName(tool.Name, requestCtx), tool.Input) {
+		return &StreamError{Message: "upstream tool input is incomplete or missing required fields", StatusCode: http.StatusBadGateway}
+	}
+	return nil
 }
 
 func isEmittableToolUse(tool KiroToolUse) bool {
