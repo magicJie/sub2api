@@ -1945,7 +1945,7 @@ func buildUserMessageStruct(msg gjson.Result, modelID, origin string) (KiroUserI
 				if part.Get("is_error").Bool() {
 					status = "error"
 				}
-				textContents := []KiroTextContent{{Text: "Tool use was cancelled by the user"}}
+				textContents := []KiroTextContent{}
 				resultContent := part.Get("content")
 				if resultContent.IsArray() {
 					textContents = textContents[:0]

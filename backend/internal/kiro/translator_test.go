@@ -2411,3 +2411,18 @@ func TestThinkingActivationUsesBodyBeforeAliasAndIgnoresCapabilityHeader(t *test
 		}
 	}
 }
+
+func TestAbsentToolResultContentRemainsEmpty(t *testing.T) {
+	for _, isError := range []bool{false, true} {
+		body := []byte(fmt.Sprintf(`{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"id","name":"inspect","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"id","is_error":%t}]}]}`, isError))
+		built, err := BuildKiroPayloadWithContext(body, "claude-sonnet-4.5", "", "", nil)
+		require.NoError(t, err)
+		result := gjson.GetBytes(built.Payload, "conversationState.currentMessage.userInputMessage.userInputMessageContext.toolResults.0")
+		require.Equal(t, "[]", result.Get("content").Raw)
+		status := "success"
+		if isError {
+			status = "error"
+		}
+		require.Equal(t, status, result.Get("status").String())
+	}
+}
