@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,11 +14,13 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	kiropkg "github.com/Wei-Shaw/sub2api/internal/kiro"
 	kirocooldown "github.com/Wei-Shaw/sub2api/internal/kiro/cooldown"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func TestKiroForwardModelCapacityPreservesAccountAvailability(t *testing.T) {
@@ -174,4 +177,88 @@ func TestKiroForwardGenericForbiddenTemporarilyUnavailable(t *testing.T) {
 	require.True(t, repo.persisted.TempUnschedulableUntil.After(time.Now()))
 	require.True(t, repo.persisted.TempUnschedulableUntil.Before(time.Now().Add(11*time.Minute)))
 	require.Nil(t, repo.persisted.RateLimitResetAt)
+}
+
+func TestKiroForwardAliasesKeepClientModelAndMappedUsage(t *testing.T) {
+	for _, model := range []string{"claude-sonnet-4.6", "gpt-5.6-sol"} {
+		for _, nativeSearch := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/search=%t", model, nativeSearch), func(t *testing.T) {
+				account := kiroBridgeTestAccount()
+				account.Credentials["model_mapping"] = map[string]any{"client-alias": model}
+				upstream := &httpUpstreamRecorder{resp: &http.Response{
+					StatusCode: http.StatusOK, Header: make(http.Header),
+					Body: io.NopCloser(bytes.NewReader(kiroBridgeSuccessEventStream(t))),
+				}}
+				tools := ""
+				if nativeSearch {
+					tools = `,"tools":[{"type":"web_search_20250305","name":"web_search"}]`
+					endpoint := kiropkg.BuildMcpEndpoint(kiroAPIRegion(account))
+					previous, existed := kiroWebSearchDescCache.Load(endpoint)
+					kiroWebSearchDescCache.Store(endpoint, "")
+					t.Cleanup(func() {
+						if existed {
+							kiroWebSearchDescCache.Store(endpoint, previous)
+						} else {
+							kiroWebSearchDescCache.Delete(endpoint)
+						}
+					})
+					upstream.responses = []*http.Response{newJSONResponse(http.StatusOK, `{"jsonrpc":"2.0","result":{"content":[]}}`)}
+				}
+				svc := &GatewayService{httpUpstream: upstream, kiroCooldownStore: &kiroUsageCooldownStore{}}
+				body := []byte(`{"model":"client-alias","messages":[{"role":"user","content":"hello"}]` + tools + `}`)
+				parsed, err := ParseGatewayRequest(NewRequestBodyRef(body), "anthropic")
+				require.NoError(t, err)
+				recorder := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(recorder)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+				result, err := svc.Forward(t.Context(), c, account, parsed)
+				require.NoError(t, err)
+				require.Equal(t, "client-alias", gjson.GetBytes(recorder.Body.Bytes(), "model").String())
+				require.Equal(t, "client-alias", result.Model)
+				require.Equal(t, normalizeModelNameForPricing(kiropkg.MapModel(model)), result.UpstreamModel)
+				require.Equal(t, kiropkg.MapModel(model), gjson.GetBytes(upstream.lastBody, "conversationState.currentMessage.userInputMessage.modelId").String())
+				require.Equal(t, 10, result.Usage.InputTokens)
+				require.Equal(t, 5, result.Usage.OutputTokens)
+				require.Equal(t, int64(result.Usage.InputTokens), gjson.GetBytes(recorder.Body.Bytes(), "usage.input_tokens").Int())
+				require.Equal(t, int64(result.Usage.OutputTokens), gjson.GetBytes(recorder.Body.Bytes(), "usage.output_tokens").Int())
+			})
+		}
+	}
+}
+
+func TestKiroBridgeAliasPreservesMappedMaxReasoningUsage(t *testing.T) {
+	for _, protocol := range []string{"responses", "chat_completions"} {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stream=%t", protocol, stream), func(t *testing.T) {
+				account := kiroBridgeTestAccount()
+				account.Credentials["model_mapping"] = map[string]any{"client-alias": "gpt-5.6-sol"}
+				upstream := &httpUpstreamRecorder{resp: &http.Response{
+					StatusCode: http.StatusOK, Header: make(http.Header),
+					Body: io.NopCloser(bytes.NewReader(kiroBridgeSuccessEventStream(t))),
+				}}
+				svc := &GatewayService{httpUpstream: upstream, kiroCooldownStore: &kiroUsageCooldownStore{}}
+				recorder := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(recorder)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/"+protocol, nil)
+				var result *ForwardResult
+				var err error
+				if protocol == "responses" {
+					body := []byte(fmt.Sprintf(`{"model":"client-alias","input":"hello","reasoning":{"effort":"max"},"stream":%t}`, stream))
+					result, err = svc.forwardKiroAsResponses(t.Context(), c, account, body, &ParsedRequest{}, time.Now())
+				} else {
+					body := []byte(fmt.Sprintf(`{"model":"client-alias","messages":[{"role":"user","content":"hello"}],"reasoning_effort":"max","stream":%t}`, stream))
+					result, err = svc.forwardKiroAsChatCompletions(t.Context(), c, account, body, &ParsedRequest{}, time.Now())
+				}
+				require.NoError(t, err)
+				require.Equal(t, "client-alias", result.Model)
+				require.Equal(t, "gpt-5.6-sol", result.UpstreamModel)
+				require.NotNil(t, result.ReasoningEffort)
+				require.Equal(t, "max", *result.ReasoningEffort)
+				require.Equal(t, 10, result.Usage.InputTokens)
+				require.Equal(t, 5, result.Usage.OutputTokens)
+				require.Contains(t, recorder.Body.String(), `"model":"client-alias"`)
+				require.Equal(t, "gpt-5.6-sol", gjson.GetBytes(upstream.lastBody, "conversationState.currentMessage.userInputMessage.modelId").String())
+			})
+		}
+	}
 }

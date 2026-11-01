@@ -117,9 +117,13 @@ func (s *GatewayService) forwardKiroMessagesAttempt(ctx context.Context, c *gin.
 		if err != nil {
 			return nil, err
 		}
-		parsedForEmulation.Model = mappedModel
+		parsedForEmulation.Model = originalModel
 		parsedForEmulation.OnUpstreamAccepted = func() { notifyKiroUpstreamAccepted(parsed) }
-		return s.handleWebSearchEmulation(ctx, c, account, parsedForEmulation)
+		result, err := s.handleWebSearchEmulation(ctx, c, account, parsedForEmulation)
+		if result != nil {
+			result.UpstreamModel = normalizeModelNameForPricing(kiropkg.MapModel(mappedModel))
+		}
+		return result, err
 	}
 
 	if parsed.Stream {
@@ -208,6 +212,9 @@ func (s *GatewayService) forwardKiroMessagesAttempt(ctx context.Context, c *gin.
 			c.Header("Content-Type", "application/json")
 			if webSearchResult.RequestID != "" {
 				c.Header("x-request-id", webSearchResult.RequestID)
+			}
+			if mappedModel != originalModel {
+				webSearchResult.ResponseBody = s.replaceModelInBody(webSearchResult.ResponseBody, originalModel)
 			}
 			c.Data(http.StatusOK, "application/json", webSearchResult.ResponseBody)
 			return &ForwardResult{
@@ -309,6 +316,9 @@ func (s *GatewayService) forwardKiroMessagesAttempt(ctx context.Context, c *gin.
 	c.Header("Content-Type", "application/json")
 	if requestID := resp.Header.Get("x-request-id"); requestID != "" {
 		c.Header("x-request-id", requestID)
+	}
+	if mappedModel != originalModel {
+		parseResult.ResponseBody = s.replaceModelInBody(parseResult.ResponseBody, originalModel)
 	}
 	c.Data(http.StatusOK, "application/json", parseResult.ResponseBody)
 

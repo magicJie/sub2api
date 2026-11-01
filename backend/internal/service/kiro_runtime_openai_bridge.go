@@ -201,7 +201,7 @@ func (s *GatewayService) forwardKiroAsResponsesAttempt(
 		responsesReq.Model = mapped
 	}
 	clientStream := responsesReq.Stream
-	reasoningEffort := ExtractResponsesReasoningEffortFromBody(body)
+	reasoningEffort := ExtractResponsesReasoningEffortFromBody(body, responsesReq.Model)
 	clientToolMapping := apicompat.ResponsesClientToolMapping{}
 	if len(clientToolMappings) > 0 {
 		clientToolMapping = clientToolMappings[0]
@@ -277,7 +277,7 @@ func (s *GatewayService) forwardKiroAsChatCompletionsAttempt(
 		ccReq.Model = mapped
 	}
 	clientStream := ccReq.Stream
-	reasoningEffort := extractCCReasoningEffortFromBody(body)
+	reasoningEffort := extractCCReasoningEffortFromBody(body, ccReq.Model)
 
 	responsesReq, err := apicompat.ChatCompletionsToResponses(&ccReq)
 	if err != nil {
