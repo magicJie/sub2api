@@ -315,64 +315,59 @@ func TestBuildKiroPayloadSingleAssistantDoesNotInsertUserDot(t *testing.T) {
 	require.Equal(t, "Continue", gjson.GetBytes(payload, "conversationState.currentMessage.userInputMessage.content").String())
 }
 
-func TestBuildKiroPayloadOmitsImagesBeyondRecentHistory(t *testing.T) {
-	body := []byte(`{
-		"model":"claude-sonnet-4-5",
-		"messages":[
-			{"role":"user","content":"first"},
-			{"role":"assistant","content":"first answer"},
-			{"role":"user","content":[
-				{"type":"text","text":"stale image"},
-				{"type":"image","source":{"media_type":"image/png","data":"stale-image"}}
-			]},
-			{"role":"assistant","content":"second answer"},
-			{"role":"user","content":"middle"},
-			{"role":"assistant","content":"middle answer"},
-			{"role":"user","content":"near"},
-			{"role":"tool","content":"ignored separator"},
-			{"role":"user","content":[
-				{"type":"text","text":"current image"},
-				{"type":"image","source":{"media_type":"image/jpeg","data":"current-image"}}
-			]}
-		]
-	}`)
+func TestBuildKiroPayloadPreservesImagesAcrossConversationTurns(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		messages string
+	}{
+		{
+			name: "user_upload",
+			messages: `[{"role":"user","content":[
+				{"type":"text","text":"Remember this image"},
+				{"type":"image","source":{"type":"base64","media_type":"image/png","data":"history-image"}}
+			]}]`,
+		},
+		{
+			name: "tool_image",
+			messages: `[
+				{"role":"user","content":"Take a screenshot"},
+				{"role":"assistant","content":[{"type":"tool_use","id":"capture","name":"screenshot","input":{}}]},
+				{"role":"user","content":[{"type":"tool_result","tool_use_id":"capture","content":[
+					{"type":"image","source":{"type":"base64","media_type":"image/png","data":"history-image"}}
+				]}]}
+			]`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var messages []map[string]any
+			require.NoError(t, json.Unmarshal([]byte(tc.messages), &messages))
+			for range 3 {
+				messages = append(messages,
+					map[string]any{"role": "assistant", "content": "READY"},
+					map[string]any{"role": "user", "content": "Unrelated context"},
+				)
+			}
+			messages = append(messages,
+				map[string]any{"role": "assistant", "content": "ACK"},
+				map[string]any{"role": "user", "content": "Read the code in the original image"},
+			)
+			body, err := json.Marshal(map[string]any{
+				"model":    "claude-opus-5-5",
+				"messages": messages,
+			})
+			require.NoError(t, err)
 
-	kiroBuildResult, err := BuildKiroPayloadWithContext(body, "claude-sonnet-4.5", "", "AI_EDITOR", nil)
-	require.NoError(t, err)
-	payload := kiroBuildResult.Payload
-
-	staleUser := gjson.GetBytes(payload, "conversationState.history.4.userInputMessage")
-	require.False(t, staleUser.Get("images").Exists())
-	require.Contains(t, staleUser.Get("content").String(), "stale image")
-	require.Contains(t, staleUser.Get("content").String(), "[This message contained 1 image(s), omitted from older conversation history.]")
-	require.Equal(t, "current-image", gjson.GetBytes(payload, "conversationState.currentMessage.userInputMessage.images.0.source.bytes").String())
-}
-
-func TestBuildKiroPayloadKeepsImagesAtRecentHistoryBoundary(t *testing.T) {
-	body := []byte(`{
-		"model":"claude-sonnet-4-5",
-		"messages":[
-			{"role":"user","content":"first"},
-			{"role":"assistant","content":"first answer"},
-			{"role":"user","content":[
-				{"type":"text","text":"boundary image"},
-				{"type":"image","source":{"media_type":"image/png","data":"boundary-image"}}
-			]},
-			{"role":"assistant","content":"second answer"},
-			{"role":"user","content":"middle"},
-			{"role":"assistant","content":"middle answer"},
-			{"role":"tool","content":"ignored separator"},
-			{"role":"user","content":"current"}
-		]
-	}`)
-
-	kiroBuildResult, err := BuildKiroPayloadWithContext(body, "claude-sonnet-4.5", "", "AI_EDITOR", nil)
-	require.NoError(t, err)
-	payload := kiroBuildResult.Payload
-
-	boundaryUser := gjson.GetBytes(payload, "conversationState.history.4.userInputMessage")
-	require.Equal(t, "boundary-image", boundaryUser.Get("images.0.source.bytes").String())
-	require.NotContains(t, boundaryUser.Get("content").String(), "omitted from older conversation history")
+			result, err := BuildKiroPayloadWithContext(body, "claude-opus-5.5", "", "AI_EDITOR", nil)
+			require.NoError(t, err)
+			var imageData []string
+			for _, message := range gjson.GetBytes(result.Payload, "conversationState.history").Array() {
+				for _, image := range message.Get("userInputMessage.images").Array() {
+					imageData = append(imageData, image.Get("source.bytes").String())
+				}
+			}
+			require.Equal(t, []string{"history-image"}, imageData)
+		})
+	}
 }
 
 func TestBuildKiroPayloadWebSearchUsesCachedDescription(t *testing.T) {

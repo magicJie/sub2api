@@ -740,6 +740,12 @@ go generate ./cmd/server
 
 ---
 
+## Kiro 图片输入
+
+Kiro 反代会保留客户端请求中的 base64 图片，包括历史用户消息与工具结果里的图片。后续对话和工具调用不会按消息距离删除图片；客户端压缩上下文时决定保留哪些历史图片。历史图片会随请求重放，带图长会话的请求体和上游输入用量会相应增加。
+
+图片 URL 输入仍受现有转换限制；识图请求建议使用 base64 图片。
+
 ## OpenAI 图片模型
 
 支持 `gpt-image-2.5-flare`、`gpt-image-2.5-sunburst` 及其 `2026-09-08` 日期快照，可通过 `/v1/images/generations`、`/v1/images/edits` 调用。`quality` 支持 `xhigh`、`max`、`auto`，合法自定义尺寸和图片 usage 明细保持透传。

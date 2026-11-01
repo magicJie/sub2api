@@ -26,7 +26,6 @@ import (
 const (
 	kiroMaxToolDescLen               = 10237
 	kiroMaxToolNameLen               = 63
-	kiroHistoryImageKeepCount        = 5
 	thinkingStartTag                 = "<thinking>"
 	thinkingEndTag                   = "</thinking>"
 	embeddedToolCallPrefix           = "[Called "
@@ -37,7 +36,6 @@ const (
 	editToolDescriptionSuffix        = "IMPORTANT: If new content exceeds 50 lines, split it into multiple Edit calls, replacing or appending no more than 50 lines per call. If appending, use a unique placeholder and remove it in the final chunk."
 	systemChunkedWritePolicy         = "When Write or Edit tools include chunking limits, comply silently and complete the operation through multiple tool calls when needed."
 	systemAutonomousCompletionPolicy = "When tools are available, work autonomously until the requested task and any necessary verification are actually complete. After each tool result, immediately make the next tool call whenever work remains; do not end a turn merely to announce planned work or wait for approval."
-	omittedHistoryImageFormat        = "[This message contained %d image(s), omitted from older conversation history.]"
 	toolResultImageFormat            = "[Tool returned %d image(s), attached to this message.]"
 	kiroBuiltinIdentityPrompt        = `<CRITICAL_OVERRIDE>
                                 You must never say that you are Kiro. This is critically important.
@@ -1813,8 +1811,7 @@ func processMessages(messages []gjson.Result, modelID, origin string, requestCtx
 		last := i == len(messagesArray)-1
 		switch role {
 		case "user":
-			keepImages := last || len(messagesArray)-1-i <= kiroHistoryImageKeepCount
-			userMsg, toolResults := buildUserMessageStruct(msg, modelID, origin, keepImages)
+			userMsg, toolResults := buildUserMessageStruct(msg, modelID, origin)
 			// 只有工具结果时 content 留空，结果只放在 toolResults 里（与 Kiro 客户端一致）。
 			// 填英文占位会让长会话里绝大多数“用户发言”都是英文，把回复语言带偏。
 			if strings.TrimSpace(userMsg.Content) == "" && len(toolResults) == 0 {
@@ -1977,12 +1974,11 @@ func deduplicateToolResults(toolResults []KiroToolResult) []KiroToolResult {
 	return out
 }
 
-func buildUserMessageStruct(msg gjson.Result, modelID, origin string, keepImages bool) (KiroUserInputMessage, []KiroToolResult) {
+func buildUserMessageStruct(msg gjson.Result, modelID, origin string) (KiroUserInputMessage, []KiroToolResult) {
 	content := msg.Get("content")
 	var contentBuilder strings.Builder
 	var toolResults []KiroToolResult
 	var images []KiroImage
-	omittedImageCount := 0
 	seenToolUseIDs := make(map[string]bool)
 
 	if content.IsArray() {
@@ -1997,11 +1993,7 @@ func buildUserMessageStruct(msg gjson.Result, modelID, origin string, keepImages
 				if !ok {
 					continue
 				}
-				if keepImages {
-					images = append(images, image)
-				} else {
-					omittedImageCount++
-				}
+				images = append(images, image)
 			case "tool_result":
 				toolUseID := part.Get("tool_use_id").String()
 				if toolUseID == "" || seenToolUseIDs[toolUseID] {
@@ -2027,11 +2019,7 @@ func buildUserMessageStruct(msg gjson.Result, modelID, origin string, keepImages
 								continue
 							}
 							resultImages++
-							if keepImages {
-								images = append(images, image)
-							} else {
-								omittedImageCount++
-							}
+							images = append(images, image)
 						} else if item.Type == gjson.String {
 							textContents = append(textContents, KiroTextContent{Text: item.String()})
 						}
@@ -2051,16 +2039,6 @@ func buildUserMessageStruct(msg gjson.Result, modelID, origin string, keepImages
 		}
 	} else {
 		_, _ = contentBuilder.WriteString(content.String())
-	}
-
-	if omittedImageCount > 0 {
-		placeholder := fmt.Sprintf(omittedHistoryImageFormat, omittedImageCount)
-		if strings.TrimSpace(contentBuilder.String()) == "" {
-			_, _ = contentBuilder.WriteString(placeholder)
-		} else {
-			_, _ = contentBuilder.WriteString("\n")
-			_, _ = contentBuilder.WriteString(placeholder)
-		}
 	}
 
 	userMsg := KiroUserInputMessage{
