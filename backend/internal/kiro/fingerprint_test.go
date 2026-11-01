@@ -55,6 +55,13 @@ func TestBuildAccountKeyFallsBackToAccountIDBeforeRandom(t *testing.T) {
 	require.NotEqual(t, key1, key3)
 }
 
+func TestBuildAccountKeyIsolatesSharedRegistration(t *testing.T) {
+	first := BuildAccountKey("shared-client", "shared-hash", "refresh-a", "profile-a", 42)
+	second := BuildAccountKey("shared-client", "shared-hash", "refresh-b", "profile-b", 43)
+	require.NotEqual(t, first, second)
+	require.Equal(t, first, BuildAccountKey("new-client", "new-hash", "rotated-refresh", "new-profile", 42))
+}
+
 func TestBuildMachineID(t *testing.T) {
 	require.Equal(t, expectedKiroMachineID("KotlinNativeAPI/token"), BuildMachineID("token", "", ""))
 	require.Equal(t, expectedKiroMachineID("KiroAPIKey/key"), BuildMachineID("", "key", ""))

@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -125,16 +124,7 @@ func (p *KiroTokenProvider) GetAccessToken(ctx context.Context, account *Account
 }
 
 func KiroTokenCacheKey(account *Account) string {
-	if account == nil {
-		return "kiro:account:0"
-	}
-	if clientIDHash := strings.TrimSpace(account.GetCredential("client_id_hash")); clientIDHash != "" {
-		return "kiro:" + clientIDHash
-	}
-	if clientID := strings.TrimSpace(account.GetCredential("client_id")); clientID != "" {
-		return "kiro:client:" + clientID
-	}
-	return "kiro:account:" + strconv.FormatInt(account.ID, 10)
+	return "kiro:" + buildKiroAccountKey(account)
 }
 
 func (p *KiroTokenProvider) ForceRefreshAccessToken(ctx context.Context, account *Account) (string, error) {

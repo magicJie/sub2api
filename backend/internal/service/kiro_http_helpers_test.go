@@ -31,6 +31,16 @@ func TestBuildKiroAccountKeyIgnoresAccessToken(t *testing.T) {
 	require.Equal(t, buildKiroAccountKey(accountA), buildKiroAccountKey(accountB))
 }
 
+func TestKiroAccountKeysIsolateSharedOIDCRegistration(t *testing.T) {
+	first := &Account{ID: 99, Credentials: map[string]any{"client_id": "shared", "client_id_hash": "shared-hash"}}
+	second := &Account{ID: 100, Credentials: first.Credentials}
+	require.NotEqual(t, buildKiroAccountKey(first), buildKiroAccountKey(second))
+	require.NotEqual(t, KiroTokenCacheKey(first), KiroTokenCacheKey(second))
+	require.Equal(t, "kiro:"+buildKiroAccountKey(first), KiroTokenCacheKey(first))
+	first.Credentials = map[string]any{"client_id": "rotated", "refresh_token": "rotated"}
+	require.Equal(t, "kiro:"+kiropkg.BuildAccountKey("", "", "", "", 99), KiroTokenCacheKey(first))
+}
+
 func TestBuildKiroMachineIDPrefersExplicitCredential(t *testing.T) {
 	account := &Account{
 		ID:       101,

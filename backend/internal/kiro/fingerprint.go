@@ -122,18 +122,14 @@ func containsString(items []string, target string) bool {
 	return false
 }
 
-func BuildAccountKey(clientID, clientIDHash, refreshToken, profileArn string, accountID int64) string {
+func BuildAccountKey(_, _, refreshToken, profileArn string, accountID int64) string {
 	switch {
-	case strings.TrimSpace(clientIDHash) != "":
-		return clientIDHash
-	case strings.TrimSpace(clientID) != "":
-		return shortSHA(clientID)
+	case accountID > 0:
+		return shortSHA(fmt.Sprintf("account:%d", accountID))
 	case strings.TrimSpace(refreshToken) != "":
 		return shortSHA(refreshToken)
 	case strings.TrimSpace(profileArn) != "":
 		return shortSHA(profileArn)
-	case accountID > 0:
-		return shortSHA(fmt.Sprintf("account:%d", accountID))
 	default:
 		return shortSHA(uuid.NewString())
 	}
