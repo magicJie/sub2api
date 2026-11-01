@@ -114,6 +114,7 @@ func (s *GatewayService) forwardKiroMessagesAttempt(ctx context.Context, c *gin.
 			return nil, err
 		}
 		parsedForEmulation.Model = mappedModel
+		parsedForEmulation.OnUpstreamAccepted = func() { notifyKiroUpstreamAccepted(parsed) }
 		return s.handleWebSearchEmulation(ctx, c, account, parsedForEmulation)
 	}
 
@@ -191,7 +192,7 @@ func (s *GatewayService) forwardKiroMessagesAttempt(ctx context.Context, c *gin.
 		return nil, fmt.Errorf("kiro requires oauth or direct api key token, got %s", tokenType)
 	}
 	if isOnlyWebSearchToolInBody(body) {
-		webSearchResult, webSearchErr := s.executeKiroWebSearch(ctx, account, kiroGroup, body, mappedModel, originalModel, token, c.Request.Header)
+		webSearchResult, webSearchErr := s.executeKiroWebSearch(ctx, account, kiroGroup, body, mappedModel, originalModel, token, c.Request.Header, parsed)
 		switch {
 		case errors.Is(webSearchErr, errKiroWebSearchFallback):
 		case webSearchErr == nil:
@@ -328,7 +329,7 @@ func (s *GatewayService) openKiroAnthropicStreamResponse(ctx context.Context, ac
 		headers := make(http.Header)
 		headers.Set("Content-Type", "text/event-stream")
 		go func() {
-			streamErr := s.streamKiroWebSearchAsAnthropic(ctx, account, anthropicBody, mappedModel, requestModel, token, inputTokens, headers, pw, cacheUsage)
+			streamErr := s.streamKiroWebSearchAsAnthropic(ctx, account, anthropicBody, mappedModel, requestModel, token, inputTokens, headers, pw, cacheUsage, parsed)
 			if streamErr != nil {
 				_ = pw.CloseWithError(streamErr)
 				return
@@ -450,6 +451,15 @@ func (s *GatewayService) executeKiroUpstream(ctx context.Context, account *Accou
 	return s.executeKiroUpstreamWithParsed(ctx, account, nil, anthropicBody, mappedModel, requestModel, token, headers)
 }
 
+func notifyKiroUpstreamAccepted(parsed *ParsedRequest) {
+	if parsed == nil || parsed.OnUpstreamAccepted == nil {
+		return
+	}
+	accepted := parsed.OnUpstreamAccepted
+	parsed.OnUpstreamAccepted = nil
+	accepted()
+}
+
 func (s *GatewayService) executeKiroUpstreamWithParsed(ctx context.Context, account *Account, parsed *ParsedRequest, anthropicBody []byte, mappedModel, requestModel, token string, headers http.Header) (*http.Response, kiropkg.KiroRequestContext, error) {
 	var requestCtx kiropkg.KiroRequestContext
 	if err := s.checkAndWaitKiroCooldown(ctx, buildKiroAccountKey(account)); err != nil {
@@ -501,6 +511,9 @@ func (s *GatewayService) executeKiroUpstreamWithParsed(ctx context.Context, acco
 				} else if inspectErr != nil {
 					_ = resp.Body.Close()
 					return nil, requestCtx, inspectErr
+				}
+				if inspectErr == nil {
+					notifyKiroUpstreamAccepted(parsed)
 				}
 			}
 

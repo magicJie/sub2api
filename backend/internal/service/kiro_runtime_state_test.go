@@ -378,6 +378,40 @@ func TestKiroSuccessRecordedOnlyAfterCompleteStream(t *testing.T) {
 	require.Equal(t, 1, store.successCalls)
 }
 
+func TestKiroAcceptedCallbackRequiresValidFirstFrame(t *testing.T) {
+	for _, status := range []int{http.StatusOK, http.StatusBadRequest} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			response := newJSONResponse(status, `{"message":"bad request"}`)
+			if status == http.StatusOK {
+				response.Body = io.NopCloser(bytes.NewReader(kiroBridgeSuccessEventStream(t)))
+			}
+			svc, account, _, _ := newKiro429TestService(t, response)
+			calls := 0
+			parsed := &ParsedRequest{OnUpstreamAccepted: func() { calls++ }}
+			resp, _, err := svc.executeKiroUpstreamWithParsed(t.Context(), account, parsed, kiro429TestPayload(t), "claude-sonnet-4.6", "claude-sonnet-4.6", "token", nil)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+			if status == http.StatusOK {
+				require.Equal(t, 1, calls)
+				notifyKiroUpstreamAccepted(parsed)
+				require.Equal(t, 1, calls)
+			} else {
+				require.Zero(t, calls)
+			}
+		})
+	}
+}
+
+func TestKiroTokenFailureDoesNotAcceptRequest(t *testing.T) {
+	svc, account, upstream, _ := newKiro429TestService(t)
+	calls := 0
+	parsed := &ParsedRequest{OnUpstreamAccepted: func() { calls++ }}
+	_, _, err := svc.openKiroAnthropicStreamResponse(t.Context(), account, parsed, kiro429TestPayload(t), "claude-sonnet-4.6", "claude-sonnet-4.6", nil, nil)
+	require.Error(t, err)
+	require.Zero(t, calls)
+	require.Empty(t, upstream.requests)
+}
+
 func TestExecuteKiroUpstreamRateLimit429RetriesSameAccount(t *testing.T) {
 	sleeps := stubKiroRetrySleep(t)
 	svc, account, upstream, store := newKiro429TestService(t,

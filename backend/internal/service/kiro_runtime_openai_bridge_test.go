@@ -262,13 +262,19 @@ func TestKiroBridgeMapsAliasBeforeReasoningConversion(t *testing.T) {
 			body := []byte(`{"model":"my-alias","stream":true,"input":"hello","reasoning":{"effort":"high"}}`)
 			var result *ForwardResult
 			var err error
+			accepted := 0
+			parsed := &ParsedRequest{OnUpstreamAccepted: func() {
+				accepted++
+				require.Empty(t, rec.Body.String())
+			}}
 			if protocol == "responses" {
-				result, err = svc.forwardKiroAsResponses(t.Context(), c, account, body, nil, time.Now())
+				result, err = svc.forwardKiroAsResponses(t.Context(), c, account, body, parsed, time.Now())
 			} else {
 				body = []byte(`{"model":"my-alias","stream":true,"messages":[{"role":"user","content":"hello"}],"reasoning_effort":"high"}`)
-				result, err = svc.forwardKiroAsChatCompletions(t.Context(), c, account, body, nil, time.Now())
+				result, err = svc.forwardKiroAsChatCompletions(t.Context(), c, account, body, parsed, time.Now())
 			}
 			require.NoError(t, err)
+			require.Equal(t, 1, accepted)
 			require.Equal(t, "my-alias", result.Model)
 			require.Equal(t, http.StatusOK, rec.Code)
 			require.Contains(t, rec.Body.String(), `"model":"my-alias"`)

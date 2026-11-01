@@ -17,9 +17,9 @@ func TestKiroWebSearchDisabledChoiceStopsBeforeUpstream(t *testing.T) {
 			require.False(t, isOnlyWebSearchToolInBody(body))
 			// No account or HTTP client is installed: a forbidden execution would reach the upstream boundary.
 			svc := &GatewayService{}
-			_, err := svc.executeKiroWebSearch(t.Context(), nil, nil, body, "claude-sonnet-4.5", "claude-sonnet-4.5", "", nil)
+			_, err := svc.executeKiroWebSearch(t.Context(), nil, nil, body, "claude-sonnet-4.5", "claude-sonnet-4.5", "", nil, nil)
 			require.ErrorIs(t, err, errKiroWebSearchFallback)
-			err = svc.streamKiroWebSearchAsAnthropic(t.Context(), nil, body, "claude-sonnet-4.5", "claude-sonnet-4.5", "", 0, nil, &bytes.Buffer{}, nil)
+			err = svc.streamKiroWebSearchAsAnthropic(t.Context(), nil, body, "claude-sonnet-4.5", "claude-sonnet-4.5", "", 0, nil, &bytes.Buffer{}, nil, nil)
 			require.ErrorIs(t, err, errKiroWebSearchFallback)
 		})
 	}

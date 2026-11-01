@@ -106,7 +106,7 @@ func writeAnthropicMessageStart(w io.Writer, msgID, model string, inputTokens in
 }
 
 func (s *GatewayService) streamKiroWebSearchAsAnthropic(
-	ctx context.Context, account *Account, anthropicBody []byte, mappedModel, requestModel, token string, inputTokens int, headers http.Header, w io.Writer, cacheUsage *kiroCacheEmulationUsage,
+	ctx context.Context, account *Account, anthropicBody []byte, mappedModel, requestModel, token string, inputTokens int, headers http.Header, w io.Writer, cacheUsage *kiroCacheEmulationUsage, parsed *ParsedRequest,
 ) error {
 	if !isOnlyWebSearchToolInBody(anthropicBody) {
 		return errKiroWebSearchFallback
@@ -148,7 +148,7 @@ func (s *GatewayService) streamKiroWebSearchAsAnthropic(
 			return errKiroWebSearchFallback
 		}
 
-		resp, requestCtx, err := s.executeKiroUpstream(ctx, account, currentBody, mappedModel, requestModel, token, headers)
+		resp, requestCtx, err := s.executeKiroUpstreamWithParsed(ctx, account, parsed, currentBody, mappedModel, requestModel, token, headers)
 		if err != nil {
 			return err
 		}
@@ -202,7 +202,7 @@ func (s *GatewayService) streamKiroWebSearchAsAnthropic(
 	return fmt.Errorf("kiro web search exceeded max iterations")
 }
 
-func (s *GatewayService) executeKiroWebSearch(ctx context.Context, account *Account, group *Group, anthropicBody []byte, mappedModel, requestModel, token string, headers http.Header) (*kiroWebSearchExecution, error) {
+func (s *GatewayService) executeKiroWebSearch(ctx context.Context, account *Account, group *Group, anthropicBody []byte, mappedModel, requestModel, token string, headers http.Header, parsed *ParsedRequest) (*kiroWebSearchExecution, error) {
 	if !isOnlyWebSearchToolInBody(anthropicBody) {
 		return nil, errKiroWebSearchFallback
 	}
@@ -244,7 +244,7 @@ func (s *GatewayService) executeKiroWebSearch(ctx context.Context, account *Acco
 			return nil, errKiroWebSearchFallback
 		}
 
-		resp, requestCtx, err := s.executeKiroUpstream(ctx, account, currentBody, mappedModel, requestModel, token, headers)
+		resp, requestCtx, err := s.executeKiroUpstreamWithParsed(ctx, account, parsed, currentBody, mappedModel, requestModel, token, headers)
 		if err != nil {
 			return nil, err
 		}

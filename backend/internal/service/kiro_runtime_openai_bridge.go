@@ -112,6 +112,7 @@ func (s *GatewayService) bridgeKiroAsAnthropic(
 		kiroParsed.GroupID = parsed.GroupID
 		kiroParsed.SessionContext = parsed.SessionContext
 		kiroParsed.MetadataUserID = parsed.MetadataUserID
+		kiroParsed.OnUpstreamAccepted = func() { notifyKiroUpstreamAccepted(parsed) }
 	}
 	kiroParsed.Stream = true
 
