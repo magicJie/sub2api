@@ -129,7 +129,7 @@ func TestKiroForwardPermanentRefreshErrorOwnsAccountState(t *testing.T) {
 					}},
 					kiroTokenProvider: provider,
 					kiroCooldownStore: &kiroUsageCooldownStore{},
-					rateLimitService: NewRateLimitService(repo, nil, &config.Config{}, nil, nil),
+					rateLimitService:  NewRateLimitService(repo, nil, &config.Config{}, nil, nil),
 				}
 				body := []byte(`{"model":"claude-sonnet-4.6","messages":[{"role":"user","content":"hello"}]}`)
 				parsed, err := ParseGatewayRequest(NewRequestBodyRef(body), "anthropic")
@@ -161,7 +161,7 @@ func TestKiroForwardGenericForbiddenTemporarilyUnavailable(t *testing.T) {
 			newJSONResponse(http.StatusForbidden, `{"message":"permission denied"}`),
 		}},
 		kiroCooldownStore: &kiroUsageCooldownStore{},
-		rateLimitService: NewRateLimitService(repo, nil, &config.Config{}, nil, nil),
+		rateLimitService:  NewRateLimitService(repo, nil, &config.Config{}, nil, nil),
 	}
 	body := []byte(`{"model":"claude-sonnet-4.6","messages":[{"role":"user","content":"hello"}]}`)
 	parsed, err := ParseGatewayRequest(NewRequestBodyRef(body), "anthropic")

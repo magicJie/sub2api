@@ -490,7 +490,6 @@ func (s *GatewayService) getKiroAccessToken(ctx context.Context, account *Accoun
 	return token, nil
 }
 
-
 func notifyKiroUpstreamAccepted(parsed *ParsedRequest) {
 	if parsed == nil || parsed.OnUpstreamAccepted == nil {
 		return

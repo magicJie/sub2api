@@ -6,7 +6,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-
 func TestAnalyzeBufferedStream_ExtractsWebSearchToolUse(t *testing.T) {
 	chunks := [][]byte{
 		[]byte("event: message_start\ndata: {\"type\":\"message_start\"}\n\n"),

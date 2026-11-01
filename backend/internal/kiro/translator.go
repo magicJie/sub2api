@@ -54,7 +54,7 @@ type Usage struct {
 	// MeteringUsage 是 meteringEvent 报告的本次扣点（单位通常为 credit）。两者只用于观测，不参与计费。
 	ContextUsagePercentage float64
 	MeteringUsage          float64
-	inputTokensReported bool
+	inputTokensReported    bool
 }
 
 // InputTokensReported distinguishes an upstream-reported zero from missing input usage.
@@ -224,7 +224,6 @@ type KiroToolUse struct {
 	IsTruncated  bool           `json:"-"`
 	TruncatedRaw string         `json:"-"`
 }
-
 
 type toolUseState struct {
 	ToolUseID   string
@@ -570,7 +569,7 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 		}
 		if messageStartSent {
 			if writeEvent("message_delta", map[string]any{
-				"type": "message_delta",
+				"type":  "message_delta",
 				"delta": map[string]any{},
 				"usage": buildKiroClaudeUsageMap(partialUsage),
 			}) != nil {
@@ -1800,7 +1799,6 @@ func normalizeSchemaRequired(value any) []any {
 	return out
 }
 
-
 func processMessages(messages []gjson.Result, modelID, origin string, requestCtx *KiroRequestContext) ([]KiroHistoryMessage, *KiroUserInputMessage, []KiroToolResult) {
 	messagesArray := mergeAdjacentMessages(messages)
 
@@ -2478,7 +2476,6 @@ func restoreResponseToolName(name string, requestCtx KiroRequestContext) string 
 	}
 	return name
 }
-
 
 func extractThinkingBlocks(content string) []map[string]any {
 	return extractThinkingBlocksWithSignatures(content, nil)
@@ -3257,7 +3254,6 @@ func deduplicateToolUses(toolUses []KiroToolUse) []KiroToolUse {
 	}
 	return out
 }
-
 
 func looksLikeTruncatedJSON(raw string) bool {
 	raw = strings.TrimSpace(raw)

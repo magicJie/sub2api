@@ -153,7 +153,6 @@ func TestIsKiroInvalidModelIDBodyRecognizesKnownForms(t *testing.T) {
 	}
 }
 
-
 func TestBuildKiroPayloadForAccountPreservesThinkingAliasAfterMapping(t *testing.T) {
 	account := &Account{
 		ID:       8,

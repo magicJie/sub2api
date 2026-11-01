@@ -59,7 +59,6 @@ func TestExtractWebSearchToolUseFromResponse(t *testing.T) {
 	require.Equal(t, "golang concurrency", query)
 }
 
-
 func TestParseSearchResults_PreservesExtendedFields(t *testing.T) {
 	resp := &MCPResponse{
 		Result: &struct {

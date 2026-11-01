@@ -552,7 +552,6 @@ func TestBuildKiroPayloadInjectsThinkingForThinkingAliasModel(t *testing.T) {
 	require.Contains(t, systemContent, "<thinking_mode>enabled</thinking_mode>\n<max_thinking_length>20000</max_thinking_length>")
 }
 
-
 func TestBuildKiroPayloadExplicitDisabledThinkingWins(t *testing.T) {
 	headers := http.Header{}
 	headers.Set("Anthropic-Beta", "interleaved-thinking-2025-05-14")
@@ -703,7 +702,6 @@ func TestParseNonStreamingEventStreamNormalizesUpstreamStopReason(t *testing.T) 
 	}
 }
 
-
 func TestParseNonStreamingEventStreamThinkingWithTextKeepsEndTurn(t *testing.T) {
 	stream := bytes.NewBuffer(nil)
 	_, _ = stream.Write(buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{
@@ -743,8 +741,6 @@ func TestParseNonStreamingEventStreamThinkingWithToolUseKeepsToolUseStopReason(t
 	require.Equal(t, "tool_use", gjson.GetBytes(result.ResponseBody, "content.1.type").String())
 	require.False(t, gjson.GetBytes(result.ResponseBody, "content.2.text").Exists())
 }
-
-
 
 func TestParseNonStreamingEventStreamKeepsSameContentToolUsesWithDifferentIDs(t *testing.T) {
 	stream := bytes.NewBuffer(nil)
@@ -808,7 +804,6 @@ func TestStreamEventStreamAsAnthropicKeepsToolUseMatchingRequestSchema(t *testin
 	require.Contains(t, out.String(), `"id":"toolu_script"`)
 }
 
-
 func TestParseNonStreamingEventStreamKeepsToolUseMatchingRequestSchema(t *testing.T) {
 	stream := bytes.NewBuffer(nil)
 	_, _ = stream.Write(buildEventStreamFrame(t, "toolUseEvent", map[string]any{
@@ -863,9 +858,6 @@ func TestBuildKiroPayloadRecordsToolRequiredFields(t *testing.T) {
 	require.False(t, ok)
 }
 
-
-
-
 func TestParseNonStreamingEventStreamExtractsContinuation(t *testing.T) {
 	stream := bytes.NewBuffer(nil)
 	_, _ = stream.Write(buildEventStreamFrame(t, "messageMetadataEvent", map[string]any{
@@ -883,8 +875,6 @@ func TestParseNonStreamingEventStreamExtractsContinuation(t *testing.T) {
 	require.Equal(t, "kiro-conversation-1", result.Continuation.ConversationID)
 	require.Equal(t, "kiro-continuation-1", result.Continuation.AgentContinuationID)
 }
-
-
 
 func TestStreamEventStreamAsAnthropicExtractsContinuation(t *testing.T) {
 	stream := bytes.NewBuffer(nil)
@@ -1069,7 +1059,6 @@ func TestStreamEventStreamAsAnthropicStreamsToolUseFragments(t *testing.T) {
 	require.Contains(t, output, `"partial_json":"{\"content\":\"hello\",\"path\":\"/tmp/a.txt\"}"`)
 	require.Contains(t, output, `event: content_block_stop`)
 }
-
 
 func TestStreamEventStreamAsAnthropicKeepsToolNameFromSeparateStartFrame(t *testing.T) {
 	stream := bytes.NewBuffer(nil)
@@ -2235,10 +2224,10 @@ func TestToolSchemaPreservesNestedSemantics(t *testing.T) {
 
 func TestRootScalarToolSchemasRetainSemantics(t *testing.T) {
 	for _, schema := range []string{`{"enum":["a","b"]}`, `{"type":["string","null"]}`, `{"anyOf":[false,{"enum":[1,2]}]}`} {
-		body := []byte(`{"messages":[{"role":"user","content":"hello"}],"tools":[{"name":"inspect","input_schema":`+schema+`}]}`)
+		body := []byte(`{"messages":[{"role":"user","content":"hello"}],"tools":[{"name":"inspect","input_schema":` + schema + `}]}`)
 		built, err := BuildKiroPayloadWithContext(body, "claude-sonnet-4.5", "", "", nil)
 		require.NoError(t, err)
-		actual := gjson.GetBytes(built.Payload,"conversationState.currentMessage.userInputMessage.userInputMessageContext.tools.0.toolSpecification.inputSchema.json")
+		actual := gjson.GetBytes(built.Payload, "conversationState.currentMessage.userInputMessage.userInputMessageContext.tools.0.toolSpecification.inputSchema.json")
 		require.JSONEq(t, schema, actual.Raw)
 	}
 }
@@ -2250,7 +2239,7 @@ func TestToolInputNumbersSurviveResponsesAndHistory(t *testing.T) {
 		if rawString {
 			value = input
 		}
-		frame := buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{"toolUses": []any{map[string]any{"toolUseId":"id", "name":"inspect", "input":value}}})
+		frame := buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{"toolUses": []any{map[string]any{"toolUseId": "id", "name": "inspect", "input": value}}})
 		result, err := ParseNonStreamingEventStreamWithContext(bytes.NewReader(frame), "model", KiroRequestContext{})
 		require.NoError(t, err)
 		actual := gjson.GetBytes(result.ResponseBody, "content.0.input")
@@ -2261,7 +2250,7 @@ func TestToolInputNumbersSurviveResponsesAndHistory(t *testing.T) {
 		require.NoError(t, err)
 		require.Contains(t, out.String(), "9007199254740993")
 		require.Contains(t, out.String(), "9007199254740995")
-		body := []byte(`{"messages":[{"role":"assistant","content":` + gjson.GetBytes(result.ResponseBody,"content").Raw + `},{"role":"assistant","content":"continued"},{"role":"user","content":[{"type":"tool_result","tool_use_id":"id","content":"ok"}]}]}`)
+		body := []byte(`{"messages":[{"role":"assistant","content":` + gjson.GetBytes(result.ResponseBody, "content").Raw + `},{"role":"assistant","content":"continued"},{"role":"user","content":[{"type":"tool_result","tool_use_id":"id","content":"ok"}]}]}`)
 		built, err := BuildKiroPayloadWithContext(body, "claude-sonnet-4.5", "", "", nil)
 		require.NoError(t, err)
 		require.Contains(t, string(built.Payload), "9007199254740993")
@@ -2276,9 +2265,9 @@ func TestToolChoiceNoneSurvivesHistoryAndRejectsUpstreamTools(t *testing.T) {
 	require.True(t, built.Context.ToolChoiceNone)
 	require.False(t, gjson.GetBytes(built.Payload, "conversationState.currentMessage.userInputMessage.userInputMessageContext.tools").Exists())
 	for _, eventType := range []string{"toolUseEvent", "assistantResponseEvent"} {
-		event := map[string]any{"toolUseId":"new", "name":"inspect", "input":map[string]any{}, "stop":true}
+		event := map[string]any{"toolUseId": "new", "name": "inspect", "input": map[string]any{}, "stop": true}
 		if eventType == "assistantResponseEvent" {
-			event = map[string]any{"toolUses":[]any{event}}
+			event = map[string]any{"toolUses": []any{event}}
 		}
 		frame := buildEventStreamFrame(t, eventType, event)
 		_, err = ParseNonStreamingEventStreamWithContext(bytes.NewReader(frame), "model", built.Context)
@@ -2298,9 +2287,9 @@ func TestMixedToolsRestoreWebSearchName(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "web_search", built.Context.ToolNameMap["remote_web_search"])
 	for _, eventType := range []string{"toolUseEvent", "assistantResponseEvent"} {
-		event := map[string]any{"toolUseId":"search", "name":"remote_web_search", "input":map[string]any{"query":"go"}, "stop":true}
+		event := map[string]any{"toolUseId": "search", "name": "remote_web_search", "input": map[string]any{"query": "go"}, "stop": true}
 		if eventType == "assistantResponseEvent" {
-			event = map[string]any{"toolUses":[]any{event}}
+			event = map[string]any{"toolUses": []any{event}}
 		}
 		frame := buildEventStreamFrame(t, eventType, event)
 		result, err := ParseNonStreamingEventStreamWithContext(bytes.NewReader(frame), "model", built.Context)
@@ -2320,12 +2309,12 @@ func TestIncompleteToolCallsFailBothResponseModes(t *testing.T) {
 			for _, eventType := range []string{"toolUseEvent", "assistantResponseEvent"} {
 				for _, reason := range []string{"end_turn", "max_tokens"} {
 					t.Run(fmt.Sprintf("%s/%t/%s/%s", input, stop, eventType, reason), func(t *testing.T) {
-						event := map[string]any{"toolUseId":"id", "name":"Write", "input":input, "stop":stop}
+						event := map[string]any{"toolUseId": "id", "name": "Write", "input": input, "stop": stop}
 						if eventType == "assistantResponseEvent" {
-							event = map[string]any{"toolUses":[]any{event}}
+							event = map[string]any{"toolUses": []any{event}}
 						}
 						frame := buildEventStreamFrame(t, eventType, event)
-						frame = append(frame, buildEventStreamFrame(t, "messageStopEvent", map[string]any{"stop_reason":reason})...)
+						frame = append(frame, buildEventStreamFrame(t, "messageStopEvent", map[string]any{"stop_reason": reason})...)
 						requestCtx := schemaToolContext("Write", "path", "content")
 						_, err := ParseNonStreamingEventStreamWithContext(bytes.NewReader(frame), "model", requestCtx)
 						require.Error(t, err)
@@ -2350,14 +2339,14 @@ func TestThinkingOnlyResponsesPreserveUpstreamStopReason(t *testing.T) {
 		for _, stopReason := range []string{"end_turn", "max_tokens"} {
 			t.Run(source+"/"+stopReason, func(t *testing.T) {
 				eventType := "reasoningContentEvent"
-				event := map[string]any{"text":"reason only"}
+				event := map[string]any{"text": "reason only"}
 				if source == "tagged" {
 					eventType = "assistantResponseEvent"
-					event = map[string]any{"content":"<thinking>reason only</thinking>"}
+					event = map[string]any{"content": "<thinking>reason only</thinking>"}
 				}
 				frame := buildEventStreamFrame(t, eventType, event)
-				frame = append(frame, buildEventStreamFrame(t, "messageStopEvent", map[string]any{"stopReason":stopReason})...)
-				requestCtx := KiroRequestContext{ThinkingEnabled:true}
+				frame = append(frame, buildEventStreamFrame(t, "messageStopEvent", map[string]any{"stopReason": stopReason})...)
+				requestCtx := KiroRequestContext{ThinkingEnabled: true}
 				result, err := ParseNonStreamingEventStreamWithContext(bytes.NewReader(frame), "model", requestCtx)
 				require.NoError(t, err)
 				require.Equal(t, stopReason, result.StopReason)
@@ -2374,12 +2363,12 @@ func TestThinkingOnlyResponsesPreserveUpstreamStopReason(t *testing.T) {
 }
 
 func TestThinkingTruncationSurvivesTrailingEndTurn(t *testing.T) {
-	frame := buildEventStreamFrame(t, "reasoningContentEvent", map[string]any{"text":"reason only","stopReason":"max_tokens"})
-	frame = append(frame, buildEventStreamFrame(t, "messageStopEvent", map[string]any{"stopReason":"end_turn"})...)
-	requestCtx := KiroRequestContext{ThinkingEnabled:true}
+	frame := buildEventStreamFrame(t, "reasoningContentEvent", map[string]any{"text": "reason only", "stopReason": "max_tokens"})
+	frame = append(frame, buildEventStreamFrame(t, "messageStopEvent", map[string]any{"stopReason": "end_turn"})...)
+	requestCtx := KiroRequestContext{ThinkingEnabled: true}
 	result, err := ParseNonStreamingEventStreamWithContext(bytes.NewReader(frame), "model", requestCtx)
 	require.NoError(t, err)
-	require.Equal(t, "max_tokens", gjson.GetBytes(result.ResponseBody,"stop_reason").String())
+	require.Equal(t, "max_tokens", gjson.GetBytes(result.ResponseBody, "stop_reason").String())
 	var out bytes.Buffer
 	streamResult, err := StreamEventStreamAsAnthropicWithContext(context.Background(), bytes.NewReader(frame), &out, "model", 0, requestCtx)
 	require.NoError(t, err)
@@ -2387,22 +2376,22 @@ func TestThinkingTruncationSurvivesTrailingEndTurn(t *testing.T) {
 }
 
 func TestThinkingActivationUsesBodyBeforeAliasAndIgnoresCapabilityHeader(t *testing.T) {
-	headers := http.Header{"Anthropic-Beta":[]string{"interleaved-thinking-2025-05-14"}}
+	headers := http.Header{"Anthropic-Beta": []string{"interleaved-thinking-2025-05-14"}}
 	for _, tc := range []struct {
-		model string
-		config string
+		model   string
+		config  string
 		enabled bool
-		budget string
+		budget  string
 	}{
 		{"claude-sonnet-4-5", "", false, ""},
 		{"claude-opus-4-6-thinking", `,"thinking":{"type":"enabled","budget_tokens":2048}`, true, "2048"},
 		{"claude-sonnet-4-5-thinking", `,"thinking":{"type":"enabled","budget_tokens":4096}`, true, "4096"},
 	} {
-		body := []byte(`{"model":"`+tc.model+`"`+tc.config+`,"messages":[{"role":"user","content":"hello"}]}`)
+		body := []byte(`{"model":"` + tc.model + `"` + tc.config + `,"messages":[{"role":"user","content":"hello"}]}`)
 		built, err := BuildKiroPayloadWithContext(body, MapModel(tc.model), "", "", headers)
 		require.NoError(t, err)
 		require.Equal(t, tc.enabled, built.Context.ThinkingEnabled)
-		system := gjson.GetBytes(built.Payload,"conversationState.history.0.userInputMessage.content").String()
+		system := gjson.GetBytes(built.Payload, "conversationState.history.0.userInputMessage.content").String()
 		if tc.enabled {
 			require.Contains(t, system, "<max_thinking_length>"+tc.budget+"</max_thinking_length>")
 			require.Contains(t, system, "<thinking_mode>enabled</thinking_mode>")
@@ -2430,7 +2419,7 @@ func TestAbsentToolResultContentRemainsEmpty(t *testing.T) {
 func TestNativeCacheUsageSeparatesOrdinaryInput(t *testing.T) {
 	for _, tc := range []struct {
 		uncached bool
-		total bool
+		total    bool
 		creation int
 	}{
 		{true, true, 0},
@@ -2438,10 +2427,14 @@ func TestNativeCacheUsageSeparatesOrdinaryInput(t *testing.T) {
 		{true, false, 0},
 		{false, true, 5},
 	} {
-		tokens := map[string]any{"cacheReadInputTokens":3, "cacheCreationInputTokens":tc.creation, "outputTokens":7}
-		if tc.uncached { tokens["uncachedInputTokens"] = 12 }
-		if tc.total { tokens["totalTokens"] = 22+tc.creation }
-		frame := buildEventStreamFrame(t, "messageMetadataEvent", map[string]any{"tokenUsage":tokens})
+		tokens := map[string]any{"cacheReadInputTokens": 3, "cacheCreationInputTokens": tc.creation, "outputTokens": 7}
+		if tc.uncached {
+			tokens["uncachedInputTokens"] = 12
+		}
+		if tc.total {
+			tokens["totalTokens"] = 22 + tc.creation
+		}
+		frame := buildEventStreamFrame(t, "messageMetadataEvent", map[string]any{"tokenUsage": tokens})
 		result, err := ParseNonStreamingEventStreamWithContext(bytes.NewReader(frame), "model", KiroRequestContext{})
 		require.NoError(t, err)
 		require.Equal(t, 12, result.Usage.InputTokens)
@@ -2449,7 +2442,7 @@ func TestNativeCacheUsageSeparatesOrdinaryInput(t *testing.T) {
 		require.Equal(t, tc.creation, result.Usage.CacheCreationInputTokens)
 		require.Equal(t, 7, result.Usage.OutputTokens)
 		require.Equal(t, 22+tc.creation, result.Usage.TotalTokens)
-		require.Equal(t, int64(12), gjson.GetBytes(result.ResponseBody,"usage.input_tokens").Int())
+		require.Equal(t, int64(12), gjson.GetBytes(result.ResponseBody, "usage.input_tokens").Int())
 		var out bytes.Buffer
 		streamResult, err := StreamEventStreamAsAnthropicWithContext(context.Background(), bytes.NewReader(frame), &out, "model", 100, KiroRequestContext{})
 		require.NoError(t, err)
@@ -2459,8 +2452,8 @@ func TestNativeCacheUsageSeparatesOrdinaryInput(t *testing.T) {
 }
 
 func TestNativeZeroUncachedUsageOverridesRequestEstimate(t *testing.T) {
-	frame := buildEventStreamFrame(t, "messageMetadataEvent", map[string]any{"tokenUsage":map[string]any{"uncachedInputTokens":0,"cacheReadInputTokens":3,"outputTokens":7,"totalTokens":10}})
-	result, err := ParseNonStreamingEventStreamWithContext(bytes.NewReader(frame), "model", KiroRequestContext{EstimatedInputTokens:100})
+	frame := buildEventStreamFrame(t, "messageMetadataEvent", map[string]any{"tokenUsage": map[string]any{"uncachedInputTokens": 0, "cacheReadInputTokens": 3, "outputTokens": 7, "totalTokens": 10}})
+	result, err := ParseNonStreamingEventStreamWithContext(bytes.NewReader(frame), "model", KiroRequestContext{EstimatedInputTokens: 100})
 	require.NoError(t, err)
 	require.Zero(t, result.Usage.InputTokens)
 	require.Equal(t, 10, result.Usage.TotalTokens)
@@ -2471,9 +2464,9 @@ func TestNativeZeroUncachedUsageOverridesRequestEstimate(t *testing.T) {
 }
 
 func TestStreamErrorsRetainLateNativeUsage(t *testing.T) {
-	frame := buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{"content":"partial"})
-	frame = append(frame, buildEventStreamFrame(t, "messageMetadataEvent", map[string]any{"tokenUsage":map[string]any{"uncachedInputTokens":12,"cacheReadInputTokens":3,"outputTokens":7,"totalTokens":22}})...)
-	frame = append(frame, buildExceptionFrame(t, "InternalServerException", map[string]any{"message":"failed"})...)
+	frame := buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{"content": "partial"})
+	frame = append(frame, buildEventStreamFrame(t, "messageMetadataEvent", map[string]any{"tokenUsage": map[string]any{"uncachedInputTokens": 12, "cacheReadInputTokens": 3, "outputTokens": 7, "totalTokens": 22}})...)
+	frame = append(frame, buildExceptionFrame(t, "InternalServerException", map[string]any{"message": "failed"})...)
 	var out bytes.Buffer
 	result, err := StreamEventStreamAsAnthropicWithContext(context.Background(), bytes.NewReader(frame), &out, "model", 100, KiroRequestContext{})
 	require.Error(t, err)
@@ -2506,11 +2499,11 @@ func (w *cancelOnTextStreamWriter) WriteString(s string) (int, error) {
 }
 
 func TestStreamCancellationReturnsUsageWithoutFlush(t *testing.T) {
-	frame := buildEventStreamFrame(t, "messageMetadataEvent", map[string]any{"tokenUsage":map[string]any{"uncachedInputTokens":12,"outputTokens":7}})
-	frame = append(frame, buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{"content":"partial"})...)
+	frame := buildEventStreamFrame(t, "messageMetadataEvent", map[string]any{"tokenUsage": map[string]any{"uncachedInputTokens": 12, "outputTokens": 7}})
+	frame = append(frame, buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{"content": "partial"})...)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	out := &cancelOnTextStreamWriter{cancel:cancel}
+	out := &cancelOnTextStreamWriter{cancel: cancel}
 	result, err := StreamEventStreamAsAnthropicWithContext(ctx, bytes.NewReader(frame), out, "model", 100, KiroRequestContext{})
 	require.ErrorIs(t, err, context.Canceled)
 	require.NotNil(t, result)
@@ -2531,18 +2524,18 @@ func TestTextDocumentsSurviveConversationAndToolResults(t *testing.T) {
 		require.NoError(t, err)
 		switch {
 		case strings.Contains(messages, "before "):
-			require.Equal(t, "before document text after", gjson.GetBytes(built.Payload,"conversationState.currentMessage.userInputMessage.content").String())
+			require.Equal(t, "before document text after", gjson.GetBytes(built.Payload, "conversationState.currentMessage.userInputMessage.content").String())
 		case strings.Contains(messages, "historical"):
 			require.Contains(t, string(built.Payload), "historical document")
 		default:
-			require.Equal(t, "tool document", gjson.GetBytes(built.Payload,"conversationState.currentMessage.userInputMessage.userInputMessageContext.toolResults.0.content.0.text").String())
+			require.Equal(t, "tool document", gjson.GetBytes(built.Payload, "conversationState.currentMessage.userInputMessage.userInputMessageContext.toolResults.0.content.0.text").String())
 		}
 	}
 }
 
 func TestUnsupportedDocumentsReturnInvalidRequest(t *testing.T) {
 	for _, source := range []string{`{"type":"base64","media_type":"application/pdf","data":"JVBERg=="}`, `{"type":"url","url":"https://example.com/doc"}`, `{"type":"text"}`, `{}`} {
-		body := []byte(`{"messages":[{"role":"user","content":[{"type":"document","source":`+source+`}]}]}`)
+		body := []byte(`{"messages":[{"role":"user","content":[{"type":"document","source":` + source + `}]}]}`)
 		_, err := BuildKiroPayloadWithContext(body, "claude-sonnet-4.5", "", "", nil)
 		var invalid *InvalidRequestError
 		require.ErrorAs(t, err, &invalid)

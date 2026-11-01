@@ -425,7 +425,6 @@ func TestHandleStreamingResponse_SSEErrorEvent_ReturnsTypedErrorWithRawData(t *t
 	require.True(t, errors.As(err, &sseErr), "SSE event:error 必须包成 *sseStreamErrorEventError，期望: %v", err)
 	require.Equal(t, errorJSON, sseErr.RawData)
 
-
 	// 在 Forward 主流程中调用方依赖 ExtractUpstreamErrorMessage 从 RawData 解析出 message
 	extracted := ExtractUpstreamErrorMessage([]byte(sseErr.RawData))
 	require.Equal(t, "Anthropic upstream is overloaded", extracted)
