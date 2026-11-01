@@ -2469,3 +2469,54 @@ func TestNativeZeroUncachedUsageOverridesRequestEstimate(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, result.Usage, streamResult.Usage)
 }
+
+func TestStreamErrorsRetainLateNativeUsage(t *testing.T) {
+	frame := buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{"content":"partial"})
+	frame = append(frame, buildEventStreamFrame(t, "messageMetadataEvent", map[string]any{"tokenUsage":map[string]any{"uncachedInputTokens":12,"cacheReadInputTokens":3,"outputTokens":7,"totalTokens":22}})...)
+	frame = append(frame, buildExceptionFrame(t, "InternalServerException", map[string]any{"message":"failed"})...)
+	var out bytes.Buffer
+	result, err := StreamEventStreamAsAnthropicWithContext(context.Background(), bytes.NewReader(frame), &out, "model", 100, KiroRequestContext{})
+	require.Error(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, 12, result.Usage.InputTokens)
+	require.Equal(t, 7, result.Usage.OutputTokens)
+	require.Equal(t, 3, result.Usage.CacheReadInputTokens)
+	require.Equal(t, 22, result.Usage.TotalTokens)
+	require.Contains(t, out.String(), `"input_tokens":12`)
+	require.Less(t, strings.Index(out.String(), "event: message_delta"), strings.Index(out.String(), "event: error"))
+	require.NotContains(t, out.String(), `"stop_reason":"end_turn"`)
+	require.NotContains(t, out.String(), "event: message_stop")
+}
+
+type cancelOnTextStreamWriter struct {
+	bytes.Buffer
+	cancel context.CancelFunc
+}
+
+func (w *cancelOnTextStreamWriter) Write(p []byte) (int, error) {
+	n, err := w.Buffer.Write(p)
+	if bytes.Contains(p, []byte(`"text_delta"`)) {
+		w.cancel()
+	}
+	return n, err
+}
+
+func (w *cancelOnTextStreamWriter) WriteString(s string) (int, error) {
+	return w.Write([]byte(s))
+}
+
+func TestStreamCancellationReturnsUsageWithoutFlush(t *testing.T) {
+	frame := buildEventStreamFrame(t, "messageMetadataEvent", map[string]any{"tokenUsage":map[string]any{"uncachedInputTokens":12,"outputTokens":7}})
+	frame = append(frame, buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{"content":"partial"})...)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := &cancelOnTextStreamWriter{cancel:cancel}
+	result, err := StreamEventStreamAsAnthropicWithContext(ctx, bytes.NewReader(frame), out, "model", 100, KiroRequestContext{})
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotNil(t, result)
+	require.Equal(t, 12, result.Usage.InputTokens)
+	require.Equal(t, 7, result.Usage.OutputTokens)
+	require.NotContains(t, out.String(), "event: message_delta")
+	require.NotContains(t, out.String(), "event: error")
+	require.NotContains(t, out.String(), "event: message_stop")
+}

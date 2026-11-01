@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"bytes"
+	"time"
 
 	kiropkg "github.com/Wei-Shaw/sub2api/internal/kiro"
 	"github.com/gin-gonic/gin"
@@ -89,4 +91,69 @@ func TestKiroStreamResponseOrExceptionPassesThroughNormalStream(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, _ := io.ReadAll(resp.Body)
 	require.Equal(t, "event: message_start\ndata: {}\n\n", string(body), "预读的字节不能丢")
+}
+
+func TestKiroStreamingFailureRetainsUsageAndTypedError(t *testing.T) {
+	for _, protocol := range []string{"messages", "responses", "chat_completions"} {
+		t.Run(protocol, func(t *testing.T) {
+			stream := bytes.NewBuffer(nil)
+			stream.Write(buildKiroBridgeEventStreamFrame(t, "assistantResponseEvent", map[string]any{"content": "partial answer"}))
+			stream.Write(buildKiroBridgeEventStreamFrame(t, "throttlingException", map[string]any{"message": "Too many requests"}))
+			upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusOK,
+				Header: make(http.Header), Body: io.NopCloser(stream)}}
+			repo := &recordingKiroQuotaRejectionRepo{}
+			store := &stubKiroCooldownStore{}
+			svc := &GatewayService{httpUpstream: upstream, accountRepo: repo,
+				kiroCooldownStore: store, rateLimitService: &RateLimitService{accountRepo: repo}}
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/"+protocol, nil)
+			body := []byte(`{"model":"claude-sonnet-4.6","stream":true,"messages":[{"role":"user","content":"hello"}],"input":"hello"}`)
+			var result *ForwardResult
+			var err error
+			switch protocol {
+			case "messages":
+				parsed, parseErr := ParseGatewayRequest(NewRequestBodyRef(body), "anthropic")
+				require.NoError(t, parseErr)
+				result, err = svc.forwardKiroMessages(t.Context(), c, kiroBridgeTestAccount(), parsed, time.Now())
+			case "responses":
+				result, err = svc.forwardKiroAsResponses(t.Context(), c, kiroBridgeTestAccount(), body, nil, time.Now())
+			case "chat_completions":
+				result, err = svc.forwardKiroAsChatCompletions(t.Context(), c, kiroBridgeTestAccount(), body, nil, time.Now())
+			}
+			require.Error(t, err)
+			var failoverErr *UpstreamFailoverError
+			require.NotErrorAs(t, err, &failoverErr)
+			require.NotNil(t, result)
+			require.Positive(t, result.Usage.InputTokens)
+			require.Contains(t, rec.Body.String(), "partial answer")
+			require.Contains(t, rec.Body.String(), "rate_limit_error")
+			require.NotContains(t, rec.Body.String(), "upstream_error")
+			require.Equal(t, 1, store.mark429Calls)
+		})
+	}
+}
+
+type kiroCanceledStreamReader struct{}
+
+func (kiroCanceledStreamReader) Read([]byte) (int, error) { return 0, context.Canceled }
+
+func TestKiroMessagesCanceledStreamRetainsUsage(t *testing.T) {
+	frame := buildKiroBridgeEventStreamFrame(t, "assistantResponseEvent", map[string]any{"content": "partial"})
+	upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusOK, Header: make(http.Header),
+		Body: io.NopCloser(io.MultiReader(bytes.NewReader(frame), kiroCanceledStreamReader{}))}}
+	repo := &recordingKiroQuotaRejectionRepo{}
+	svc := &GatewayService{httpUpstream: upstream, accountRepo: repo,
+		kiroCooldownStore: &stubKiroCooldownStore{}, rateLimitService: &RateLimitService{accountRepo: repo}}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	body := []byte(`{"model":"claude-sonnet-4.6","stream":true,"messages":[{"role":"user","content":"hello"}]}`)
+	parsed, err := ParseGatewayRequest(NewRequestBodyRef(body), "anthropic")
+	require.NoError(t, err)
+	result, err := svc.forwardKiroMessages(t.Context(), c, kiroBridgeTestAccount(), parsed, time.Now())
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotNil(t, result)
+	require.Positive(t, result.Usage.InputTokens)
+	require.True(t, result.ClientDisconnect)
 }

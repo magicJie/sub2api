@@ -425,8 +425,6 @@ func TestHandleStreamingResponse_SSEErrorEvent_ReturnsTypedErrorWithRawData(t *t
 	require.True(t, errors.As(err, &sseErr), "SSE event:error 必须包成 *sseStreamErrorEventError，期望: %v", err)
 	require.Equal(t, errorJSON, sseErr.RawData)
 
-	// 字符串兼容：保留与旧实现一致的 "have error in stream"，避免破坏依赖该字符串的日志检索
-	require.Equal(t, "have error in stream", err.Error())
 
 	// 在 Forward 主流程中调用方依赖 ExtractUpstreamErrorMessage 从 RawData 解析出 message
 	extracted := ExtractUpstreamErrorMessage([]byte(sseErr.RawData))

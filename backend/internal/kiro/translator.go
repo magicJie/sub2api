@@ -492,7 +492,7 @@ func ParseNonStreamingEventStreamWithContext(body io.Reader, model string, reque
 	}, nil
 }
 
-func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader, w io.Writer, model string, inputTokens int, requestCtx KiroRequestContext) (*StreamResult, error) {
+func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader, w io.Writer, model string, inputTokens int, requestCtx KiroRequestContext) (result *StreamResult, err error) {
 	reader := bufio.NewReader(body)
 	start := time.Now()
 	var firstDelta *time.Duration
@@ -528,6 +528,33 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 		_, err = io.WriteString(w, "event: "+event+"\ndata: "+string(payload)+"\n\n")
 		return err
 	}
+	defer func() {
+		if err == nil {
+			return
+		}
+		partialUsage := mergeKiroCacheEmulationUsage(usage, requestCtx.CacheEmulationUsage)
+		if partialUsage.TotalTokens == 0 {
+			partialUsage.TotalTokens = partialUsage.InputTokens + partialUsage.CacheReadInputTokens + partialUsage.CacheCreationInputTokens + partialUsage.OutputTokens
+		}
+		result = &StreamResult{Usage: partialUsage, FirstDeltaDur: firstDelta, Continuation: continuation}
+		if ctx.Err() != nil {
+			return
+		}
+		streamErr, ok := AsStreamError(err)
+		if !ok || (!messageStartSent && streamErr.ExceptionType != "") {
+			return
+		}
+		if messageStartSent {
+			if writeEvent("message_delta", map[string]any{
+				"type": "message_delta",
+				"delta": map[string]any{},
+				"usage": buildKiroClaudeUsageMap(partialUsage),
+			}) != nil {
+				return
+			}
+		}
+		_ = writeEvent("error", anthropicStreamErrorEvent(streamErr))
+	}()
 	ensureMessageStart := func() error {
 		if messageStartSent {
 			return nil
@@ -620,7 +647,6 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 		discardStreamingTool(toolUseID)
 		if invalid || name == "" || inputBuf == nil {
 			err := &StreamError{Message: "upstream tool call is incomplete", StatusCode: http.StatusBadGateway}
-			_ = writeEvent("error", anthropicStreamErrorEvent(err))
 			return err
 		}
 
@@ -628,7 +654,6 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 		inputJSON, input, ok := normalizeStreamingToolInput(inputBuf.String())
 		if !ok || missingRequiredToolFields(requestCtx, responseName, input) {
 			err := &StreamError{Message: "upstream tool input is incomplete or missing required fields", StatusCode: http.StatusBadGateway}
-			_ = writeEvent("error", anthropicStreamErrorEvent(err))
 			return err
 		}
 		processedIDs[toolUseID] = true
@@ -789,8 +814,6 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 	}
 	emitToolUse := func(tool KiroToolUse) error {
 		if err := validateResponseToolUse(tool, requestCtx); err != nil {
-			streamErr, _ := AsStreamError(err)
-			_ = writeEvent("error", anthropicStreamErrorEvent(streamErr))
 			return err
 		}
 		if err := closeOpenStreamingTool(); err != nil {
@@ -1026,7 +1049,6 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 		}
 		if requestCtx.ToolChoiceNone && (evt.Type == kiroSemanticToolUse || evt.Type == kiroSemanticToolInput || evt.Type == kiroSemanticAssistantTU) {
 			err := &StreamError{Message: "upstream emitted a tool call while tool_choice is none", StatusCode: http.StatusBadGateway}
-			_ = writeEvent("error", anthropicStreamErrorEvent(err))
 			return err
 		}
 		// Kiro may attach provider-specific or interim stop reasons to an
@@ -1117,10 +1139,6 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 			break
 		}
 		if err != nil {
-			// 已经开始向客户端输出时，SSE 无法改状态码，只能发 error 事件让客户端知道回答不完整。
-			if streamErr, ok := AsStreamError(err); ok && messageStartSent {
-				_ = writeEvent("error", anthropicStreamErrorEvent(streamErr))
-			}
 			return nil, err
 		}
 		if msg == nil || len(msg.Payload) == 0 {

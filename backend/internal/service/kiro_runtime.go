@@ -159,7 +159,14 @@ func (s *GatewayService) forwardKiroMessagesAttempt(ctx context.Context, c *gin.
 		upstreamModel := normalizeModelNameForPricing(kiropkg.MapModel(mappedModel))
 		streamResult, err := s.handleStreamingResponse(ctx, resp, c, account, startTime, originalModel, mappedModel, false)
 		if err != nil {
-			return nil, err
+			s.recordKiroStreamFailure(ctx, c, account, resp, mappedModel, body, err)
+			var eventErr *sseStreamErrorEventError
+			if errors.As(err, &eventErr) {
+				_, _ = fmt.Fprintf(c.Writer, "event: error\ndata: %s\n\n", eventErr.RawData)
+				c.Writer.Flush()
+				MarkResponseCommitted(c)
+			}
+			return partialStreamUsageResult(c, resp, streamResult, originalModel, upstreamModel, startTime, err), err
 		}
 		if streamResult.usage == nil {
 			streamResult.usage = &ClaudeUsage{}
@@ -406,6 +413,30 @@ func kiroStreamResponseOrException(pr *io.PipeReader, statusCode int, headers ht
 			io.Closer
 		}{reader, pr},
 	}
+}
+
+func (s *GatewayService) recordKiroStreamFailure(ctx context.Context, c *gin.Context, account *Account, resp *http.Response, model string, body []byte, err error) {
+	var eventErr *sseStreamErrorEventError
+	if !errors.As(err, &eventErr) {
+		return
+	}
+	status := http.StatusBadGateway
+	switch gjson.Get(eventErr.RawData, "error.type").String() {
+	case "rate_limit_error":
+		status = http.StatusTooManyRequests
+	case "permission_error":
+		status = http.StatusForbidden
+	case "authentication_error":
+		status = http.StatusUnauthorized
+	case "invalid_request_error":
+		status = http.StatusBadRequest
+	case "overloaded_error":
+		status = http.StatusServiceUnavailable
+	}
+	synthetic := &http.Response{StatusCode: status, Header: resp.Header.Clone(),
+		Body: io.NopCloser(strings.NewReader(eventErr.RawData))}
+	// Classification records account state without replaying an emitted stream.
+	_, _ = s.classifyKiroHTTPErrorAndRecordOps(ctx, synthetic, c, account, model, body)
 }
 
 func (s *GatewayService) executeKiroUpstream(ctx context.Context, account *Account, anthropicBody []byte, mappedModel, requestModel, token string, headers http.Header) (*http.Response, kiropkg.KiroRequestContext, error) {

@@ -213,15 +213,17 @@ func (st *anthropicCompatStream) failure() *anthropicCompatStreamFailure {
 }
 
 // finishAnthropicCompatStreamFailure 按失败原因收尾，返回交给调用方的结果与错误。
-// 上游流内 error 事件与 /v1/messages 一致：不计费，返回 sseStreamErrorEventError
-// 由调用方转为 UpstreamFailoverError；尚未向客户端写出内容时不写终止错误，由
-// handler 换号重试。其余失败写出终止错误，并带上已观测到的 usage；未观测到任何
-// usage 时结果为 nil。
+// Kiro retains observed usage after output has started. Other providers retain
+// their existing in-band error billing policy. Before output, the caller may
+// fail over without writing an error frame.
 func finishAnthropicCompatStreamFailure(c *gin.Context, writerSizeBeforeStream int, failure *anthropicCompatStreamFailure, result *ForwardResult, writeFailure func()) (*ForwardResult, error) {
 	var sseErr *sseStreamErrorEventError
 	if errors.As(failure.err, &sseErr) {
 		if c.Writer.Size() != writerSizeBeforeStream {
 			writeFailure()
+			if c.GetBool(kiroPartialUsageContextKey) && result.Usage.hasObservedTokens() {
+				return result, failure.err
+			}
 		}
 		return nil, failure.err
 	}

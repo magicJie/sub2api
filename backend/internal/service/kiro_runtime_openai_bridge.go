@@ -13,6 +13,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const kiroPartialUsageContextKey = "kiro_partial_stream_usage"
+
 // kiro_runtime_openai_bridge.go 让 Kiro 账号可以被 OpenAI 协议客户端
 // （Responses API / Chat Completions API，例如 Codex CLI）访问，而不仅仅是
 // Anthropic Messages 协议客户端（Claude Code）。
@@ -220,7 +222,13 @@ func (s *GatewayService) forwardKiroAsResponsesAttempt(
 	defer func() { _ = bridge.Resp.Body.Close() }()
 
 	if clientStream {
-		return s.handleResponsesStreamingResponse(bridge.Resp, c, originalModel, bridge.MappedModel, reasoningEffort, startTime, clientToolMapping)
+		c.Set(kiroPartialUsageContextKey, true)
+		defer c.Set(kiroPartialUsageContextKey, false)
+		result, err := s.handleResponsesStreamingResponse(bridge.Resp, c, originalModel, bridge.MappedModel, reasoningEffort, startTime, clientToolMapping)
+		if err != nil {
+			s.recordKiroStreamFailure(ctx, c, account, bridge.Resp, bridge.MappedModel, body, err)
+		}
+		return result, err
 	}
 	return s.handleResponsesBufferedStreamingResponse(bridge.Resp, c, originalModel, bridge.MappedModel, reasoningEffort, startTime, clientToolMapping)
 }
@@ -291,7 +299,13 @@ func (s *GatewayService) forwardKiroAsChatCompletionsAttempt(
 	defer func() { _ = bridge.Resp.Body.Close() }()
 
 	if clientStream {
-		return s.handleCCStreamingFromAnthropic(bridge.Resp, c, originalModel, bridge.MappedModel, reasoningEffort, startTime)
+		c.Set(kiroPartialUsageContextKey, true)
+		defer c.Set(kiroPartialUsageContextKey, false)
+		result, err := s.handleCCStreamingFromAnthropic(bridge.Resp, c, originalModel, bridge.MappedModel, reasoningEffort, startTime)
+		if err != nil {
+			s.recordKiroStreamFailure(ctx, c, account, bridge.Resp, bridge.MappedModel, body, err)
+		}
+		return result, err
 	}
 	return s.handleCCBufferedFromAnthropic(bridge.Resp, c, originalModel, bridge.MappedModel, reasoningEffort, startTime)
 }
