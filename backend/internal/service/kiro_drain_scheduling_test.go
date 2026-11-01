@@ -170,6 +170,10 @@ func TestKiroStickyAccountSpentReleasesOnlyAfterUpstreamRejection(t *testing.T) 
 	sticky.RateLimitResetAt = &reset
 	require.True(t, kiroStickyAccountSpent(sticky, pool), "限流中（上游拒绝）时放开粘性")
 
+	expired := time.Now().Add(-time.Minute)
+	sticky.RateLimitResetAt = &expired
+	require.False(t, kiroStickyAccountSpent(sticky, pool), "冷却结束后恢复原有粘性")
+
 	sticky.RateLimitResetAt = nil
 	kiroQuotaRejections.Store(sticky.ID, time.Now().Add(time.Hour))
 	t.Cleanup(func() { kiroQuotaRejections.Delete(sticky.ID) })

@@ -121,7 +121,7 @@ func filterByKiroDrain(accounts []accountWithLoad) []accountWithLoad {
 }
 
 // kiroStickyAccountSpent 报告粘住的 Kiro 账号是否应放开粘性。
-//   - 已被上游额度拒绝（限流中，或带 rejected 标记且未到 reset）时放开：继续粘着只会再被拒。
+//   - 仍在限流期或额度拒绝期时放开粘性，冷却结束后恢复。
 //   - pace 策略下沿用原有判断：≥98% 且池中有未到这一档的号可接手。
 //
 // drain 策略不看显示的百分比：显示 100% 的号可能还能正常请求。
@@ -130,12 +130,12 @@ func kiroStickyAccountSpent(account *Account, pool []Account) bool {
 	if account == nil || account.Platform != PlatformKiro {
 		return false
 	}
-	switch kiroSchedulingStrategy() {
-	case kiroSchedulingStrategyOff:
+	strategy := kiroSchedulingStrategy()
+	if strategy == kiroSchedulingStrategyOff {
 		return false
-	case kiroSchedulingStrategyPace:
-		return kiroAccountQuotaRejected(account, time.Now()) || kiroStickyAccountPaceSpent(account, pool)
-	default:
-		return kiroAccountQuotaRejected(account, time.Now())
 	}
+	if account.IsRateLimited() || kiroAccountQuotaRejected(account, time.Now()) {
+		return true
+	}
+	return strategy == kiroSchedulingStrategyPace && kiroStickyAccountPaceSpent(account, pool)
 }
