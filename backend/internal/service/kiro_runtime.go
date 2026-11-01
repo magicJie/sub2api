@@ -740,6 +740,9 @@ func logKiroStatelessReplay(account *Account, payload []byte) {
 }
 
 func prepareKiroPayloadBodyForRequestModel(anthropicBody []byte, requestModel string) []byte {
+	if gjson.GetBytes(anthropicBody, "thinking.type").Exists() || gjson.GetBytes(anthropicBody, "thinking.budget_tokens").Exists() {
+		return anthropicBody
+	}
 	requestModel = strings.TrimSpace(requestModel)
 	if requestModel == "" || !strings.Contains(strings.ToLower(requestModel), "thinking") {
 		return anthropicBody

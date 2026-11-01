@@ -248,6 +248,41 @@ func TestForwardKiroAsChatCompletions_StreamingSuccess(t *testing.T) {
 	require.Contains(t, upstream.lastReq.URL.Path, "generateAssistantResponse")
 }
 
+func TestKiroBridgeMapsAliasBeforeReasoningConversion(t *testing.T) {
+	for _, protocol := range []string{"responses", "chat_completions"} {
+		t.Run(protocol, func(t *testing.T) {
+			upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusOK,
+				Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(kiroBridgeSuccessEventStream(t)))}}
+			svc := &GatewayService{httpUpstream: upstream, kiroCooldownStore: &kiroUsageCooldownStore{}}
+			account := kiroBridgeTestAccount()
+			account.Credentials["model_mapping"] = map[string]any{"my-alias": "claude-sonnet-5.5"}
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/"+protocol, nil)
+			body := []byte(`{"model":"my-alias","stream":true,"input":"hello","reasoning":{"effort":"high"}}`)
+			var result *ForwardResult
+			var err error
+			if protocol == "responses" {
+				result, err = svc.forwardKiroAsResponses(t.Context(), c, account, body, nil, time.Now())
+			} else {
+				body = []byte(`{"model":"my-alias","stream":true,"messages":[{"role":"user","content":"hello"}],"reasoning_effort":"high"}`)
+				result, err = svc.forwardKiroAsChatCompletions(t.Context(), c, account, body, nil, time.Now())
+			}
+			require.NoError(t, err)
+			require.Equal(t, "my-alias", result.Model)
+			require.Equal(t, http.StatusOK, rec.Code)
+			require.Contains(t, rec.Body.String(), `"model":"my-alias"`)
+		})
+	}
+}
+
+func TestPrepareKiroPayloadPreservesExplicitThinking(t *testing.T) {
+	for _, thinking := range []string{`{"type":"disabled"}`, `{"type":"enabled","budget_tokens":2048}`, `{"type":"adaptive"}`} {
+		body := []byte(`{"model":"claude-sonnet-5.5","thinking":` + thinking + `,"messages":[]}`)
+		require.Equal(t, body, prepareKiroPayloadBodyForRequestModel(body, "claude-sonnet-5.5-thinking"))
+	}
+}
+
 // TestForwardKiroAsResponses_UpstreamErrorWritesResponsesShapedError verifies
 // that a non-failover Kiro upstream HTTP error is rendered using the Responses
 // API error shape (not Kiro/Anthropic's own {"type":"error",...} shape), since

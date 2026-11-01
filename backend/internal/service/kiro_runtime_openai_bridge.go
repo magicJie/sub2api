@@ -187,6 +187,9 @@ func (s *GatewayService) forwardKiroAsResponsesAttempt(
 		return nil, fmt.Errorf("parse responses request: %w", err)
 	}
 	originalModel := responsesReq.Model
+	if mapped := account.GetMappedModel(originalModel); mapped != "" {
+		responsesReq.Model = mapped
+	}
 	clientStream := responsesReq.Stream
 	reasoningEffort := ExtractResponsesReasoningEffortFromBody(body)
 	clientToolMapping := apicompat.ResponsesClientToolMapping{}
@@ -254,6 +257,9 @@ func (s *GatewayService) forwardKiroAsChatCompletionsAttempt(
 		return nil, fmt.Errorf("parse chat completions request: %w", err)
 	}
 	originalModel := ccReq.Model
+	if mapped := account.GetMappedModel(originalModel); mapped != "" {
+		ccReq.Model = mapped
+	}
 	clientStream := ccReq.Stream
 	reasoningEffort := extractCCReasoningEffortFromBody(body)
 
