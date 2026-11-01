@@ -37,6 +37,15 @@ func (s *geminiTokenCacheStub) ReleaseRefreshLock(ctx context.Context, cacheKey 
 	return nil
 }
 
+func TestCompositeTokenCacheInvalidator_Kiro(t *testing.T) {
+	cache := &geminiTokenCacheStub{}
+	invalidator := NewCompositeTokenCacheInvalidator(cache)
+	account := &Account{ID: 42, Platform: PlatformKiro, Type: AccountTypeOAuth,
+		Credentials: map[string]any{"client_id": "shared-registration"}}
+	require.NoError(t, invalidator.InvalidateToken(context.Background(), account))
+	require.Equal(t, []string{KiroTokenCacheKey(account)}, cache.deletedKeys)
+}
+
 func TestCompositeTokenCacheInvalidator_Gemini(t *testing.T) {
 	cache := &geminiTokenCacheStub{}
 	invalidator := NewCompositeTokenCacheInvalidator(cache)
