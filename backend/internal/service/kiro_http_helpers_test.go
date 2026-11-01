@@ -143,37 +143,6 @@ func TestIsKiroInvalidModelIDBodyRecognizesKnownForms(t *testing.T) {
 	}
 }
 
-func TestBuildKiroPayloadForAccountPropagatesThinkingHeaders(t *testing.T) {
-	account := &Account{
-		ID:       7,
-		Platform: PlatformKiro,
-		Type:     AccountTypeOAuth,
-		Credentials: map[string]any{
-			"profile_arn": "arn:aws:codewhisperer:us-east-1:123456789012:profile/test",
-		},
-	}
-	body := []byte(`{
-		"model":"claude-sonnet-4-6",
-		"messages":[{"role":"user","content":"hello"}]
-	}`)
-	headers := http.Header{}
-	headers.Set("Anthropic-Beta", "interleaved-thinking-2025-05-14")
-
-	buildResult, err := (&GatewayService{}).buildKiroPayloadForAccount(
-		context.Background(),
-		account,
-		nil,
-		body,
-		"claude-sonnet-4.6",
-		"kiro-access-token",
-		"claude-sonnet-4-6",
-		headers,
-	)
-	require.NoError(t, err)
-	payload := buildResult.Payload
-	require.NotContains(t, string(payload), "CHUNKED WRITE PROTOCOL")
-	require.Contains(t, string(payload), "\\u003cthinking_mode\\u003eenabled\\u003c/thinking_mode\\u003e")
-}
 
 func TestBuildKiroPayloadForAccountPreservesThinkingAliasAfterMapping(t *testing.T) {
 	account := &Account{

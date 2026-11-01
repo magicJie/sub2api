@@ -1266,16 +1266,10 @@ func extractInlineSystemPrompts(messages gjson.Result) (string, []gjson.Result) 
 	return system.String(), filtered
 }
 
-func deriveThinkingDirective(body []byte, headers http.Header) *thinkingDirective {
-	// 客户端显式关闭优先于模型名后缀和 interleaved-thinking beta 头这类隐式开启。
+func deriveThinkingDirective(body []byte, _ http.Header) *thinkingDirective {
+	// Explicit body configuration takes precedence over model aliases.
 	if strings.EqualFold(strings.TrimSpace(gjson.GetBytes(body, "thinking.type").String()), "disabled") {
 		return nil
-	}
-	if override := thinkingDirectiveFromModel(gjson.GetBytes(body, "model").String()); override != nil {
-		if effort := strings.TrimSpace(gjson.GetBytes(body, "output_config.effort").String()); override.Mode == "adaptive" && effort != "" {
-			override.Effort = effort
-		}
-		return override
 	}
 	switch thinkingType := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "thinking.type").String())); thinkingType {
 	case "adaptive":
@@ -1295,10 +1289,11 @@ func deriveThinkingDirective(body []byte, headers http.Header) *thinkingDirectiv
 		}
 		return &thinkingDirective{Mode: "enabled", BudgetTokens: budget}
 	}
-	if headers != nil {
-		if beta := headers.Get("Anthropic-Beta"); strings.Contains(beta, "interleaved-thinking") {
-			return &thinkingDirective{Mode: "enabled", BudgetTokens: 16000}
+	if override := thinkingDirectiveFromModel(gjson.GetBytes(body, "model").String()); override != nil {
+		if effort := strings.TrimSpace(gjson.GetBytes(body, "output_config.effort").String()); override.Mode == "adaptive" && effort != "" {
+			override.Effort = effort
 		}
+		return override
 	}
 	if effort := gjson.GetBytes(body, "reasoning_effort").String(); effort != "" && effort != "none" {
 		return &thinkingDirective{Mode: "enabled", BudgetTokens: 16000}

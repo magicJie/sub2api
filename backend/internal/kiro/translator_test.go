@@ -552,22 +552,6 @@ func TestBuildKiroPayloadInjectsThinkingForThinkingAliasModel(t *testing.T) {
 	require.Contains(t, systemContent, "<thinking_mode>enabled</thinking_mode>\n<max_thinking_length>20000</max_thinking_length>")
 }
 
-func TestBuildKiroPayloadHeaderOnlyThinking(t *testing.T) {
-	body := []byte(`{
-		"model":"claude-sonnet-4-5",
-		"messages":[{"role":"user","content":"hello kiro"}]
-	}`)
-
-	headers := http.Header{}
-	headers.Set("Anthropic-Beta", "oauth-2025-04-20,interleaved-thinking-2025-05-14")
-
-	kiroBuildResult, err := BuildKiroPayloadWithContext(body, "claude-sonnet-4.5", "", "AI_EDITOR", headers)
-	require.NoError(t, err)
-	payload := kiroBuildResult.Payload
-
-	systemContent := gjson.GetBytes(payload, "conversationState.history.0.userInputMessage.content").String()
-	require.Contains(t, systemContent, "<thinking_mode>enabled</thinking_mode>\n<max_thinking_length>16000</max_thinking_length>")
-}
 
 func TestBuildKiroPayloadExplicitDisabledThinkingWins(t *testing.T) {
 	headers := http.Header{}
@@ -2400,4 +2384,30 @@ func TestThinkingTruncationSurvivesTrailingEndTurn(t *testing.T) {
 	streamResult, err := StreamEventStreamAsAnthropicWithContext(context.Background(), bytes.NewReader(frame), &out, "model", 0, requestCtx)
 	require.NoError(t, err)
 	require.Equal(t, "max_tokens", streamResult.StopReason)
+}
+
+func TestThinkingActivationUsesBodyBeforeAliasAndIgnoresCapabilityHeader(t *testing.T) {
+	headers := http.Header{"Anthropic-Beta":[]string{"interleaved-thinking-2025-05-14"}}
+	for _, tc := range []struct {
+		model string
+		config string
+		enabled bool
+		budget string
+	}{
+		{"claude-sonnet-4-5", "", false, ""},
+		{"claude-opus-4-6-thinking", `,"thinking":{"type":"enabled","budget_tokens":2048}`, true, "2048"},
+		{"claude-sonnet-4-5-thinking", `,"thinking":{"type":"enabled","budget_tokens":4096}`, true, "4096"},
+	} {
+		body := []byte(`{"model":"`+tc.model+`"`+tc.config+`,"messages":[{"role":"user","content":"hello"}]}`)
+		built, err := BuildKiroPayloadWithContext(body, MapModel(tc.model), "", "", headers)
+		require.NoError(t, err)
+		require.Equal(t, tc.enabled, built.Context.ThinkingEnabled)
+		system := gjson.GetBytes(built.Payload,"conversationState.history.0.userInputMessage.content").String()
+		if tc.enabled {
+			require.Contains(t, system, "<max_thinking_length>"+tc.budget+"</max_thinking_length>")
+			require.Contains(t, system, "<thinking_mode>enabled</thinking_mode>")
+		} else {
+			require.NotContains(t, system, "<thinking_mode>")
+		}
+	}
 }
