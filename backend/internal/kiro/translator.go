@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
-	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,8 +27,6 @@ const (
 	kiroMaxToolNameLen               = 63
 	thinkingStartTag                 = "<thinking>"
 	thinkingEndTag                   = "</thinking>"
-	embeddedToolCallPrefix           = "[Called "
-	xmlInvokeToolCallPrefix          = "<invoke"
 	minFrameSize                     = 16
 	maxEventMsgSize                  = 10 << 20
 	writeToolDescriptionSuffix       = "IMPORTANT: If the content to write exceeds 150 lines, write only the first 50 lines with this tool, then append the remaining content using Edit calls in chunks of no more than 50 lines. Use a unique placeholder if needed. Do not write the whole file in one call."
@@ -220,19 +217,6 @@ type KiroToolUse struct {
 	TruncatedRaw string         `json:"-"`
 }
 
-// xmlInvokeToolCall is the fallback format occasionally produced by Kiro
-// models instead of a toolUseEvent. It is converted before Anthropic SSE is
-// emitted so clients receive a real tool_use block rather than visible XML.
-type xmlInvokeToolCall struct {
-	XMLName    xml.Name                 `xml:"invoke"`
-	Name       string                   `xml:"name,attr"`
-	Parameters []xmlInvokeToolParameter `xml:"parameter"`
-}
-
-type xmlInvokeToolParameter struct {
-	Name  string `xml:"name,attr"`
-	Value string `xml:",chardata"`
-}
 
 type toolUseState struct {
 	ToolUseID   string
@@ -511,7 +495,6 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 	streamingToolInputBuf := make(map[string]*strings.Builder)
 	streamingToolInvalid := make(map[string]bool)
 	currentStreamingToolID := ""
-	pendingAssistantText := ""
 	lastContentFragment := ""
 	pendingLeadingWhitespace := ""
 	stopReason := ""
@@ -833,25 +816,8 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 		toolBlockEmitted = true
 		return nil
 	}
-	flushPendingAssistantText := func() error {
-		text, embeddedTools, pending := drainEmbeddedToolText(pendingAssistantText)
-		pendingAssistantText = pending
-		if err := emitTextDelta(text, false); err != nil {
-			return err
-		}
-		for _, tool := range embeddedTools {
-			if err := emitToolUse(tool); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
 	emitPlainAssistantText := func(text string) error {
-		if text == "" {
-			return nil
-		}
-		pendingAssistantText += text
-		return flushPendingAssistantText()
+		return emitTextDelta(text, false)
 	}
 	startThinkingBlock := func() error {
 		if err := closeOpenStreamingTool(); err != nil {
@@ -1064,8 +1030,7 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 			if requestCtx.ThinkingEnabled {
 				return processThinkingTaggedText(evt.Content)
 			}
-			pendingAssistantText += evt.Content
-			return flushPendingAssistantText()
+			return emitPlainAssistantText(evt.Content)
 		case kiroSemanticReasoning:
 			if !requestCtx.ThinkingEnabled {
 				return nil
@@ -1158,9 +1123,6 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 		return nil, err
 	}
 	if err := flushThinkingAtEOF(); err != nil {
-		return nil, err
-	}
-	if err := flushPendingAssistantText(); err != nil {
 		return nil, err
 	}
 	if err := closeText(); err != nil {
@@ -2368,8 +2330,7 @@ func parseEventStreamWithReasoning(body io.Reader) (string, []KiroToolUse, Usage
 		}, currentTool, processedIDs)
 		toolUses = append(toolUses, completed...)
 	}
-	cleanText, embeddedToolUses, _ := drainEmbeddedToolText(content.String())
-	toolUses = append(toolUses, embeddedToolUses...)
+	cleanText := content.String()
 	toolUses = deduplicateToolUses(toolUses)
 
 	if usage.OutputTokens == 0 {
@@ -3290,190 +3251,6 @@ func deduplicateToolUses(toolUses []KiroToolUse) []KiroToolUse {
 	return out
 }
 
-func drainEmbeddedToolText(text string) (cleanText string, toolUses []KiroToolUse, pending string) {
-	complete, pending := splitCompleteEmbeddedToolText(text)
-	if strings.TrimSpace(complete) == "" {
-		return "", nil, pending
-	}
-	cleanText, toolUses = parseEmbeddedToolCalls(complete)
-	return cleanText, deduplicateToolUses(toolUses), pending
-}
-
-func splitCompleteEmbeddedToolText(text string) (complete string, pending string) {
-	searchFrom := 0
-	for {
-		idx := findNextEmbeddedToolCallStart(text, searchFrom)
-		if idx == -1 {
-			return text, ""
-		}
-		_, _, end, ok := parseEmbeddedToolCallAt(text, idx)
-		if !ok {
-			return text[:idx], text[idx:]
-		}
-		searchFrom = end
-	}
-}
-
-func parseEmbeddedToolCalls(text string) (string, []KiroToolUse) {
-	if findNextEmbeddedToolCallStart(text, 0) == -1 {
-		return text, nil
-	}
-	var (
-		builder  strings.Builder
-		toolUses []KiroToolUse
-		index    int
-	)
-	for index < len(text) {
-		start := findNextEmbeddedToolCallStart(text, index)
-		if start == -1 {
-			_, _ = builder.WriteString(text[index:])
-			break
-		}
-		_, _ = builder.WriteString(text[index:start])
-		tool, _, end, ok := parseEmbeddedToolCallAt(text, start)
-		if !ok {
-			_, _ = builder.WriteString(text[start:])
-			break
-		}
-		toolUses = append(toolUses, tool)
-		index = end
-	}
-	return builder.String(), toolUses
-}
-
-func parseEmbeddedToolCallAt(text string, start int) (KiroToolUse, int, int, bool) {
-	if start < 0 || start >= len(text) {
-		return KiroToolUse{}, 0, 0, false
-	}
-	if strings.HasPrefix(text[start:], embeddedToolCallPrefix) {
-		return parseLegacyEmbeddedToolCallAt(text, start)
-	}
-	if strings.HasPrefix(text[start:], xmlInvokeToolCallPrefix) {
-		return parseXMLInvokeToolCallAt(text, start)
-	}
-	return KiroToolUse{}, 0, 0, false
-}
-
-func findNextEmbeddedToolCallStart(text string, from int) int {
-	for from < len(text) {
-		legacy := strings.Index(text[from:], embeddedToolCallPrefix)
-		xmlInvoke := strings.Index(text[from:], xmlInvokeToolCallPrefix)
-		switch {
-		case legacy == -1 && xmlInvoke == -1:
-			return -1
-		case legacy == -1:
-			return from + xmlInvoke
-		case xmlInvoke == -1:
-			return from + legacy
-		case legacy < xmlInvoke:
-			return from + legacy
-		default:
-			return from + xmlInvoke
-		}
-	}
-	return -1
-}
-
-func parseXMLInvokeToolCallAt(text string, start int) (KiroToolUse, int, int, bool) {
-	if !strings.HasPrefix(text[start:], xmlInvokeToolCallPrefix) {
-		return KiroToolUse{}, 0, 0, false
-	}
-	endTag := strings.Index(text[start:], "</invoke>")
-	if endTag == -1 {
-		return KiroToolUse{}, 0, 0, false
-	}
-	end := start + endTag + len("</invoke>")
-	var invocation xmlInvokeToolCall
-	if err := xml.Unmarshal([]byte(text[start:end]), &invocation); err != nil || strings.TrimSpace(invocation.Name) == "" {
-		return KiroToolUse{}, 0, 0, false
-	}
-	input := make(map[string]any, len(invocation.Parameters))
-	for _, parameter := range invocation.Parameters {
-		name := strings.TrimSpace(parameter.Name)
-		if name == "" {
-			continue
-		}
-		input[name] = strings.TrimSpace(parameter.Value)
-	}
-	tool := KiroToolUse{
-		ToolUseID: "toolu_" + GenerateToolUseID(),
-		Name:      strings.TrimSpace(invocation.Name),
-		Input:     input,
-	}
-	return tool, start, end, true
-}
-
-func parseLegacyEmbeddedToolCallAt(text string, start int) (KiroToolUse, int, int, bool) {
-	if !strings.HasPrefix(text[start:], embeddedToolCallPrefix) {
-		return KiroToolUse{}, 0, 0, false
-	}
-	pos := start + len(embeddedToolCallPrefix)
-	argsMarker := " with args:"
-	argsIndex := strings.Index(text[pos:], argsMarker)
-	if argsIndex == -1 {
-		return KiroToolUse{}, 0, 0, false
-	}
-	argsIndex += pos
-	toolName := strings.TrimSpace(text[pos:argsIndex])
-	if toolName == "" {
-		return KiroToolUse{}, 0, 0, false
-	}
-	jsonStart := argsIndex + len(argsMarker)
-	for jsonStart < len(text) && (text[jsonStart] == ' ' || text[jsonStart] == '\t' || text[jsonStart] == '\n') {
-		jsonStart++
-	}
-	if jsonStart >= len(text) || text[jsonStart] != '{' {
-		return KiroToolUse{}, 0, 0, false
-	}
-	jsonEnd := findMatchingJSONBracket(text, jsonStart)
-	if jsonEnd == -1 {
-		return KiroToolUse{}, 0, 0, false
-	}
-	end := jsonEnd + 1
-	for end < len(text) && text[end] != ']' {
-		end++
-	}
-	if end >= len(text) {
-		return KiroToolUse{}, 0, 0, false
-	}
-	rawJSON := text[jsonStart : jsonEnd+1]
-	tool := finalizeRawToolUse("toolu_"+GenerateToolUseID(), toolName, rawJSON)
-	return tool, start, end + 1, true
-}
-
-func findMatchingJSONBracket(text string, start int) int {
-	depth := 0
-	inString := false
-	escape := false
-	for i := start; i < len(text); i++ {
-		ch := text[i]
-		if escape {
-			escape = false
-			continue
-		}
-		if ch == '\\' {
-			escape = true
-			continue
-		}
-		if ch == '"' {
-			inString = !inString
-			continue
-		}
-		if inString {
-			continue
-		}
-		switch ch {
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if depth == 0 {
-				return i
-			}
-		}
-	}
-	return -1
-}
 
 func looksLikeTruncatedJSON(raw string) bool {
 	raw = strings.TrimSpace(raw)

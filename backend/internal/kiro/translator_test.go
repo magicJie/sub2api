@@ -779,49 +779,7 @@ func TestParseNonStreamingEventStreamThinkingWithToolUseKeepsToolUseStopReason(t
 	require.False(t, gjson.GetBytes(result.ResponseBody, "content.2.text").Exists())
 }
 
-func TestParseNonStreamingEventStreamExtractsEmbeddedToolCall(t *testing.T) {
-	stream := bytes.NewBuffer(nil)
-	_, _ = stream.Write(buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{
-		"assistantResponseEvent": map[string]any{
-			"content": `Before [Called web_search with args: {"query":"golang concurrency"}] After`,
-		},
-	}))
 
-	result, err := ParseNonStreamingEventStreamWithContext(stream, "claude-sonnet-4-5", KiroRequestContext{})
-	require.NoError(t, err)
-	require.Equal(t, "tool_use", result.StopReason)
-	require.NotContains(t, string(result.ResponseBody), "[Called")
-
-	content := gjson.GetBytes(result.ResponseBody, "content").Array()
-	require.Len(t, content, 2)
-	require.Equal(t, "text", content[0].Get("type").String())
-	require.Equal(t, "Before  After", content[0].Get("text").String())
-	require.Equal(t, "tool_use", content[1].Get("type").String())
-	require.Equal(t, "remote_web_search", content[1].Get("name").String())
-	require.Equal(t, "golang concurrency", content[1].Get("input.query").String())
-}
-
-func TestParseNonStreamingEventStreamExtractsXMLInvokeToolCall(t *testing.T) {
-	stream := bytes.NewBuffer(nil)
-	_, _ = stream.Write(buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{
-		"assistantResponseEvent": map[string]any{
-			"content": "Before <invoke name=\"bash\">\n<parameter name=\"command\">ls -la /workspace</parameter>\n<parameter name=\"description\">List files</parameter>\n</invoke> After",
-		},
-	}))
-
-	result, err := ParseNonStreamingEventStreamWithContext(stream, "claude-sonnet-4-5", KiroRequestContext{ToolNameMap: map[string]string{"bash": "Bash"}})
-	require.NoError(t, err)
-	require.Equal(t, "tool_use", result.StopReason)
-	require.NotContains(t, string(result.ResponseBody), "<invoke")
-
-	content := gjson.GetBytes(result.ResponseBody, "content").Array()
-	require.Len(t, content, 2)
-	require.Equal(t, "Before  After", content[0].Get("text").String())
-	require.Equal(t, "tool_use", content[1].Get("type").String())
-	require.Equal(t, "Bash", content[1].Get("name").String())
-	require.Equal(t, "ls -la /workspace", content[1].Get("input.command").String())
-	require.Equal(t, "List files", content[1].Get("input.description").String())
-}
 
 func TestParseNonStreamingEventStreamKeepsSameContentToolUsesWithDifferentIDs(t *testing.T) {
 	stream := bytes.NewBuffer(nil)
@@ -978,20 +936,6 @@ func TestParseNonStreamingEventStreamSkipsTruncatedToolUse(t *testing.T) {
 	require.NotContains(t, string(result.ResponseBody), `"type":"tool_use"`)
 }
 
-func TestParseNonStreamingEventStreamDropsIncompleteEmbeddedToolTail(t *testing.T) {
-	stream := bytes.NewBuffer(nil)
-	_, _ = stream.Write(buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{
-		"assistantResponseEvent": map[string]any{
-			"content": `Before [Called web_search with args: {"query":"golang`,
-		},
-	}))
-
-	result, err := ParseNonStreamingEventStreamWithContext(stream, "claude-sonnet-4-5", KiroRequestContext{})
-	require.NoError(t, err)
-	require.Equal(t, "end_turn", result.StopReason)
-	require.NotContains(t, string(result.ResponseBody), "[Called")
-	require.Equal(t, "Before ", gjson.GetBytes(result.ResponseBody, "content.0.text").String())
-}
 
 func TestParseNonStreamingEventStreamThinkingOnlyResponse(t *testing.T) {
 	stream := bytes.NewBuffer(nil)
@@ -1028,61 +972,7 @@ func TestParseNonStreamingEventStreamExtractsContinuation(t *testing.T) {
 	require.Equal(t, "kiro-continuation-1", result.Continuation.AgentContinuationID)
 }
 
-func TestStreamEventStreamAsAnthropicExtractsEmbeddedToolCall(t *testing.T) {
-	stream := bytes.NewBuffer(nil)
-	_, _ = stream.Write(buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{
-		"assistantResponseEvent": map[string]any{
-			"content": `Before [Called web_search with args: {"query":"gol`,
-		},
-	}))
-	_, _ = stream.Write(buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{
-		"assistantResponseEvent": map[string]any{
-			"content": `ang"}] After`,
-		},
-	}))
 
-	var out bytes.Buffer
-	result, err := StreamEventStreamAsAnthropicWithContext(context.Background(), stream, &out, "claude-sonnet-4-5", 9, KiroRequestContext{})
-	require.NoError(t, err)
-	require.Equal(t, "tool_use", result.StopReason)
-
-	output := out.String()
-	require.NotContains(t, output, "[Called")
-	require.Contains(t, output, `"text":"Before "`)
-	require.Contains(t, output, `"text":" After"`)
-	require.Contains(t, output, `"name":"remote_web_search"`)
-	require.Contains(t, output, `"partial_json":"{\"query\":\"golang\"}"`)
-}
-
-func TestStreamEventStreamAsAnthropicConvertsXMLInvokeToToolUse(t *testing.T) {
-	stream := bytes.NewBuffer(nil)
-	_, _ = stream.Write(buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{
-		"assistantResponseEvent": map[string]any{
-			"content": "<invoke name=\"bash\">\n<parameter name=\"command\">ls -la /workspace</parameter>\n",
-		},
-	}))
-	_, _ = stream.Write(buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{
-		"assistantResponseEvent": map[string]any{
-			"content": "<parameter name=\"description\">List files</parameter>\n</invoke>",
-		},
-	}))
-	_, _ = stream.Write(buildEventStreamFrame(t, "messageStopEvent", map[string]any{
-		"messageStopEvent": map[string]any{"stop_reason": "end_turn"},
-	}))
-
-	var out bytes.Buffer
-	result, err := StreamEventStreamAsAnthropicWithContext(
-		context.Background(), stream, &out, "claude-sonnet-4-5", 9, KiroRequestContext{ToolNameMap: map[string]string{"bash": "Bash"}},
-	)
-	require.NoError(t, err)
-	require.Equal(t, "tool_use", result.StopReason)
-
-	output := out.String()
-	require.NotContains(t, output, "<invoke")
-	require.Contains(t, output, `"name":"Bash"`)
-	require.Contains(t, output, `"partial_json":"{\"command\":\"ls -la /workspace\",\"description\":\"List files\"}"`)
-	require.Contains(t, output, `"stop_reason":"tool_use"`)
-}
 
 func TestStreamEventStreamAsAnthropicExtractsContinuation(t *testing.T) {
 	stream := bytes.NewBuffer(nil)
@@ -2410,4 +2300,33 @@ func TestKiroUsageCapturesContextUsageAndMetering(t *testing.T) {
 	require.InDelta(t, 18.5, streamResult.Usage.ContextUsagePercentage, 1e-9)
 	require.InDelta(t, 0.44, streamResult.Usage.MeteringUsage, 1e-9)
 	require.NotContains(t, out.String(), "contextUsagePercentage")
+}
+
+func TestAssistantToolSyntaxRemainsText(t *testing.T) {
+	for _, text := range []string{
+		"[Called Bash with args: {\"command\":\"ls\"}]",
+		"```xml\n<invoke name=\"Bash\"><parameter name=\"command\">ls</parameter></invoke>\n```",
+		"Ordinary <invoke and unfinished <invoke name=\"Bash\">",
+	} {
+		t.Run(text, func(t *testing.T) {
+			frame := buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{"content": text})
+			result, err := ParseNonStreamingEventStreamWithContext(bytes.NewReader(frame), "model", KiroRequestContext{})
+			require.NoError(t, err)
+			require.Equal(t, "end_turn", result.StopReason)
+			require.Equal(t, text, gjson.GetBytes(result.ResponseBody, "content.0.text").String())
+			require.Len(t, gjson.GetBytes(result.ResponseBody, "content").Array(), 1)
+			var out bytes.Buffer
+			streamResult, err := StreamEventStreamAsAnthropicWithContext(context.Background(), bytes.NewReader(frame), &out, "model", 0, KiroRequestContext{})
+			require.NoError(t, err)
+			require.Equal(t, "end_turn", streamResult.StopReason)
+			var streamed strings.Builder
+			for _, line := range strings.Split(out.String(), "\n") {
+				if strings.HasPrefix(line, "data: ") {
+					streamed.WriteString(gjson.Get(strings.TrimPrefix(line, "data: "), "delta.text").String())
+				}
+			}
+			require.Equal(t, text, streamed.String())
+			require.NotContains(t, out.String(), `"type":"tool_use"`)
+		})
+	}
 }
