@@ -376,6 +376,136 @@ func parseAnthropicSSEField(line, field string) (string, bool) {
 	return strings.TrimSpace(strings.TrimPrefix(line, prefix)), true
 }
 
+// readBufferedAnthropicResponse assembles the shared Anthropic input for both
+// non-streaming OpenAI adapters. A response is complete only at message_stop
+// with a final stop reason; partial content remains available for usage logging.
+func (s *GatewayService) readBufferedAnthropicResponse(resp *http.Response) (*apicompat.AnthropicResponse, ClaudeUsage, error) {
+	scanner := bufio.NewScanner(resp.Body)
+	maxLineSize := defaultMaxLineSize
+	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
+		maxLineSize = s.cfg.Gateway.MaxLineSize
+	}
+	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
+
+	var finalResp *apicompat.AnthropicResponse
+	var usage ClaudeUsage
+	var parser openAICompatSSEFrameParser
+	stopped := false
+	process := func(frame openAICompatSSEFrame) error {
+		if frame.EventType == "error" || gjson.Get(frame.Data, "type").String() == "error" {
+			return &sseStreamErrorEventError{RawData: frame.Data}
+		}
+		var event apicompat.AnthropicStreamEvent
+		if err := json.Unmarshal([]byte(frame.Data), &event); err != nil {
+			return fmt.Errorf("parse upstream Anthropic event: %w", err)
+		}
+		if event.Type == "" {
+			event.Type = frame.EventType
+		}
+		switch event.Type {
+		case "message_start":
+			if event.Message != nil {
+				finalResp = event.Message
+				mergeAnthropicUsage(&usage, event.Message.Usage)
+			}
+		case "message_delta":
+			if event.Usage != nil {
+				mergeAnthropicUsage(&usage, *event.Usage)
+			}
+			if event.Delta != nil && event.Delta.StopReason != "" && finalResp != nil {
+				finalResp.StopReason = apicompat.AnthropicStopReasonPtr(event.Delta.StopReason)
+			}
+		case "content_block_start":
+			if event.ContentBlock != nil && finalResp != nil {
+				finalResp.Content = append(finalResp.Content, *event.ContentBlock)
+			}
+		case "content_block_delta":
+			if event.Delta != nil && finalResp != nil && event.Index != nil {
+				idx := *event.Index
+				if idx >= 0 && idx < len(finalResp.Content) {
+					switch event.Delta.Type {
+					case "text_delta":
+						finalResp.Content[idx].Text += event.Delta.Text
+					case "thinking_delta":
+						finalResp.Content[idx].Thinking += event.Delta.Thinking
+					case "signature_delta":
+						finalResp.Content[idx].Signature += event.Delta.Signature
+					case "input_json_delta":
+						finalResp.Content[idx].Input = appendRawJSON(finalResp.Content[idx].Input, event.Delta.PartialJSON)
+					}
+				}
+			}
+		case "message_stop":
+			stopped = true
+		}
+		return nil
+	}
+	for scanner.Scan() {
+		frame, ready := parser.AddLine(scanner.Text())
+		if !ready && frame.EventType != "error" {
+			continue
+		}
+		if err := process(frame); err != nil {
+			return finalResp, usage, err
+		}
+		if stopped {
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return finalResp, usage, fmt.Errorf("read upstream Anthropic stream: %w", err)
+	}
+	if !stopped {
+		if frame, ready := parser.Finish(); ready || frame.EventType == "error" {
+			if err := process(frame); err != nil {
+				return finalResp, usage, err
+			}
+		}
+	}
+	if finalResp == nil || !stopped || apicompat.AnthropicStopReasonString(finalResp.StopReason) == "" {
+		return finalResp, usage, fmt.Errorf("upstream Anthropic stream ended before message_stop and final stop reason: %w", io.ErrUnexpectedEOF)
+	}
+	finalResp.Usage = apicompat.AnthropicUsage{
+		InputTokens:              usage.InputTokens,
+		OutputTokens:             usage.OutputTokens,
+		CacheCreationInputTokens: usage.CacheCreationInputTokens,
+		CacheReadInputTokens:     usage.CacheReadInputTokens,
+	}
+	return finalResp, usage, nil
+}
+
+func finishBufferedAnthropicError(c *gin.Context, resp *http.Response, usage ClaudeUsage, originalModel, mappedModel string, reasoningEffort *string, startTime time.Time, err error, writeError func(*gin.Context, int, string, string)) (*ForwardResult, error) {
+	status, errType, message := http.StatusBadGateway, "server_error", "Upstream stream ended before completing the response"
+	var sseErr *sseStreamErrorEventError
+	if errors.As(err, &sseErr) {
+		errType = firstNonEmpty(gjson.Get(sseErr.RawData, "error.type").String(), "upstream_error")
+		message = firstNonEmpty(sanitizeUpstreamErrorMessage(gjson.Get(sseErr.RawData, "error.message").String()), "Upstream stream error")
+		switch errType {
+		case "invalid_request_error":
+			status = http.StatusBadRequest
+		case "authentication_error":
+			status = http.StatusUnauthorized
+		case "permission_error":
+			status = http.StatusForbidden
+		case "not_found_error":
+			status = http.StatusNotFound
+		case "request_too_large":
+			status = http.StatusRequestEntityTooLarge
+		case "rate_limit_error":
+			status = http.StatusTooManyRequests
+		case "overloaded_error":
+			status = http.StatusServiceUnavailable
+		}
+	}
+	writeError(c, status, errType, message)
+	result := partialStreamUsageResult(c, resp, &streamingResult{usage: &usage}, originalModel, mappedModel, startTime, err)
+	if result != nil {
+		result.Stream = false
+		result.ReasoningEffort = reasoningEffort
+	}
+	return result, err
+}
+
 // handleResponsesBufferedStreamingResponse reads all Anthropic SSE events from
 // the upstream streaming response, assembles them into a complete Anthropic
 // response, converts to Responses API JSON format, and writes it to the client.
@@ -390,103 +520,9 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 ) (*ForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
-	scanner := bufio.NewScanner(resp.Body)
-	maxLineSize := defaultMaxLineSize
-	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
-		maxLineSize = s.cfg.Gateway.MaxLineSize
-	}
-	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
-
-	// Accumulate the final Anthropic response from streaming events
-	var finalResp *apicompat.AnthropicResponse
-	var usage ClaudeUsage
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		eventType, ok := parseAnthropicSSEField(line, "event")
-		if !ok {
-			continue
-		}
-
-		// Read the data line
-		if !scanner.Scan() {
-			break
-		}
-		dataLine := scanner.Text()
-		payload, ok := parseAnthropicSSEField(dataLine, "data")
-		if !ok {
-			continue
-		}
-
-		var event apicompat.AnthropicStreamEvent
-		if err := json.Unmarshal([]byte(payload), &event); err != nil {
-			logger.L().Warn("forward_as_responses buffered: failed to parse event",
-				zap.Error(err),
-				zap.String("request_id", requestID),
-				zap.String("event_type", eventType),
-			)
-			continue
-		}
-
-		// message_start carries the initial response structure
-		if event.Type == "message_start" && event.Message != nil {
-			finalResp = event.Message
-			mergeAnthropicUsage(&usage, event.Message.Usage)
-		}
-
-		// message_delta carries final usage and stop_reason
-		if event.Type == "message_delta" {
-			if event.Usage != nil {
-				mergeAnthropicUsage(&usage, *event.Usage)
-			}
-			if event.Delta != nil && event.Delta.StopReason != "" && finalResp != nil {
-				finalResp.StopReason = apicompat.AnthropicStopReasonPtr(event.Delta.StopReason)
-			}
-		}
-
-		// Accumulate content blocks
-		if event.Type == "content_block_start" && event.ContentBlock != nil && finalResp != nil {
-			finalResp.Content = append(finalResp.Content, *event.ContentBlock)
-		}
-		if event.Type == "content_block_delta" && event.Delta != nil && finalResp != nil && event.Index != nil {
-			idx := *event.Index
-			if idx >= 0 && idx < len(finalResp.Content) {
-				switch event.Delta.Type {
-				case "text_delta":
-					finalResp.Content[idx].Text += event.Delta.Text
-				case "thinking_delta":
-					finalResp.Content[idx].Thinking += event.Delta.Thinking
-				case "signature_delta":
-					finalResp.Content[idx].Signature += event.Delta.Signature
-				case "input_json_delta":
-					finalResp.Content[idx].Input = appendRawJSON(finalResp.Content[idx].Input, event.Delta.PartialJSON)
-				}
-			}
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			logger.L().Warn("forward_as_responses buffered: read error",
-				zap.Error(err),
-				zap.String("request_id", requestID),
-			)
-		}
-	}
-
-	if finalResp == nil {
-		writeResponsesError(c, http.StatusBadGateway, "server_error", "Upstream stream ended without a response")
-		return nil, fmt.Errorf("upstream stream ended without response")
-	}
-
-	// Update usage from accumulated delta
-	if usage.InputTokens > 0 || usage.OutputTokens > 0 {
-		finalResp.Usage = apicompat.AnthropicUsage{
-			InputTokens:              usage.InputTokens,
-			OutputTokens:             usage.OutputTokens,
-			CacheCreationInputTokens: usage.CacheCreationInputTokens,
-			CacheReadInputTokens:     usage.CacheReadInputTokens,
-		}
+	finalResp, usage, err := s.readBufferedAnthropicResponse(resp)
+	if err != nil {
+		return finishBufferedAnthropicError(c, resp, usage, originalModel, mappedModel, reasoningEffort, startTime, err, writeResponsesError)
 	}
 
 	// Convert to Responses format
