@@ -51,10 +51,7 @@ func (w *kiroStreamChunkCollector) Write(p []byte) (int, error) {
 func bufferKiroAnthropicStream(ctx context.Context, body io.Reader, mappedModel string, inputTokens int, requestCtx kiropkg.KiroRequestContext) ([][]byte, *kiropkg.StreamResult, error) {
 	collector := &kiroStreamChunkCollector{}
 	result, err := kiropkg.StreamEventStreamAsAnthropicWithContext(ctx, body, collector, mappedModel, inputTokens, requestCtx)
-	if err != nil {
-		return nil, nil, err
-	}
-	return collector.chunks, result, nil
+	return collector.chunks, result, err
 }
 
 func writeSSEChunks(w io.Writer, chunks [][]byte) error {
@@ -64,6 +61,18 @@ func writeSSEChunks(w io.Writer, chunks [][]byte) error {
 		}
 		if _, err := w.Write(chunk); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func writeAdjustedKiroSSEChunks(w io.Writer, chunks [][]byte, offset int) error {
+	for _, chunk := range chunks {
+		adjusted, forward := kiropkg.AdjustSSEChunk(chunk, offset)
+		if forward {
+			if _, err := w.Write(adjusted); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -163,6 +172,9 @@ func (s *GatewayService) streamKiroWebSearchAsAnthropic(
 			return bufferKiroAnthropicStream(ctx, resp.Body, mappedModel, inputTokens, requestCtx)
 		}()
 		if streamErr != nil {
+			if writeErr := writeAdjustedKiroSSEChunks(w, chunks, nextContentBlockIndex); writeErr != nil {
+				return errors.Join(streamErr, writeErr)
+			}
 			return streamErr
 		}
 		if err := s.markKiroSuccess(ctx, buildKiroAccountKey(account)); err != nil {
@@ -187,16 +199,7 @@ func (s *GatewayService) streamKiroWebSearchAsAnthropic(
 			continue
 		}
 
-		for _, chunk := range chunks {
-			adjusted, shouldForward := kiropkg.AdjustSSEChunk(chunk, nextContentBlockIndex)
-			if !shouldForward {
-				continue
-			}
-			if _, err := w.Write(adjusted); err != nil {
-				return err
-			}
-		}
-		return nil
+		return writeAdjustedKiroSSEChunks(w, chunks, nextContentBlockIndex)
 	}
 
 	return fmt.Errorf("kiro web search exceeded max iterations")
