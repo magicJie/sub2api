@@ -11,10 +11,10 @@
   - `backend/internal/handler/admin/kiro_oauth_handler.go`、`handler/dto/kiro.go`、`server/routes/kiro.go`
   - `backend/internal/domain/platforms_kiro.go`（用 `init` 追加到上游平台清单）
   - `frontend/src/kiro/`（管理端 API、OAuth/导入 composable、模型目录与映射预设、配色、图标）
-- 上游文件只允许两类改动：新增字段 / 嵌入结构体，或一行转发调用；都带 `Kiro（fork）` 注释，便于 `grep`。
+- Kiro 专属状态通过最小挂钩接入上游文件，并带 `Kiro（fork）` 注释；共享协议缺陷在共享管线修复，覆盖原生 provider 回归。
 - 不改 ent schema、不加数据库迁移。Kiro 的 prompt cache 计费模拟配置放在账号 `extra`：
   `kiro_cache_emulation_enabled`（bool，默认开启，显式 `false` 才关闭）、`kiro_cache_emulation_ratio`（0~1，默认 1），在账号编辑页设置。
-  Kiro 上游不返回缓存用量，关闭后下游会把整段上下文按普通 input 计费。
+  上游提供缓存计量时保留原生分项；缺少原生缓存计量时按配置模拟，关闭模拟后按普通 input 计费。
 - 下游系统提示原样转发，只在前面加协议必需的 thinking 前缀和身份覆盖（`<CRITICAL_OVERRIDE>`，防止上游自称 Kiro）。
   行为引导类追加默认关闭，用环境变量打开（`1/true/on/yes`）：
   - `SUB2API_KIRO_CHUNKED_WRITE_POLICY`：给 Write/Edit 类工具描述追加分块限制（超过 50 行分多次写），并在系统提示里要求静默照做。
@@ -25,17 +25,17 @@
   - `internal/kiro/stream_error.go`：识别流中 `:message-type=exception` 帧；未输出前按等价 HTTP 状态走错误分类与 failover，已输出则发 SSE `error`，不再伪装成正常结束。
   - `service/kiro_error_classifier.go`：`CONTENT_LENGTH_EXCEEDS_THRESHOLD` → Anthropic `invalid_request_error` “prompt is too long”（Claude Code 据此自动压缩）；`INSUFFICIENT_MODEL_CAPACITY` → 529 换号且不封禁账号。
   - 工具名：不符合 `[a-zA-Z0-9_-]{1,63}` 的（如带 `.`、`:` 的 MCP 工具名，或过长）替换非法字符并追加整名 hash，响应时回映射为原名。
-  - `tool_result` 里的图片挪到所在 user 消息的 `images`（Kiro 的 toolResults 只收文本）。
+  - 图片按各轮 user 消息保留，不按历史距离或图片数量主动裁剪；`tool_result` 的图片归入其所在 user 消息的 `images`（Kiro 的 toolResults 只收文本）。
   - 上游 `CONTENT_FILTERED` 停止原因 → Anthropic `stop_reason: refusal`。
   - 推理：透传上游 `reasoningContentEvent` 的 `signature`（推理文本之后单独一帧）与 `redactedContent`（→ `redacted_thinking`）。
     历史里带上游签名的 thinking 以 `assistantResponseMessage.reasoningContent.reasoningText{text,signature}` 回传，
     签名缺失或是本网关旧版的本地 sha256 摘要时丢弃（上游不认）；不再内联成 `<thinking>` 正文。
   - 只含工具结果的 user 消息 content 留空，结果只放在 `toolResults`（不写英文占位，避免长会话回复语言漂移）。
   - 显式 `temperature: 0` / `top_p: 0` 原样发给上游。
-  - 工具调用：只把 JSON 完整且满足请求里该工具 `input_schema.required` 的调用交给客户端（不再用写死的工具名必填表）；
-    同一轮里 ID 不同的调用即使名称和参数相同也都保留，只按 ID 去重。
-  - 客户端显式 `thinking.type: disabled` 优先于模型名 `-thinking` 后缀和 `interleaved-thinking` beta 头。
-  - 非流式响应在上游未回报输入用量时，`usage.input_tokens` 用网关估算值填充（与流式一致）。
+  - 工具调用：JSON 完整且满足该工具 `input_schema.required` 才交给客户端，截断或缺必需字段返回错误；
+    不同 ID 的调用即使名称和参数相同也保留，只按 ID 去重。XML invoke、`[Called]` 等正文保持文本。
+  - 显式 `thinking.type` / `budget_tokens` 优先于模型名后缀；beta 头只声明客户端能力。
+  - 输入与缓存用量分别使用上游原生字段，包括显式零输入；输入用量缺失时才回填估算。
   - 推理区域：`api_region` 优先，其次 profileArn 中的区域（仅 `us-east-1` / `eu-central-1`），再按登录区域 `eu-*` → `eu-central-1`，否则 `us-east-1`。
     Builder ID 账号列不出 profile 时使用 Kiro 客户端的固定 profileArn。
 - 多账号调度：挂在 `gateway_scheduling.go` Layer 2（优先级之后、负载率之前，入口 `filterKiroCandidates`）与 Layer 1.5 粘性检查。
@@ -43,7 +43,7 @@
   - drain（集中耗尽，`service/kiro_drain_scheduling.go`）：Kiro 是 churn 平台，号用完就退役、腾出 IP。
     有可信快照（≤6 小时、未过重置时间）的号先于未知号（未知号排后但不排除）；重置时间越早越先（按分钟比较）；同一重置时间里已用比例越高越先；
     完全相同时交给负载率 / LRU。显示 100% 但未被上游拒绝的号照常调度。首选号并发满（抢槽失败或 LoadRate=100）或在 429 冷却时，
-    调度循环移除它并重新收窄，溢出到下一个号，不排队等待；不设单号并发上限。粘性只在「已被上游拒绝且未 reset」时解除，不看百分比。
+    调度循环移除它并重新收窄，溢出到下一个号，不排队等待；不设单号并发上限。粘性在账号限流有效期内或已被上游额度拒绝且未 reset 时解除，不看百分比。
   - pace（均摊，借鉴 yetone/magpie，MIT，`service/kiro_pace_scheduling.go`）：按已用比例分档（<90 / 90–98 / ≥98），
     正常档按 `pace = (100−used%)/max(距重置小时,1)` 优先，10% 内视为同档；粘住的账号 ≥98% 且有替补、或已被上游拒绝时放开粘性。
   - 用量来自进程内快照（由下面的额度后台刷新器从落库快照恢复）。
@@ -121,6 +121,76 @@ cd backend && go build ./... && go test -tags=unit ./...
 ```
 
 建议开启 `git config rerere.enabled true`，同一冲突只需解决一次。
+
+## Kiro 深度审查修复与回滚索引
+
+本轮以 `603905dfc476` 为基线，历史图片及后续 33 项修复分别提交。后续修复提交正文含中文排查说明；协议和账号可观察变化由对应回归覆盖。共享 Anthropic SSE 缓冲器按真实终态判定成功，Kiro OpenAI 桥接通过专用标记保留流错误后的部分用量。
+
+| 提交 | 修复项 | 排查点 |
+| --- | --- | --- |
+| `03f1ab19f928` | 历史图片保留 | 各轮 user/tool_result 图片逐消息保留，覆盖图片位置、消息距离和历史数量。 |
+| `26f626f387b9` | 搜索结果关联 | 搜索结果通过 tool_use_id 关联对应 server_tool_use，覆盖流式、缓冲与同一响应多次搜索。 |
+| `212bc894a617` | 搜索流终态 | 隐藏中间搜索轮次的消息头与终态，保留最终轮的用量、停止原因、message_stop 和请求转换上下文。 |
+| `a5c8020deb01` | 搜索禁用选择 | tool_choice=none 在原生及通用搜索捷径生效，执行 MCP 前退出。 |
+| `57241896087c` | OpenAI 缓冲错误 | Responses/Chat 缓冲响应要求完整终态；流内错误、读取错误或缺终态返回非 2xx，并保留已观察用量。 |
+| `d4b1d78ae980` | 搜索数字精度 | 替换搜索描述、追加历史和调整 SSE 索引时保留 JSON 大整数，避免工具参数变值。 |
+| `e408da78cc01` | 正文工具语法 | XML invoke 与 [Called] 等正文保持文本；工具调用仅来自结构化上游事件。 |
+| `7584a28d7732` | 工具 Schema 保真 | 保留根级及嵌套 enum、联合类型、布尔 schema 等约束，避免清洗时强制改成 object。 |
+| `cb9c2209ff7e` | 工具参数精度 | 结构化工具响应与重放历史保持大整数和嵌套数字精度。 |
+| `0cf43d5db3fa` | 工具 none 语义 | none 禁用当前工具与历史工具补齐；上游违约调用显式报错。 |
+| `b8a30e38d708` | 自定义搜索工具名 | 混合普通工具时将 remote_web_search 还原为客户端声明的自定义工具名。 |
+| `2d0ed072cba1` | 截断工具调用 | 工具 JSON 不完整或缺必需字段时显式失败，保留失败语义。 |
+| `9a5984f4702a` | Thinking 停止原因 | 只含 thinking 的流式与非流式响应保持真实停止原因；尾随 end_turn 不覆盖已报告截断。 |
+| `e94fca8350c8` | Thinking 配置优先级 | 显式 thinking type/budget 优先于模型别名后缀；beta 头只声明能力。 |
+| `846330dddc93` | 空工具结果 | 省略 tool_result.content 保持为空结果，由 is_error 决定状态。 |
+| `9e727e5316e0` | 原生缓存计量 | 普通输入与 cache read/write 分开计量；协议层保留显式零值，估算仅填补缺失用量。 |
+| `4044f7902589` | 账号身份隔离 | token、刷新锁及 cooldown 按稳定账号 ID 隔离。替代注册标识键时，旧条目自然过期；切换和回滚应避免新旧刷新锁并行。 |
+| `40d29cdb2cde` | 凭据缓存失效 | 后台与手动刷新、凭据更新和账号恢复共用 Kiro token 缓存失效逻辑。 |
+| `6085fa00cb6b` | 刷新锁与快照 | 强制刷新尊重共享锁，拒绝回用失败或空 token；版本更新及刷新竞态后同步 token/profile 完整快照，避免重复 OAuth 与旧元数据重试。 |
+| `8068d8e50525` | 模型映射与 thinking 转换 | 先映射实际模型再转换 reasoning 和校验；跨协议转换保留显式 thinking 配置。 |
+| `7253e322f709` | 部分用量与流错误 | Kiro 错误/取消保留已观察用量和 typed error；已输出后终止当前尝试。其他平台的 OpenAI 兼容流错误计费保持原策略。 |
+| `a37505030be1` | 显式零用量计费 | 上游显式 input_tokens=0 在服务计费边界保持为零，仅缺失用量才回填估算。 |
+| `d020a4936771` | 首帧异常与成功时机 | 预读并重放首帧；异常先分类，完整生成成功后才清除冷却计数，覆盖原生搜索。 |
+| `c58c1729bb07` | 接受回调 | 真实上游接受后回调一次，覆盖三种协议与原生搜索，释放请求串行队列。 |
+| `4b8e477a9c8f` | 文档内容边界 | text document 保留为文本，其他来源在取 token 前返回协议对应的 400，覆盖三种入口。 |
+| `407fe420d081` | 限流期间粘性路由 | 瞬时限流期间释放 Kiro 粘性路由，冷却结束后恢复；额度拒绝标记保持独立。 |
+| `6b6ad2e5a6d6` | 原生混合搜索边界 | 内置 web_search_*/google_search 与客户端工具混合时明确 400；自定义同名工具、单独内置搜索和 none 旁路保持各自语义。 |
+| `64fac3676ea0` | 账号错误状态 | Kiro 专用状态不被通用处理覆盖；瞬时限流与额度耗尽区分，并覆盖真实 RateLimitService 的最终状态和恢复。 |
+| `c58d440d68e4` | 模型容量与账号可用性 | 模型容量不足按请求级瞬时错误处理；模型 HTTP/首帧和 MCP 429 只给真实速率限制记账号冷却。 |
+| `b3f5bc28e31f` | 永久认证与权限状态 | 永久刷新错误保留账号 error 状态；普通 403 进入有界临时停调，避免通用分类覆盖或漏处理。 |
+| `50c2f898b807` | 模型回显与推理计费 | Messages 普通/原生及模拟搜索回显原模型名；OpenAI 桥接按映射后的模型保留 max，计费记录实际模型。 |
+| `a7f9ff187182` | 搜索请求头隔离 | 原生搜索区分客户端请求头和上游响应头，保持请求转换上下文来源。 |
+| `885822cad5a7` | 搜索流异常与部分用量 | 搜索最终轮异常时转发已生成内容、用量及结构化错误，保留真实限流状态，不伪造正常结束。 |
+| `83cadc430868` | 刷新锁竞争降级 | 其他 worker 正在刷新时返回请求级临时切换，保持账号可用，避免把刷新锁竞争记成认证封禁。 |
+
+格式化单独提交：`d974c4229697`。
+
+### 回滚顺序与依赖
+
+- 每个行为修复有独立提交；回滚整批时先撤销文档与格式化，再按上表从下往上执行 `git revert <提交>`。单项回滚前检查所列依赖并重新运行对应回归。
+- 原生混合搜索边界依赖文档内容边界中的 `InvalidRequestError` 和工具 none 语义；显式零用量计费依赖原生缓存计量；永久认证状态、刷新锁竞争降级依赖刷新锁与快照。
+- 模型容量、永久认证、模型回显的运行时回归复用公共测试夹具；按提交顺序应用、反序回滚，保留这些夹具的依赖关系。
+- 账号身份隔离同时切换 token 缓存、刷新锁和冷却键。发布或回滚时停止旧版本接流量后再切换，保持同一账号使用同一套锁键；旧 token 缓存等待 TTL 到期。
+
+### 交叉分析与验证
+
+参考源码固定在以下版本，修复依据本仓库协议契约和实际执行结果：
+
+- [kiro-account-manager `13ff9fdb84ba`](https://github.com/hj01857655/kiro-account-manager/tree/13ff9fdb84ba8c56ee15384880685e663bc5d82e)。
+- [Kiro-Go `f8f6071c9298`](https://github.com/Quorinex/Kiro-Go/tree/f8f6071c9298a4266ad3e0c7e483d4a2510cbcaf)。
+- [kiro.rs `8fb3dd691d1c`](https://github.com/hank9999/kiro.rs/tree/8fb3dd691d1cedf437bd6a4e9ef9f60b3f217fdd)。
+- [kiro2api-rs `3b7a47da18d5`](https://github.com/vagmr/kiro2api-rs/tree/3b7a47da18d5cf41f2fc284be0f55dcdac4cae2e)。
+
+- Kiro 协议完整回归：`go test ./internal/kiro/... -count=1`。
+- service 完整回归：`go test -tags=unit ./internal/service -count=1`，候选树最终运行通过（225.229s）；主工作树生产 Go 文件与该候选树逐字节一致。
+- 主工作树验证：Kiro 回归及 service 的 `-run Kiro`；临时程序经实际网关入口运行 Messages、Responses、Chat Completions、原生单搜索的成功/中断 8 条路径，以及经本地 HTTP 的搜索模拟流式/非流式 2 条路径。
+- 同一组 12 个请求覆盖真实 PNG 的首尾位置、历史距离、七张历史图片、工具结果图片、Schema、大整数、none、空工具结果和文档；原生零输入用量额外检查服务计费边界。
+
+### 支持边界与未验证
+
+- 文档支持 `source.type=text` 的字符串内容；PDF/base64、URL 和其他文档来源返回 400，供客户端显式转换。
+- 单独内置搜索及自定义搜索工具各自保留原语义；内置 `web_search_*`/`google_search` 与客户端工具混合返回 400。
+- 运行时冒烟使用生成的 AWS EventStream、本地 HTTP 和真实 Redis Store（miniredis），验证网关行为。本轮只做本地提交，线上 Kiro 实流量与发布后 Claude Code 行为尚未验证。
 
 ## 链式代理（fork）
 
