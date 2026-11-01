@@ -109,6 +109,10 @@ func (s *GatewayService) forwardKiroMessagesAttempt(ctx context.Context, c *gin.
 	)
 
 	if s.shouldEmulateWebSearch(ctx, account, parsed.GroupID, body) {
+		if _, err := s.buildKiroPayloadForAccount(ctx, account, parsed, body, kiropkg.MapModel(mappedModel), "", originalModel, c.Request.Header); err != nil {
+			writeKiroInvalidRequestError(c, err)
+			return nil, err
+		}
 		parsedForEmulation, err := parsed.CloneForBody(body)
 		if err != nil {
 			return nil, err
@@ -121,6 +125,9 @@ func (s *GatewayService) forwardKiroMessagesAttempt(ctx context.Context, c *gin.
 	if parsed.Stream {
 		resp, _, err := s.openKiroAnthropicStreamResponse(ctx, account, parsed, body, mappedModel, originalModel, c.Request.Header, kiroGroup)
 		if err != nil {
+			if writeKiroInvalidRequestError(c, err) {
+				return nil, err
+			}
 			var failoverErr *UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
 				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -184,14 +191,15 @@ func (s *GatewayService) forwardKiroMessagesAttempt(ctx context.Context, c *gin.
 		}, nil
 	}
 
-	token, tokenType, err := s.GetAccessToken(ctx, account)
-	if err != nil {
-		return nil, err
-	}
-	if tokenType != "oauth" && (account.Type != AccountTypeAPIKey || tokenType != "apikey") {
-		return nil, fmt.Errorf("kiro requires oauth or direct api key token, got %s", tokenType)
-	}
 	if isOnlyWebSearchToolInBody(body) {
+		if _, err := s.buildKiroPayloadForAccount(ctx, account, parsed, body, kiropkg.MapModel(mappedModel), "", originalModel, c.Request.Header); err != nil {
+			writeKiroInvalidRequestError(c, err)
+			return nil, err
+		}
+		token, err := s.getKiroAccessToken(ctx, account)
+		if err != nil {
+			return nil, err
+		}
 		webSearchResult, webSearchErr := s.executeKiroWebSearch(ctx, account, kiroGroup, body, mappedModel, originalModel, token, c.Request.Header, parsed)
 		switch {
 		case errors.Is(webSearchErr, errKiroWebSearchFallback):
@@ -241,8 +249,11 @@ func (s *GatewayService) forwardKiroMessagesAttempt(ctx context.Context, c *gin.
 	}
 
 	inputTokens := estimateKiroInputTokens(body)
-	resp, requestCtx, err := s.executeKiroUpstreamWithParsed(ctx, account, parsed, body, mappedModel, originalModel, token, c.Request.Header)
+	resp, requestCtx, err := s.executeKiroUpstreamWithParsed(ctx, account, parsed, body, mappedModel, originalModel, "", c.Request.Header)
 	if err != nil {
+		if writeKiroInvalidRequestError(c, err) {
+			return nil, err
+		}
 		var failoverErr *UpstreamFailoverError
 		if errors.As(err, &failoverErr) {
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -314,16 +325,15 @@ func (s *GatewayService) forwardKiroMessagesAttempt(ctx context.Context, c *gin.
 }
 
 func (s *GatewayService) openKiroAnthropicStreamResponse(ctx context.Context, account *Account, parsed *ParsedRequest, anthropicBody []byte, mappedModel, requestModel string, headers http.Header, group *Group) (*http.Response, int, error) {
-	token, tokenType, err := s.GetAccessToken(ctx, account)
-	if err != nil {
-		return nil, 0, err
-	}
-	if tokenType != "oauth" && (account.Type != AccountTypeAPIKey || tokenType != "apikey") {
-		return nil, 0, fmt.Errorf("kiro requires oauth or direct api key token, got %s", tokenType)
-	}
-
 	inputTokens := estimateKiroInputTokens(anthropicBody)
 	if isOnlyWebSearchToolInBody(anthropicBody) {
+		if _, err := s.buildKiroPayloadForAccount(ctx, account, parsed, anthropicBody, kiropkg.MapModel(mappedModel), "", requestModel, headers); err != nil {
+			return nil, inputTokens, err
+		}
+		token, err := s.getKiroAccessToken(ctx, account)
+		if err != nil {
+			return nil, inputTokens, err
+		}
 		cacheUsage := s.buildKiroCacheEmulationUsage(account, group, anthropicBody, mappedModel, inputTokens)
 		pr, pw := io.Pipe()
 		headers := make(http.Header)
@@ -343,7 +353,7 @@ func (s *GatewayService) openKiroAnthropicStreamResponse(ctx context.Context, ac
 		}, inputTokens, nil
 	}
 
-	resp, requestCtx, err := s.executeKiroUpstreamWithParsed(ctx, account, parsed, anthropicBody, mappedModel, requestModel, token, headers)
+	resp, requestCtx, err := s.executeKiroUpstreamWithParsed(ctx, account, parsed, anthropicBody, mappedModel, requestModel, "", headers)
 	if err != nil {
 		var failoverErr *UpstreamFailoverError
 		if errors.As(err, &failoverErr) {
@@ -450,6 +460,26 @@ func (s *GatewayService) recordKiroStreamFailure(ctx context.Context, c *gin.Con
 func (s *GatewayService) executeKiroUpstream(ctx context.Context, account *Account, anthropicBody []byte, mappedModel, requestModel, token string, headers http.Header) (*http.Response, kiropkg.KiroRequestContext, error) {
 	return s.executeKiroUpstreamWithParsed(ctx, account, nil, anthropicBody, mappedModel, requestModel, token, headers)
 }
+func writeKiroInvalidRequestError(c *gin.Context, err error) bool {
+	var invalid *kiropkg.InvalidRequestError
+	if !errors.As(err, &invalid) {
+		return false
+	}
+	c.JSON(http.StatusBadRequest, gin.H{"type": "error", "error": gin.H{"type": "invalid_request_error", "message": invalid.Message}})
+	return true
+}
+
+func (s *GatewayService) getKiroAccessToken(ctx context.Context, account *Account) (string, error) {
+	token, tokenType, err := s.GetAccessToken(ctx, account)
+	if err != nil {
+		return "", err
+	}
+	if tokenType != "oauth" && (account.Type != AccountTypeAPIKey || tokenType != "apikey") {
+		return "", fmt.Errorf("kiro requires oauth or direct api key token, got %s", tokenType)
+	}
+	return token, nil
+}
+
 
 func notifyKiroUpstreamAccepted(parsed *ParsedRequest) {
 	if parsed == nil || parsed.OnUpstreamAccepted == nil {
@@ -462,19 +492,31 @@ func notifyKiroUpstreamAccepted(parsed *ParsedRequest) {
 
 func (s *GatewayService) executeKiroUpstreamWithParsed(ctx context.Context, account *Account, parsed *ParsedRequest, anthropicBody []byte, mappedModel, requestModel, token string, headers http.Header) (*http.Response, kiropkg.KiroRequestContext, error) {
 	var requestCtx kiropkg.KiroRequestContext
+	modelID := kiropkg.MapModel(mappedModel)
+	profileArn := resolveKiroPayloadProfileArn(account)
+	buildResult, err := s.buildKiroPayloadForAccount(ctx, account, parsed, anthropicBody, modelID, token, requestModel, headers)
+	if err != nil {
+		return nil, requestCtx, err
+	}
+	if token == "" {
+		token, err = s.getKiroAccessToken(ctx, account)
+		if err != nil {
+			return nil, requestCtx, err
+		}
+		if resolveKiroPayloadProfileArn(account) != profileArn {
+			buildResult, err = s.buildKiroPayloadForAccount(ctx, account, parsed, anthropicBody, modelID, token, requestModel, headers)
+			if err != nil {
+				return nil, requestCtx, err
+			}
+		}
+	}
 	if err := s.checkAndWaitKiroCooldown(ctx, buildKiroAccountKey(account)); err != nil {
 		if failoverErr := asKiroCooldownFailoverError(err); failoverErr != nil {
 			return nil, requestCtx, failoverErr
 		}
 		return nil, requestCtx, err
 	}
-
-	modelID := kiropkg.MapModel(mappedModel)
 	currentToken := token
-	buildResult, err := s.buildKiroPayloadForAccount(ctx, account, parsed, anthropicBody, modelID, currentToken, requestModel, headers)
-	if err != nil {
-		return nil, requestCtx, err
-	}
 	payload := buildResult.Payload
 	requestCtx = buildResult.Context
 	logKiroStatelessReplay(account, buildResult.Payload)

@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -320,4 +321,52 @@ func TestForwardKiroAsResponses_UpstreamErrorWritesResponsesShapedError(t *testi
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 	require.Contains(t, rec.Body.String(), `"error"`)
 	require.NotContains(t, rec.Body.String(), `"type":"upstream_error"`, "response must use Responses API error shape, not Kiro/Anthropic shape")
+}
+
+func TestKiroUnsupportedDocumentReturns400BeforeTokenLookup(t *testing.T) {
+	for _, protocol := range []string{"messages", "responses", "chat_completions"} {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stream=%t", protocol, stream), func(t *testing.T) {
+				request := map[string]any{"model": "claude-sonnet-4.6", "stream": stream}
+				switch protocol {
+				case "messages":
+					request["messages"] = []any{map[string]any{"role": "user", "content": []any{
+						map[string]any{"type": "document", "source": map[string]any{"type": "base64", "media_type": "application/pdf", "data": "JVBERg=="}}}}}
+				case "responses":
+					request["input"] = []any{map[string]any{"role": "user", "content": []any{
+						map[string]any{"type": "input_file", "filename": "doc.pdf", "file_data": "data:application/pdf;base64,JVBERg=="}}}}
+				case "chat_completions":
+					request["messages"] = []any{map[string]any{"role": "user", "content": []any{
+						map[string]any{"type": "file", "file": map[string]any{"filename": "doc.pdf", "file_data": "data:application/pdf;base64,JVBERg=="}}}}}
+				}
+				body, err := json.Marshal(request)
+				require.NoError(t, err)
+				rec := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(rec)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/"+protocol, nil)
+				svc := &GatewayService{}
+				account := &Account{ID: 1, Platform: PlatformKiro, Type: AccountTypeOAuth}
+				accepted := 0
+				parsed := &ParsedRequest{}
+				if protocol == "messages" {
+					parsed, err = ParseGatewayRequest(NewRequestBodyRef(body), "anthropic")
+					require.NoError(t, err)
+				}
+				parsed.OnUpstreamAccepted = func() { accepted++ }
+				switch protocol {
+				case "messages":
+					_, err = svc.forwardKiroMessages(t.Context(), c, account, parsed, time.Now())
+				case "responses":
+					_, err = svc.forwardKiroAsResponses(t.Context(), c, account, body, parsed, time.Now())
+				case "chat_completions":
+					_, err = svc.forwardKiroAsChatCompletions(t.Context(), c, account, body, parsed, time.Now())
+				}
+				require.Error(t, err)
+				require.Equal(t, http.StatusBadRequest, rec.Code)
+				require.Contains(t, rec.Body.String(), "invalid_request_error")
+				require.NotContains(t, rec.Body.String(), "access_token")
+				require.Zero(t, accepted)
+			})
+		}
+	}
 }

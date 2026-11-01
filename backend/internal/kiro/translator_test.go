@@ -2520,3 +2520,31 @@ func TestStreamCancellationReturnsUsageWithoutFlush(t *testing.T) {
 	require.NotContains(t, out.String(), "event: error")
 	require.NotContains(t, out.String(), "event: message_stop")
 }
+
+func TestTextDocumentsSurviveConversationAndToolResults(t *testing.T) {
+	for _, messages := range []string{
+		`[{"role":"user","content":[{"type":"text","text":"before "},{"type":"document","source":{"type":"text","data":"document text"}},{"type":"text","text":" after"}]}]`,
+		`[{"role":"user","content":[{"type":"document","source":{"type":"text","data":"historical document"}}]},{"role":"assistant","content":"read"},{"role":"user","content":"next"}]`,
+		`[{"role":"assistant","content":[{"type":"tool_use","id":"id","name":"inspect","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"id","content":[{"type":"document","source":{"type":"text","data":"tool document"}}]}]}]`,
+	} {
+		built, err := BuildKiroPayloadWithContext([]byte(`{"messages":`+messages+`}`), "claude-sonnet-4.5", "", "", nil)
+		require.NoError(t, err)
+		switch {
+		case strings.Contains(messages, "before "):
+			require.Equal(t, "before document text after", gjson.GetBytes(built.Payload,"conversationState.currentMessage.userInputMessage.content").String())
+		case strings.Contains(messages, "historical"):
+			require.Contains(t, string(built.Payload), "historical document")
+		default:
+			require.Equal(t, "tool document", gjson.GetBytes(built.Payload,"conversationState.currentMessage.userInputMessage.userInputMessageContext.toolResults.0.content.0.text").String())
+		}
+	}
+}
+
+func TestUnsupportedDocumentsReturnInvalidRequest(t *testing.T) {
+	for _, source := range []string{`{"type":"base64","media_type":"application/pdf","data":"JVBERg=="}`, `{"type":"url","url":"https://example.com/doc"}`, `{"type":"text"}`, `{}`} {
+		body := []byte(`{"messages":[{"role":"user","content":[{"type":"document","source":`+source+`}]}]}`)
+		_, err := BuildKiroPayloadWithContext(body, "claude-sonnet-4.5", "", "", nil)
+		var invalid *InvalidRequestError
+		require.ErrorAs(t, err, &invalid)
+	}
+}

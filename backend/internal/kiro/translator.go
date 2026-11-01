@@ -374,6 +374,14 @@ func buildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, hea
 		topP = tp.Float()
 		hasTopP = true
 	}
+	if err := validateKiroDocuments(gjson.GetBytes(claudeBody, "system")); err != nil {
+		return nil, err
+	}
+	for _, message := range gjson.GetBytes(claudeBody, "messages").Array() {
+		if err := validateKiroDocuments(message.Get("content")); err != nil {
+			return nil, err
+		}
+	}
 
 	messages := gjson.GetBytes(claudeBody, "messages")
 	// Kiro does not support a system message in the middle of a conversation,
@@ -1250,6 +1258,8 @@ func extractTextFromContentBlocks(content gjson.Result) string {
 		for _, block := range content.Array() {
 			if block.Get("type").String() == "text" {
 				_, _ = sb.WriteString(block.Get("text").String())
+			} else if block.Get("type").String() == "document" {
+				_, _ = sb.WriteString(block.Get("source.data").String())
 			} else if block.Type == gjson.String {
 				_, _ = sb.WriteString(block.String())
 			}
@@ -1257,6 +1267,22 @@ func extractTextFromContentBlocks(content gjson.Result) string {
 		return sb.String()
 	}
 	return content.String()
+}
+
+func validateKiroDocuments(content gjson.Result) error {
+	for _, block := range content.Array() {
+		switch block.Get("type").String() {
+		case "document":
+			if block.Get("source.type").String() != "text" || block.Get("source.data").Type != gjson.String {
+				return &InvalidRequestError{Message: "Kiro supports document input only with source.type=text and string source.data"}
+			}
+		case "tool_result":
+			if err := validateKiroDocuments(block.Get("content")); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // extractInlineSystemPrompts pulls system messages from a Claude transcript.
@@ -1951,6 +1977,8 @@ func buildUserMessageStruct(msg gjson.Result, modelID, origin string) (KiroUserI
 			switch part.Get("type").String() {
 			case "text":
 				_, _ = contentBuilder.WriteString(part.Get("text").String())
+			case "document":
+				_, _ = contentBuilder.WriteString(part.Get("source.data").String())
 			case "image":
 				mediaType := part.Get("source.media_type").String()
 				data := part.Get("source.data").String()
@@ -1977,6 +2005,8 @@ func buildUserMessageStruct(msg gjson.Result, modelID, origin string) (KiroUserI
 					for _, item := range resultContent.Array() {
 						if itemType := item.Get("type").String(); itemType == "text" || itemType == "input_text" {
 							textContents = append(textContents, KiroTextContent{Text: item.Get("text").String()})
+						} else if itemType == "document" {
+							textContents = append(textContents, KiroTextContent{Text: item.Get("source.data").String()})
 						} else if itemType == "image" {
 							// Kiro 的 toolResults 只收文本：工具产出的图片（截图等）随所在 user 消息的 images 发送。
 							image, ok := buildKiroImage(item.Get("source.media_type").String(), item.Get("source.data").String())
@@ -2043,6 +2073,8 @@ func buildAssistantMessageStruct(msg gjson.Result, requestCtx *KiroRequestContex
 			switch part.Get("type").String() {
 			case "text":
 				appendAssistantTextPart(part.Get("text").String(), &contentBuilder, &thinkingBuilder)
+			case "document":
+				_, _ = contentBuilder.WriteString(part.Get("source.data").String())
 			case "thinking":
 				// 只回传带上游签名的推理，放进原生 reasoningContent，不内联成正文。
 				// 没有上游签名的（旧版网关的本地摘要签名）上游会拒收，直接丢弃。

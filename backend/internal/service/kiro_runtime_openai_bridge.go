@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/domain"
+	kiropkg "github.com/Wei-Shaw/sub2api/internal/kiro"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/gin-gonic/gin"
 )
@@ -125,6 +126,12 @@ func (s *GatewayService) bridgeKiroAsAnthropic(
 
 	resp, _, err := s.openKiroAnthropicStreamResponse(ctx, account, kiroParsed, anthropicBody, mappedModel, originalModel, c.Request.Header, kiroGroup)
 	if err != nil {
+		var invalid *kiropkg.InvalidRequestError
+		if errors.As(err, &invalid) {
+			return nil, &kiroHTTPErrorAsBridgeError{&kiroHTTPErrorOutcome{
+				StatusCode: http.StatusBadRequest, Message: invalid.Message, ErrorType: "invalid_request_error",
+			}}
+		}
 		var failoverErr *UpstreamFailoverError
 		if errors.As(err, &failoverErr) {
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
