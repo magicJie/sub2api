@@ -346,8 +346,8 @@ func (s *GatewayService) openKiroAnthropicStreamResponse(ctx context.Context, ac
 		}
 		cacheUsage := s.buildKiroCacheEmulationUsage(account, group, anthropicBody, mappedModel, inputTokens)
 		pr, pw := io.Pipe()
-		headers := make(http.Header)
-		headers.Set("Content-Type", "text/event-stream")
+		responseHeaders := make(http.Header)
+		responseHeaders.Set("Content-Type", "text/event-stream")
 		go func() {
 			streamErr := s.streamKiroWebSearchAsAnthropic(ctx, account, anthropicBody, mappedModel, requestModel, token, inputTokens, headers, pw, cacheUsage, parsed)
 			if streamErr != nil {
@@ -358,7 +358,7 @@ func (s *GatewayService) openKiroAnthropicStreamResponse(ctx context.Context, ac
 		}()
 		return &http.Response{
 			StatusCode: http.StatusOK,
-			Header:     headers,
+			Header:     responseHeaders,
 			Body:       pr,
 		}, inputTokens, nil
 	}
