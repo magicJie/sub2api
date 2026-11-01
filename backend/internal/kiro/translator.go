@@ -2,6 +2,7 @@ package kiro
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -1106,7 +1107,9 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 		}
 
 		var event map[string]any
-		if err := json.Unmarshal(msg.Payload, &event); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(msg.Payload))
+		decoder.UseNumber()
+		if err := decoder.Decode(&event); err != nil {
 			continue
 		}
 		mergeKiroContinuation(&continuation, event)
@@ -2018,10 +2021,7 @@ func buildAssistantMessageStruct(msg gjson.Result, requestCtx *KiroRequestContex
 				input := map[string]any{}
 				toolInput := part.Get("input")
 				if toolInput.IsObject() {
-					toolInput.ForEach(func(key, value gjson.Result) bool {
-						input[key.String()] = value.Value()
-						return true
-					})
+					input = blockToMap(toolInput)
 				}
 				toolUses = append(toolUses, KiroToolUse{
 					ToolUseID: part.Get("id").String(),
@@ -2153,25 +2153,10 @@ func mergeMessageContent(msg1, msg2 gjson.Result) string {
 }
 
 func blockToMap(block gjson.Result) map[string]any {
-	result := make(map[string]any)
-	block.ForEach(func(key, value gjson.Result) bool {
-		if value.IsObject() {
-			result[key.String()] = blockToMap(value)
-		} else if value.IsArray() {
-			var arr []any
-			for _, item := range value.Array() {
-				if item.IsObject() {
-					arr = append(arr, blockToMap(item))
-				} else {
-					arr = append(arr, item.Value())
-				}
-			}
-			result[key.String()] = arr
-		} else {
-			result[key.String()] = value.Value()
-		}
-		return true
-	})
+	var result map[string]any
+	decoder := json.NewDecoder(strings.NewReader(block.Raw))
+	decoder.UseNumber()
+	_ = decoder.Decode(&result)
 	return result
 }
 
@@ -2220,7 +2205,9 @@ func parseEventStreamWithReasoning(body io.Reader) (string, []KiroToolUse, Usage
 		}
 
 		var event map[string]any
-		if err := json.Unmarshal(msg.Payload, &event); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(msg.Payload))
+		decoder.UseNumber()
+		if err := decoder.Decode(&event); err != nil {
 			continue
 		}
 		mergeKiroContinuation(&continuation, event)
@@ -3300,6 +3287,9 @@ func readToolUses(primary, fallback map[string]any) []KiroToolUse {
 		input := map[string]any{}
 		if value, ok := tool["input"].(map[string]any); ok {
 			input = value
+		} else if value, ok := tool["input"].(string); ok {
+			out = append(out, finalizeRawToolUse(getString(tool, "toolUseId"), getString(tool, "name"), value))
+			continue
 		}
 		out = append(out, finalizeStructuredToolUse(getString(tool, "toolUseId"), getString(tool, "name"), input))
 	}

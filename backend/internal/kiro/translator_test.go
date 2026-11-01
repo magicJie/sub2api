@@ -2348,3 +2348,29 @@ func TestRootScalarToolSchemasRetainSemantics(t *testing.T) {
 		require.JSONEq(t, schema, actual.Raw)
 	}
 }
+
+func TestToolInputNumbersSurviveResponsesAndHistory(t *testing.T) {
+	const input = `{"id":9007199254740993,"nested":[[9007199254740995]]}`
+	for _, rawString := range []bool{false, true} {
+		var value any = json.RawMessage(input)
+		if rawString {
+			value = input
+		}
+		frame := buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{"toolUses": []any{map[string]any{"toolUseId":"id", "name":"inspect", "input":value}}})
+		result, err := ParseNonStreamingEventStreamWithContext(bytes.NewReader(frame), "model", KiroRequestContext{})
+		require.NoError(t, err)
+		actual := gjson.GetBytes(result.ResponseBody, "content.0.input")
+		require.Equal(t, "9007199254740993", actual.Get("id").Raw)
+		require.Equal(t, "9007199254740995", actual.Get("nested.0.0").Raw)
+		var out bytes.Buffer
+		_, err = StreamEventStreamAsAnthropicWithContext(context.Background(), bytes.NewReader(frame), &out, "model", 0, KiroRequestContext{})
+		require.NoError(t, err)
+		require.Contains(t, out.String(), "9007199254740993")
+		require.Contains(t, out.String(), "9007199254740995")
+		body := []byte(`{"messages":[{"role":"assistant","content":` + gjson.GetBytes(result.ResponseBody,"content").Raw + `},{"role":"assistant","content":"continued"},{"role":"user","content":[{"type":"tool_result","tool_use_id":"id","content":"ok"}]}]}`)
+		built, err := BuildKiroPayloadWithContext(body, "claude-sonnet-4.5", "", "", nil)
+		require.NoError(t, err)
+		require.Contains(t, string(built.Payload), "9007199254740993")
+		require.Contains(t, string(built.Payload), "9007199254740995")
+	}
+}
