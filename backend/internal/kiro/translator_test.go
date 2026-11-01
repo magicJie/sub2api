@@ -2397,3 +2397,25 @@ func TestToolChoiceNoneSurvivesHistoryAndRejectsUpstreamTools(t *testing.T) {
 		require.NotContains(t, out.String(), "event: message_stop")
 	}
 }
+
+func TestMixedToolsRestoreWebSearchName(t *testing.T) {
+	body := []byte(`{"tools":[{"name":"web_search","input_schema":{"type":"object"}},{"name":"inspect","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"search"}]}`)
+	built, err := BuildKiroPayloadWithContext(body, "claude-sonnet-4.5", "", "", nil)
+	require.NoError(t, err)
+	require.Equal(t, "web_search", built.Context.ToolNameMap["remote_web_search"])
+	for _, eventType := range []string{"toolUseEvent", "assistantResponseEvent"} {
+		event := map[string]any{"toolUseId":"search", "name":"remote_web_search", "input":map[string]any{"query":"go"}, "stop":true}
+		if eventType == "assistantResponseEvent" {
+			event = map[string]any{"toolUses":[]any{event}}
+		}
+		frame := buildEventStreamFrame(t, eventType, event)
+		result, err := ParseNonStreamingEventStreamWithContext(bytes.NewReader(frame), "model", built.Context)
+		require.NoError(t, err)
+		require.Equal(t, "web_search", gjson.GetBytes(result.ResponseBody, "content.0.name").String())
+		var out bytes.Buffer
+		_, err = StreamEventStreamAsAnthropicWithContext(context.Background(), bytes.NewReader(frame), &out, "model", 0, built.Context)
+		require.NoError(t, err)
+		require.Contains(t, out.String(), `"name":"web_search"`)
+		require.NotContains(t, out.String(), `"name":"remote_web_search"`)
+	}
+}

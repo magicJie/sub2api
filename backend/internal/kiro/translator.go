@@ -616,7 +616,7 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 			return nil
 		}
 
-		responseName := normalizeResponseToolName(restoreResponseToolName(name, requestCtx))
+		responseName := restoreResponseToolName(normalizeResponseToolName(name), requestCtx)
 		inputJSON, input, ok := normalizeStreamingToolInput(inputBuf.String())
 		if !ok || missingRequiredToolFields(requestCtx, responseName, input) {
 			return nil
@@ -1665,10 +1665,10 @@ func mapKiroToolName(name string, requestCtx *KiroRequestContext) string {
 	if name == "" {
 		return ""
 	}
-	if name == "web_search" {
-		return "remote_web_search"
-	}
 	short := shortenToolNameIfNeeded(name)
+	if name == "web_search" {
+		short = "remote_web_search"
+	}
 	if requestCtx != nil {
 		if requestCtx.ToolNameMap == nil {
 			requestCtx.ToolNameMap = make(map[string]string)
