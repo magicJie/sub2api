@@ -350,6 +350,21 @@ func buildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, hea
 	outputCap := kiroMaxOutputTokensForModel(modelID)
 	requestCtx := KiroRequestContext{ToolNameMap: map[string]string{}}
 	requestCtx.ToolChoiceNone = isToolChoiceNone(claudeBody)
+	var tools gjson.Result
+	if !requestCtx.ToolChoiceNone {
+		tools = gjson.GetBytes(claudeBody, "tools")
+		count := 0
+		hasServerSearch := false
+		tools.ForEach(func(_, tool gjson.Result) bool {
+			count++
+			kind := tool.Get("type").String()
+			hasServerSearch = hasServerSearch || kind == "web_search" || strings.HasPrefix(kind, "web_search_") || kind == "google_search"
+			return count == 1 || !hasServerSearch
+		})
+		if count > 1 && hasServerSearch {
+			return nil, &InvalidRequestError{Message: "mixed native server search and client tools are not supported; use a separate search request"}
+		}
+	}
 	var maxTokens int64
 	if mt := gjson.GetBytes(claudeBody, "max_tokens"); mt.Exists() {
 		maxTokens = mt.Int()
@@ -408,10 +423,6 @@ func buildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, hea
 		systemCachePoint = newKiroCachePoint()
 	}
 	history = prependSystemHistory(history, systemPrompt, modelID, normalizeOrigin(origin), systemCachePoint)
-	var tools gjson.Result
-	if !requestCtx.ToolChoiceNone {
-		tools = gjson.GetBytes(claudeBody, "tools")
-	}
 	kiroTools := convertClaudeToolsToKiro(tools, &requestCtx)
 	currentToolResults, orphanedToolUseIDs := validateToolPairing(history, currentToolResults)
 	removeOrphanedToolUses(history, orphanedToolUseIDs)
