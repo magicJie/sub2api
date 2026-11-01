@@ -1665,52 +1665,37 @@ func mapKiroToolName(name string, requestCtx *KiroRequestContext) string {
 }
 
 func normalizeKiroJSONSchema(schema any) any {
-	return normalizeKiroJSONSchemaValue(schema, true)
-}
-
-func normalizeKiroJSONSchemaValue(schema any, enforceObjectKeywords bool) any {
+	if _, ok := schema.(bool); ok {
+		return schema
+	}
 	obj, ok := schema.(map[string]any)
 	if !ok || obj == nil {
 		return defaultKiroJSONSchema()
 	}
-	normalized := make(map[string]any, len(obj)+4)
-	for key, value := range obj {
-		normalized[key] = normalizeSchemaChild(key, value)
-	}
-	if typ, ok := normalized["type"].(string); !ok || strings.TrimSpace(typ) == "" {
-		normalized["type"] = "object"
-	}
-	typ, _ := normalized["type"].(string)
-	needsObjectKeywords := enforceObjectKeywords ||
-		strings.TrimSpace(typ) == "object" ||
-		hasSchemaKey(normalized, "properties") ||
-		hasSchemaKey(normalized, "required") ||
-		hasSchemaKey(normalized, "additionalProperties")
-	if needsObjectKeywords {
-		properties, ok := normalized["properties"].(map[string]any)
-		if !ok || properties == nil {
-			normalized["properties"] = map[string]any{}
-		} else {
-			for key, value := range properties {
-				properties[key] = normalizeKiroJSONSchemaValue(value, false)
-			}
-			normalized["properties"] = properties
+	// Supply object defaults only for root schemas that describe an object.
+	// Scalar enums, composition, and nested schemas retain their semantics.
+	if _, exists := obj["type"]; !exists {
+		_, properties := obj["properties"]
+		_, required := obj["required"]
+		_, additional := obj["additionalProperties"]
+		if len(obj) > 0 && !properties && !required && !additional {
+			return obj
 		}
-		normalized["required"] = normalizeSchemaRequired(normalized["required"])
-		switch additional := normalized["additionalProperties"].(type) {
-		case bool:
-		case map[string]any:
-			normalized["additionalProperties"] = normalizeKiroJSONSchemaValue(additional, false)
-		default:
-			normalized["additionalProperties"] = true
-		}
+		obj["type"] = "object"
 	}
-	return normalized
-}
-
-func hasSchemaKey(schema map[string]any, key string) bool {
-	_, ok := schema[key]
-	return ok
+	if typ, _ := obj["type"].(string); typ != "object" {
+		return obj
+	}
+	if properties, ok := obj["properties"].(map[string]any); !ok || properties == nil {
+		obj["properties"] = map[string]any{}
+	}
+	obj["required"] = normalizeSchemaRequired(obj["required"])
+	switch obj["additionalProperties"].(type) {
+	case bool, map[string]any:
+	default:
+		obj["additionalProperties"] = true
+	}
+	return obj
 }
 
 func defaultKiroJSONSchema() map[string]any {
@@ -1736,30 +1721,6 @@ func normalizeSchemaRequired(value any) []any {
 	return out
 }
 
-func normalizeSchemaChild(key string, value any) any {
-	switch key {
-	case "items", "not":
-		if obj, ok := value.(map[string]any); ok {
-			return normalizeKiroJSONSchemaValue(obj, false)
-		}
-		if arr, ok := value.([]any); ok {
-			out := make([]any, 0, len(arr))
-			for _, item := range arr {
-				out = append(out, normalizeKiroJSONSchemaValue(item, false))
-			}
-			return out
-		}
-	case "oneOf", "anyOf", "allOf":
-		if arr, ok := value.([]any); ok {
-			out := make([]any, 0, len(arr))
-			for _, item := range arr {
-				out = append(out, normalizeKiroJSONSchemaValue(item, false))
-			}
-			return out
-		}
-	}
-	return value
-}
 
 func processMessages(messages []gjson.Result, modelID, origin string, requestCtx *KiroRequestContext) ([]KiroHistoryMessage, *KiroUserInputMessage, []KiroToolResult) {
 	messagesArray := mergeAdjacentMessages(messages)

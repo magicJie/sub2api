@@ -1732,9 +1732,6 @@ func TestBuildKiroPayloadNormalizesToolJSONSchema(t *testing.T) {
 	require.True(t, schema.Get("required").IsArray())
 	require.Len(t, schema.Get("required").Array(), 0)
 	require.True(t, schema.Get("additionalProperties").Bool())
-	require.Equal(t, "object", schema.Get("items.type").String())
-	require.Equal(t, "ok", schema.Get("items.required.0").String())
-	require.True(t, schema.Get("items.additionalProperties").Bool())
 }
 
 func TestBuildKiroPayloadFiltersCurrentOrphanToolResult(t *testing.T) {
@@ -2328,5 +2325,26 @@ func TestAssistantToolSyntaxRemainsText(t *testing.T) {
 			require.Equal(t, text, streamed.String())
 			require.NotContains(t, out.String(), `"type":"tool_use"`)
 		})
+	}
+}
+
+func TestToolSchemaPreservesNestedSemantics(t *testing.T) {
+	schema := `{"type":"object","required":null,"properties":{"enum":{"enum":["a","b"]},"nullable":{"type":["string","null"]},"boolean":false,"nested":{"$defs":{"choice":{"enum":[1,2]}},"anyOf":[true,{"type":"array","items":{"enum":[3,4]}}]}}}`
+	body := []byte(`{"messages":[{"role":"user","content":"hello"}],"tools":[{"name":"inspect","input_schema":` + schema + `}]}`)
+	result, err := BuildKiroPayloadWithContext(body, "claude-sonnet-4.5", "", "", nil)
+	require.NoError(t, err)
+	actual := gjson.GetBytes(result.Payload, "conversationState.currentMessage.userInputMessage.userInputMessageContext.tools.0.toolSpecification.inputSchema.json")
+	require.JSONEq(t, gjson.Get(schema, "properties").Raw, actual.Get("properties").Raw)
+	require.Equal(t, "[]", actual.Get("required").Raw)
+	require.Equal(t, false, normalizeKiroJSONSchema(false))
+}
+
+func TestRootScalarToolSchemasRetainSemantics(t *testing.T) {
+	for _, schema := range []string{`{"enum":["a","b"]}`, `{"type":["string","null"]}`, `{"anyOf":[false,{"enum":[1,2]}]}`} {
+		body := []byte(`{"messages":[{"role":"user","content":"hello"}],"tools":[{"name":"inspect","input_schema":`+schema+`}]}`)
+		built, err := BuildKiroPayloadWithContext(body, "claude-sonnet-4.5", "", "", nil)
+		require.NoError(t, err)
+		actual := gjson.GetBytes(built.Payload,"conversationState.currentMessage.userInputMessage.userInputMessageContext.tools.0.toolSpecification.inputSchema.json")
+		require.JSONEq(t, schema, actual.Raw)
 	}
 }
