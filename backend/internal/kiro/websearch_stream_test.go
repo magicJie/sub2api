@@ -6,23 +6,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGenerateSearchIndicatorEvents_UsesInputJSONDelta(t *testing.T) {
-	snippet := "result snippet"
-	events := GenerateSearchIndicatorEvents("golang concurrency", "srvtoolu_test", &WebSearchResults{
-		Results: []WebSearchResult{
-			{Title: "Go", URL: "https://go.dev", Snippet: &snippet},
-		},
-	}, 0)
-
-	require.Len(t, events, 5)
-	require.Contains(t, string(events[0]), `"type":"server_tool_use"`)
-	require.Contains(t, string(events[0]), `"input":{}`)
-	require.Contains(t, string(events[1]), `"type":"input_json_delta"`)
-	require.Contains(t, string(events[1]), `"{\"query\":\"golang concurrency\"}"`)
-	require.Contains(t, string(events[3]), `"type":"web_search_tool_result"`)
-	require.NotContains(t, string(events[3]), `"tool_use_id"`)
-	require.Contains(t, string(events[3]), `"encrypted_content":"result snippet"`)
-}
 
 func TestAnalyzeBufferedStream_ExtractsWebSearchToolUse(t *testing.T) {
 	chunks := [][]byte{

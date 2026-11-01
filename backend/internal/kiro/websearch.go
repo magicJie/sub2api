@@ -255,8 +255,9 @@ func InjectSearchIndicatorsInResponse(responsePayload []byte, searches []SearchI
 			"input": map[string]any{"query": search.Query},
 		})
 		updated = append(updated, map[string]any{
-			"type":    "web_search_tool_result",
-			"content": buildSearchResultContent(search.Results),
+			"type":        "web_search_tool_result",
+			"tool_use_id": search.ToolUseID,
+			"content":     buildSearchResultContent(search.Results),
 		})
 	}
 	updated = append(updated, content...)

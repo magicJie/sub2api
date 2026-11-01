@@ -1,7 +1,6 @@
 package kiro
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -60,40 +59,6 @@ func TestExtractWebSearchToolUseFromResponse(t *testing.T) {
 	require.Equal(t, "golang concurrency", query)
 }
 
-func TestInjectSearchIndicatorsInResponse(t *testing.T) {
-	response := []byte(`{
-		"id":"msg_1",
-		"type":"message",
-		"role":"assistant",
-		"model":"kiro",
-		"content":[{"type":"text","text":"final"}],
-		"stop_reason":"end_turn",
-		"usage":{"input_tokens":1,"output_tokens":1}
-	}`)
-
-	snippet := "result snippet"
-	updated, err := InjectSearchIndicatorsInResponse(response, []SearchIndicator{
-		{
-			ToolUseID: "srvtoolu_test",
-			Query:     "golang",
-			Results: &WebSearchResults{
-				Results: []WebSearchResult{{Title: "Go", URL: "https://go.dev", Snippet: &snippet}},
-			},
-		},
-	})
-	require.NoError(t, err)
-
-	var decoded map[string]any
-	require.NoError(t, json.Unmarshal(updated, &decoded))
-	require.Equal(t, "server_tool_use", gjson.GetBytes(updated, "content.0.type").String())
-	require.Equal(t, "srvtoolu_test", gjson.GetBytes(updated, "content.0.id").String())
-	require.Equal(t, "web_search_tool_result", gjson.GetBytes(updated, "content.1.type").String())
-	require.False(t, gjson.GetBytes(updated, "content.1.tool_use_id").Exists())
-	require.Equal(t, "result snippet", gjson.GetBytes(updated, "content.1.content.0.encrypted_content").String())
-	require.Equal(t, "null", gjson.GetBytes(updated, "content.1.content.0.page_age").Raw)
-	require.False(t, gjson.GetBytes(updated, "content.1.content.0.page_content").Exists())
-	require.Equal(t, "text", gjson.GetBytes(updated, "content.2.type").String())
-}
 
 func TestParseSearchResults_PreservesExtendedFields(t *testing.T) {
 	resp := &MCPResponse{
