@@ -21,13 +21,6 @@ func TestKiroSchedulingStrategyDefaultsToDrain(t *testing.T) {
 	require.Equal(t, kiroSchedulingStrategyOff, kiroSchedulingStrategy())
 }
 
-func TestFilterByKiroDrainPrefersSoonerReset(t *testing.T) {
-	setKiroPace(t, 9101, 90, 20*24*time.Hour)
-	setKiroPace(t, 9102, 10, 2*24*time.Hour)
-	got := filterKiroCandidates([]accountWithLoad{kiroPaceCandidate(9101), kiroPaceCandidate(9102)})
-	require.Equal(t, []int64{9102}, ids(got))
-}
-
 func TestFilterByKiroDrainPrefersHigherUsageWithinSameReset(t *testing.T) {
 	// 与 testenv 7/8/9 同形：98.4% / 98.3% / 37.3%，同一天重置。
 	reset := 7 * 24 * time.Hour
@@ -118,6 +111,93 @@ func TestSelectAccountWithLoadAwarenessKiroDrainPicksMostSpent(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, result.Acquired)
 	require.Equal(t, int64(9201), result.Account.ID)
+}
+
+func TestSelectAccountWithLoadAwarenessKiroDrainOrdering(t *testing.T) {
+	t.Setenv("SUB2API_KIRO_SCHEDULING_STRATEGY", "drain")
+	t.Setenv("SUB2API_KIRO_PACE_SCHEDULING", "on")
+	for _, tc := range []struct {
+		name         string
+		concurrency  [2]int
+		loadRate     [2]int
+		used         [2]float64
+		resetIn      [2]time.Duration
+		sessionEnd   [2]time.Duration
+		unknownFirst bool
+		sticky       bool
+		want         int64
+	}{
+		{
+			name:        "absolute concurrency precedes quota and load rate",
+			concurrency: [2]int{1, 2}, loadRate: [2]int{50, 20},
+			used: [2]float64{40, 99}, resetIn: [2]time.Duration{20 * 24 * time.Hour, 24 * time.Hour},
+			want: 9251,
+		},
+		{
+			name:        "idle unknown account precedes busy known account",
+			concurrency: [2]int{0, 1}, loadRate: [2]int{0, 10},
+			unknownFirst: true, used: [2]float64{0, 99},
+			resetIn: [2]time.Duration{20 * 24 * time.Hour, 24 * time.Hour},
+			want:    9251,
+		},
+		{
+			name:        "quota precedes reset and load rate at equal concurrency",
+			concurrency: [2]int{1, 1}, loadRate: [2]int{10, 50},
+			used: [2]float64{40, 99}, resetIn: [2]time.Duration{24 * time.Hour, 20 * 24 * time.Hour},
+			want: 9252,
+		},
+		{
+			name:        "prefer soonest reset preserves concurrency and quota ordering",
+			concurrency: [2]int{1, 1}, loadRate: [2]int{10, 50},
+			used: [2]float64{40, 99}, resetIn: [2]time.Duration{24 * time.Hour, 20 * 24 * time.Hour},
+			sessionEnd: [2]time.Duration{time.Hour, 2 * time.Hour},
+			want:       9252,
+		},
+		{
+			name:        "reset breaks equal concurrency and quota ties",
+			concurrency: [2]int{1, 1}, loadRate: [2]int{10, 50},
+			used: [2]float64{99, 99}, resetIn: [2]time.Duration{20 * 24 * time.Hour, 24 * time.Hour},
+			want: 9252,
+		},
+		{
+			name:        "sticky session precedes concurrency and quota",
+			concurrency: [2]int{2, 0}, loadRate: [2]int{20, 0},
+			used: [2]float64{40, 99}, resetIn: [2]time.Duration{20 * 24 * time.Hour, 24 * time.Hour},
+			sticky: true, want: 9251,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			accounts := kiroDrainSelectionAccounts(9251, 9252)
+			loadMap := make(map[int64]*AccountLoadInfo, len(accounts))
+			for i := range accounts {
+				account := &accounts[i]
+				account.Concurrency = 10
+				if i != 0 || !tc.unknownFirst {
+					setKiroPace(t, account.ID, tc.used[i], tc.resetIn[i])
+				}
+				if tc.sessionEnd[i] > 0 {
+					end := time.Now().Add(tc.sessionEnd[i])
+					account.SessionWindowEnd = &end
+				}
+				loadMap[account.ID] = &AccountLoadInfo{
+					AccountID: account.ID, CurrentConcurrency: tc.concurrency[i], LoadRate: tc.loadRate[i],
+				}
+			}
+			svc := kiroDrainSelectionService(accounts, &mockConcurrencyCache{loadMap: loadMap})
+			svc.cfg.Gateway.Scheduling.PreferSoonestReset = tc.sessionEnd[0] > 0
+			session := ""
+			if tc.sticky {
+				session = "kiro-drain-ordering"
+				svc.cache = &mockGatewayCacheForPlatform{sessionBindings: map[string]int64{session: 9251}}
+			}
+			ctx := context.WithValue(context.Background(), ctxkey.ForcePlatform, PlatformKiro)
+			result, err := svc.SelectAccountWithLoadAwareness(ctx, nil, session, "", nil, "", 0)
+			require.NoError(t, err)
+			require.True(t, result.Acquired)
+			require.Equal(t, tc.want, result.Account.ID)
+			result.ReleaseFunc()
+		})
+	}
 }
 
 func TestSelectAccountWithLoadAwarenessKiroDrainOverflowsWhenPreferredBusy(t *testing.T) {

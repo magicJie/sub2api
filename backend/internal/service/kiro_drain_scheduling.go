@@ -1,12 +1,12 @@
 package service
 
-// Kiro（fork）多账号调度：churn 平台的「集中耗尽」策略（默认）。
+// Kiro（fork）多账号调度：低并发优先的「集中耗尽」策略（默认）。
 //
-// Kiro 是 churn 平台：账号用完就退役、腾出 IP。均摊用量（pace 策略）会让所有号同时半满，
-// 没有一个号能尽早用完。drain 策略在优先级之后、负载率之前按以下顺序收窄候选：
-//   - 有可信快照（≤6 小时）的号排在没有快照 / 快照过期的号之前（未知号不排除）；
-//   - 重置时间越早越先用：到重置还用不完的额度会作废；
-//   - 同一重置时间里，已用比例越高越先用；
+// 有效会话粘性由 Layer 1.5 优先处理。drain 在账号配置优先级之后按以下顺序收窄：
+//   - 当前运行并发数越少越先用；
+//   - 同并发时，有可信快照（≤6 小时）的号先于未知号；
+//   - 剩余额度比例越低（已用比例越高）越先用；
+//   - 同余量时，重置时间越早越先用；
 //   - 完全相同的号交给后续负载率、LRU 打散。
 // 显示 100% 但未被上游拒绝的号仍参与调度；只有上游真正拒绝（402 / 额度类 429）时才由
 // kiro_quota_rejection.go 标记限流到 reset，并打上「可退役」标记。
@@ -51,21 +51,25 @@ func filterKiroCandidates(accounts []accountWithLoad) []accountWithLoad {
 	}
 }
 
-// kiroDrainKey 是 drain 排序键：known 优先，其次 resetAt 早，其次 used 高。
+// kiroDrainKey 按当前并发、快照可信度、已用比例、重置时间排序。
 type kiroDrainKey struct {
-	known   bool
-	resetAt int64 // Unix 分钟；未知时为 MaxInt64
-	used    float64
+	concurrency int
+	known       bool
+	resetAt     int64 // Unix 分钟；未知时为 MaxInt64
+	used        float64
 }
 
 func (k kiroDrainKey) better(o kiroDrainKey) bool {
+	if k.concurrency != o.concurrency {
+		return k.concurrency < o.concurrency
+	}
 	if k.known != o.known {
 		return k.known
 	}
-	if k.resetAt != o.resetAt {
-		return k.resetAt < o.resetAt
+	if k.used != o.used {
+		return k.used > o.used
 	}
-	return k.used > o.used
+	return k.resetAt < o.resetAt
 }
 
 // kiroDrainInfo 读取调度快照；没有快照、快照过期或已过重置时间（新周期尚未刷新）都视为未知。
@@ -107,6 +111,7 @@ func filterByKiroDrain(accounts []accountWithLoad) []accountWithLoad {
 	for i, acc := range accounts {
 		maybeRefreshKiroPace(acc.account, now)
 		keys[i] = kiroDrainInfo(acc.account.ID, now)
+		keys[i].concurrency = acc.loadInfo.CurrentConcurrency
 		if keys[i].better(keys[best]) {
 			best = i
 		}

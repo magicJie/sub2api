@@ -40,10 +40,14 @@
     Builder ID 账号列不出 profile 时使用 Kiro 客户端的固定 profileArn。
 - 多账号调度：挂在 `gateway_scheduling.go` Layer 2（优先级之后、负载率之前，入口 `filterKiroCandidates`）与 Layer 1.5 粘性检查。
   `SUB2API_KIRO_SCHEDULING_STRATEGY=drain|pace` 选择策略（默认 drain）；`SUB2API_KIRO_PACE_SCHEDULING=off` 两种都关，回到原有排序。
-  - drain（集中耗尽，`service/kiro_drain_scheduling.go`）：Kiro 是 churn 平台，号用完就退役、腾出 IP。
-    有可信快照（≤6 小时、未过重置时间）的号先于未知号（未知号排后但不排除）；重置时间越早越先（按分钟比较）；同一重置时间里已用比例越高越先；
-    完全相同时交给负载率 / LRU。显示 100% 但未被上游拒绝的号照常调度。首选号并发满（抢槽失败或 LoadRate=100）或在 429 冷却时，
-    调度循环移除它并重新收窄，溢出到下一个号，不排队等待；不设单号并发上限。粘性在账号限流有效期内或已被上游额度拒绝且未 reset 时解除，不看百分比。
+  - drain（低并发优先的集中耗尽，`service/kiro_drain_scheduling.go`）：有效会话粘性优先；
+    非粘性请求在同一账号配置优先级内，按当前运行并发数升序 → 可信额度快照优先 → 剩余额度比例升序 → 重置时间升序选择，
+    完全相同时交给负载率 / LRU。可信快照须在 6 小时内且未过重置时间；未知余量账号在同并发时排后但保留。
+    当前并发使用绝对数量；后续负载率仍为 `(运行并发 + 等待数) / EffectiveLoadFactor`。重置时间按分钟比较，
+    `PreferSoonestReset` 在 Kiro drain 下也遵循并发、余量优先的顺序。低余量优先只在同并发时生效，黏滞会话仍可能形成热点。
+    显示 100% 但未被上游拒绝的号照常调度；账号限流有效期内或已被上游额度拒绝且未 reset 时放开粘性。
+    非粘性首选号并发满（抢槽失败或 LoadRate ≥100）或在 429 冷却时，调度循环移除它并尝试下一个号；
+    实际并发仍受账号配置的 `Concurrency` 上限控制。负载批量查询关闭或失败时，沿用原有降级路径。
   - pace（均摊，借鉴 yetone/magpie，MIT，`service/kiro_pace_scheduling.go`）：按已用比例分档（<90 / 90–98 / ≥98），
     正常档按 `pace = (100−used%)/max(距重置小时,1)` 优先，10% 内视为同档；粘住的账号 ≥98% 且有替补、或已被上游拒绝时放开粘性。
   - 用量来自进程内快照（由下面的额度后台刷新器从落库快照恢复）。

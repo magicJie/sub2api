@@ -738,12 +738,12 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			}
 		}
 
-		// 分层过滤选择：优先级 →（可选）最早重置 → 负载率 → LRU
+		// 分层过滤：配置优先级 → 重置 / Kiro 策略 → 负载率 → LRU。
 		for len(available) > 0 {
 			// 1. 取优先级最小的集合
 			candidates := filterByMinPriority(available)
-			// 2. （可选）use-it-or-lose-it：优先选用会话窗口最早重置的账号
-			if cfg.PreferSoonestReset {
+			// Kiro drain 自行在并发和余量相同时比较重置时间。
+			if cfg.PreferSoonestReset && !(platform == PlatformKiro && kiroSchedulingStrategy() == kiroSchedulingStrategyDrain) {
 				candidates = filterBySoonestReset(candidates)
 			}
 			candidates = filterKiroCandidates(candidates) // Kiro（fork）：集中耗尽 / 额度进度收窄
