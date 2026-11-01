@@ -151,7 +151,8 @@ func kiroAccountQuotaRejected(account *Account, now time.Time) bool {
 	if account == nil {
 		return false
 	}
-	if account.RateLimitResetAt != nil && now.Before(*account.RateLimitResetAt) {
+	rejectedAt, _ := KiroQuotaRejectionFromExtra(account.Extra)
+	if rejectedAt != nil && account.RateLimitResetAt != nil && now.Before(*account.RateLimitResetAt) {
 		return true
 	}
 	if value, ok := kiroQuotaRejections.Load(account.ID); ok {

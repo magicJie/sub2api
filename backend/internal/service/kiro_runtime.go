@@ -562,19 +562,21 @@ func (s *GatewayService) executeKiroUpstreamWithParsed(ctx context.Context, acco
 			if resp.StatusCode == http.StatusTooManyRequests {
 				// 限流性质的 429 通常几秒内恢复：先在同账号按 1s/2s 退避重试，
 				// 仍失败再标记冷却交给换号；额度/超额类 429 不重试。
+				respBody, readErr := io.ReadAll(resp.Body)
+				_ = resp.Body.Close()
+				if readErr != nil {
+					return nil, requestCtx, readErr
+				}
+				resetHTTPResponseBody(resp, respBody)
+				if classifyKiroHTTPError(resp.StatusCode, string(respBody)).Category != kiroErrorRateLimited {
+					return resp, requestCtx, nil
+				}
 				if attempt < maxRetries {
-					respBody, readErr := io.ReadAll(resp.Body)
 					_ = resp.Body.Close()
-					if readErr != nil {
-						return nil, requestCtx, readErr
+					if sleepErr := kiroRetrySleep(ctx, kiroRateLimitRetryDelay(attempt)); sleepErr != nil {
+						return nil, requestCtx, sleepErr
 					}
-					if classifyKiroHTTPError(resp.StatusCode, string(respBody)).Category == kiroErrorRateLimited {
-						if sleepErr := kiroRetrySleep(ctx, kiroRateLimitRetryDelay(attempt)); sleepErr != nil {
-							return nil, requestCtx, sleepErr
-						}
-						continue
-					}
-					resetHTTPResponseBody(resp, respBody)
+					continue
 				}
 				cooldown, err := s.markKiro429(ctx, accountKey)
 				if err != nil {
@@ -636,6 +638,7 @@ func (s *GatewayService) executeKiroUpstreamWithParsed(ctx context.Context, acco
 					if _, err := s.markKiroSuspended(ctx, accountKey); err != nil {
 						return nil, requestCtx, err
 					}
+					resp.Header.Set("x-kiro-cooldown", "suspended")
 					resetHTTPResponseBody(resp, respBody)
 					return resp, requestCtx, nil
 				}
@@ -1037,6 +1040,27 @@ func (s *GatewayService) classifyKiroHTTPErrorAndRecordOps(ctx context.Context, 
 	}
 	// 402 / 额度类 429：限流到 reset 并打「可退役」标记；限流性质的 429 不在此处理。
 	quotaRejected := s.markKiroQuotaRejectedIfNeeded(ctx, account, resp.StatusCode, string(respBody))
+	kiroStateHandled := quotaRejected
+	if resp.StatusCode == http.StatusTooManyRequests && !quotaRejected {
+		kiroStateHandled = true
+		if resp.Header.Get("x-kiro-cooldown") == "" && s.kiroCooldownStore != nil {
+			if _, err := s.markKiro429(ctx, buildKiroAccountKey(account)); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		kiroStateHandled = true
+		if isKiroSuspendedBody(respBody) {
+			if resp.Header.Get("x-kiro-cooldown") == "" && s.kiroCooldownStore != nil {
+				if _, err := s.markKiroSuspended(ctx, buildKiroAccountKey(account)); err != nil {
+					return nil, err
+				}
+			}
+		} else if classification.Category == kiroErrorAuthError {
+			s.markKiroAuthTemporarilyUnavailable(ctx, account, resp.StatusCode, string(respBody))
+		}
+	}
 	if classification.Category == kiroErrorBadRequestInvalidModel && account != nil && account.Type == AccountTypeOAuth {
 		s.markKiroInvalidModelRateLimited(ctx, account, mappedModel)
 		event := s.buildKiroInvalidModelUpstreamEvent(account, resp, upstreamMsg, mappedModel, requestBody, c)
@@ -1100,7 +1124,7 @@ func (s *GatewayService) classifyKiroHTTPErrorAndRecordOps(ctx context.Context, 
 			Detail:             s.kiroUpstreamErrorDetail(respBody),
 		})
 		// 额度拒绝已经限流到 reset：通用处理会把 402 置为 error、把 429 覆盖成秒级冷却。
-		if s.rateLimitService != nil && !quotaRejected {
+		if s.rateLimitService != nil && !kiroStateHandled {
 			s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
 		}
 		return nil, &UpstreamFailoverError{

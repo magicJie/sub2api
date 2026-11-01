@@ -451,7 +451,7 @@ func TestExecuteKiroUpstreamRateLimit429MarksCooldownAfterRetries(t *testing.T) 
 func TestExecuteKiroUpstreamQuota429DoesNotRetry(t *testing.T) {
 	sleeps := stubKiroRetrySleep(t)
 	quotaBody := `{"message":"You have exceeded your quota."}`
-	svc, account, upstream, store := newKiro429TestService(t,
+	svc, account, upstream, _ := newKiro429TestService(t,
 		newJSONResponse(http.StatusTooManyRequests, quotaBody),
 	)
 
@@ -459,7 +459,6 @@ func TestExecuteKiroUpstreamQuota429DoesNotRetry(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
 	require.Len(t, upstream.requests, 1)
-	require.Equal(t, 1, store.mark429Calls)
 	require.Empty(t, *sleeps)
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	kirocooldown "github.com/Wei-Shaw/sub2api/internal/kiro/cooldown"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -135,6 +136,70 @@ func TestClassifyKiroHTTPErrorThrottle429DoesNotMarkRejected(t *testing.T) {
 	require.False(t, repo.rateCalled)
 	require.Zero(t, repo.rejectedCalls)
 	require.False(t, kiroAccountQuotaRejected(account, time.Now()))
+}
+
+type kiroRuntimeLifecycleRepo struct {
+	recordingKiroQuotaRejectionRepo
+	account *Account
+}
+
+func (r *kiroRuntimeLifecycleRepo) GetByID(context.Context, int64) (*Account, error) {
+	return r.account, nil
+}
+
+func (r *kiroRuntimeLifecycleRepo) SetError(_ context.Context, _ int64, message string) error {
+	r.account.Status = StatusError
+	r.account.ErrorMessage = message
+	return nil
+}
+
+func (r *kiroRuntimeLifecycleRepo) SetRateLimited(ctx context.Context, id int64, reset time.Time) error {
+	r.account.RateLimitResetAt = &reset
+	return r.recordingKiroQuotaRejectionRepo.SetRateLimited(ctx, id, reset)
+}
+
+func TestKiroTransientFailuresKeepRuntimeStateWithRealRateLimitService(t *testing.T) {
+	for _, status := range []int{http.StatusTooManyRequests, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			account := kiroBridgeTestAccount()
+			account.Status = StatusActive
+			account.Schedulable = true
+			repo := &kiroRuntimeLifecycleRepo{account: account}
+			store := &stubKiroCooldownStore{clearResult: true,
+				state: &kirocooldown.State{Active: true, Reason: kirocooldown.CooldownReason429, Remaining: time.Second}}
+			svc := &GatewayService{accountRepo: repo, kiroCooldownStore: store,
+				rateLimitService: &RateLimitService{accountRepo: repo}}
+			body := kiroThrottleBody
+			if status == http.StatusForbidden {
+				body = `{"reason":"TEMPORARILY_SUSPENDED","message":"temporarily suspended"}`
+				store.state.Reason = kirocooldown.CooldownReasonSuspended
+			}
+			_, err := svc.classifyKiroHTTPErrorAndRecordOps(t.Context(), newJSONResponse(status, body), kiroQuotaRejectionTestContext(), account, "", nil)
+			require.Error(t, err)
+			require.False(t, repo.rateCalled)
+			require.Zero(t, repo.rejectedCalls)
+			require.False(t, repo.called)
+			require.False(t, kiroAccountQuotaRejected(account, time.Now()))
+			recovered, recoverErr := svc.rateLimitService.RecoverAccountState(t.Context(), account.ID, AccountRecoveryOptions{})
+			require.NoError(t, recoverErr)
+			require.False(t, recovered.ClearedError)
+			require.False(t, recovered.ClearedRateLimit)
+			require.Equal(t, StatusActive, account.Status)
+			require.Empty(t, account.ErrorMessage)
+			require.Nil(t, account.RateLimitResetAt)
+			stubKiroRetrySleep(t)
+			cooldownRecovered := svc.tryRecoverKiroCooldownPool(t.Context(), []Account{*account}, "", nil, false)
+			require.Equal(t, status == http.StatusTooManyRequests, cooldownRecovered)
+			if status == http.StatusTooManyRequests {
+				require.Equal(t, 1, store.mark429Calls)
+			}
+		})
+	}
+}
+
+func TestKiroTransientRateLimitIsNotQuotaRejection(t *testing.T) {
+	reset := time.Now().Add(time.Minute)
+	require.False(t, kiroAccountQuotaRejected(&Account{ID: 911, RateLimitResetAt: &reset}, time.Now()))
 }
 
 func TestExecuteKiroUpstreamUnknown402MarksRejected(t *testing.T) {
