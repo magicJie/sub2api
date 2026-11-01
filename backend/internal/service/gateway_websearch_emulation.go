@@ -94,8 +94,12 @@ func shouldEmulateWebSearchFor(
 	}
 }
 
-// isOnlyWebSearchToolInBody checks if the body contains exactly one web_search tool.
+// isOnlyWebSearchToolInBody reports whether a lone web_search tool is permitted to execute.
 func isOnlyWebSearchToolInBody(body []byte) bool {
+	choice := gjson.GetBytes(body, "tool_choice")
+	if choice.String() == "none" || choice.Get("type").String() == "none" {
+		return false
+	}
 	tools := gjson.GetBytes(body, "tools")
 	if !tools.IsArray() {
 		return false

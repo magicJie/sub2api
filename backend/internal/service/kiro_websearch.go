@@ -108,6 +108,9 @@ func writeAnthropicMessageStart(w io.Writer, msgID, model string, inputTokens in
 func (s *GatewayService) streamKiroWebSearchAsAnthropic(
 	ctx context.Context, account *Account, anthropicBody []byte, mappedModel, requestModel, token string, inputTokens int, headers http.Header, w io.Writer, cacheUsage *kiroCacheEmulationUsage,
 ) error {
+	if !isOnlyWebSearchToolInBody(anthropicBody) {
+		return errKiroWebSearchFallback
+	}
 	query := kiropkg.ExtractSearchQuery(anthropicBody)
 	if strings.TrimSpace(query) == "" {
 		return errKiroWebSearchFallback
@@ -197,6 +200,9 @@ func (s *GatewayService) streamKiroWebSearchAsAnthropic(
 }
 
 func (s *GatewayService) executeKiroWebSearch(ctx context.Context, account *Account, group *Group, anthropicBody []byte, mappedModel, requestModel, token string, headers http.Header) (*kiroWebSearchExecution, error) {
+	if !isOnlyWebSearchToolInBody(anthropicBody) {
+		return nil, errKiroWebSearchFallback
+	}
 	query := kiropkg.ExtractSearchQuery(anthropicBody)
 	if strings.TrimSpace(query) == "" {
 		return nil, errKiroWebSearchFallback
