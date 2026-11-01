@@ -2211,6 +2211,11 @@ func parseEventStreamWithReasoning(body io.Reader) (string, []KiroToolUse, Usage
 			inReasoning = false
 		}
 	}
+	recordStopReason := func(reason string) {
+		if reason != "" && (reason == "max_tokens" || reason == "refusal" || (stopReason != "max_tokens" && stopReason != "refusal")) {
+			stopReason = reason
+		}
+	}
 
 	for {
 		msg, err := readEventStreamMessage(reader)
@@ -2231,12 +2236,8 @@ func parseEventStreamWithReasoning(body io.Reader) (string, []KiroToolUse, Usage
 			continue
 		}
 		mergeKiroContinuation(&continuation, event)
-		if sr := readStopReason(event); sr != "" {
-			stopReason = sr
-		}
-		if sr := readStopReason(nestedEvent(event, msg.EventType)); sr != "" {
-			stopReason = sr
-		}
+		recordStopReason(readStopReason(event))
+		recordStopReason(readStopReason(nestedEvent(event, msg.EventType)))
 		switch msg.EventType {
 		case "assistantResponseEvent":
 			assistant := nestedEvent(event, "assistantResponseEvent")
@@ -2247,9 +2248,7 @@ func parseEventStreamWithReasoning(body io.Reader) (string, []KiroToolUse, Usage
 				closeReasoning()
 				_, _ = content.WriteString(text)
 			}
-			if sr := readStopReason(assistant); sr != "" {
-				stopReason = sr
-			}
+			recordStopReason(readStopReason(assistant))
 			for _, tool := range readToolUses(assistant, event) {
 				if processedIDs[tool.ToolUseID] {
 					continue
@@ -2362,11 +2361,6 @@ func buildClaudeResponse(content string, toolUses []KiroToolUse, model string, u
 			"input": tool.Input,
 		})
 	}
-	pureThinking := hasThinkingBlocksOnly(blocks) && usableTools == 0
-	if pureThinking {
-		blocks = append(blocks, map[string]any{"type": "text", "text": ""})
-		stopReason = "max_tokens"
-	}
 	if len(blocks) == 0 {
 		blocks = append(blocks, map[string]any{"type": "text", "text": ""})
 	}
@@ -2423,24 +2417,6 @@ func restoreResponseToolName(name string, requestCtx KiroRequestContext) string 
 	return name
 }
 
-func hasThinkingBlocksOnly(blocks []map[string]any) bool {
-	if len(blocks) == 0 {
-		return false
-	}
-	hasThinking := false
-	for _, block := range blocks {
-		blockType, _ := block["type"].(string)
-		switch blockType {
-		case "thinking":
-			hasThinking = true
-		case "text":
-			return false
-		default:
-			return false
-		}
-	}
-	return hasThinking
-}
 
 func extractThinkingBlocks(content string) []map[string]any {
 	return extractThinkingBlocksWithSignatures(content, nil)

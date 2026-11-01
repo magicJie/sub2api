@@ -719,25 +719,6 @@ func TestParseNonStreamingEventStreamNormalizesUpstreamStopReason(t *testing.T) 
 	}
 }
 
-func TestParseNonStreamingEventStreamPureThinkingFallback(t *testing.T) {
-	stream := bytes.NewBuffer(nil)
-	_, _ = stream.Write(buildEventStreamFrame(t, "assistantResponseEvent", map[string]any{
-		"assistantResponseEvent": map[string]any{
-			"content": "<thinking>reason only</thinking>",
-		},
-	}))
-
-	result, err := ParseNonStreamingEventStreamWithContext(stream, "claude-sonnet-4-5", KiroRequestContext{})
-	require.NoError(t, err)
-	require.Equal(t, "max_tokens", gjson.GetBytes(result.ResponseBody, "stop_reason").String())
-
-	content := gjson.GetBytes(result.ResponseBody, "content").Array()
-	require.Len(t, content, 2)
-	require.Equal(t, "thinking", content[0].Get("type").String())
-	require.Equal(t, "reason only", content[0].Get("thinking").String())
-	require.Equal(t, "text", content[1].Get("type").String())
-	require.Equal(t, "", content[1].Get("text").String())
-}
 
 func TestParseNonStreamingEventStreamThinkingWithTextKeepsEndTurn(t *testing.T) {
 	stream := bytes.NewBuffer(nil)
@@ -900,22 +881,6 @@ func TestBuildKiroPayloadRecordsToolRequiredFields(t *testing.T) {
 
 
 
-func TestParseNonStreamingEventStreamThinkingOnlyResponse(t *testing.T) {
-	stream := bytes.NewBuffer(nil)
-	_, _ = stream.Write(buildEventStreamFrame(t, "reasoningContentEvent", map[string]any{
-		"reasoningContentEvent": map[string]any{
-			"text": "I should think first.",
-		},
-	}))
-
-	result, err := ParseNonStreamingEventStreamWithContext(stream, "claude-sonnet-4-5", KiroRequestContext{})
-	require.NoError(t, err)
-	require.Equal(t, "max_tokens", gjson.GetBytes(result.ResponseBody, "stop_reason").String())
-	require.Equal(t, "thinking", gjson.GetBytes(result.ResponseBody, "content.0.type").String())
-	require.Equal(t, "I should think first.", gjson.GetBytes(result.ResponseBody, "content.0.thinking").String())
-	require.Equal(t, "text", gjson.GetBytes(result.ResponseBody, "content.1.type").String())
-	require.Equal(t, "", gjson.GetBytes(result.ResponseBody, "content.1.text").String())
-}
 
 func TestParseNonStreamingEventStreamExtractsContinuation(t *testing.T) {
 	stream := bytes.NewBuffer(nil)
@@ -2394,4 +2359,45 @@ func TestIncompleteToolCallsFailBothResponseModes(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestThinkingOnlyResponsesPreserveUpstreamStopReason(t *testing.T) {
+	for _, source := range []string{"tagged", "native"} {
+		for _, stopReason := range []string{"end_turn", "max_tokens"} {
+			t.Run(source+"/"+stopReason, func(t *testing.T) {
+				eventType := "reasoningContentEvent"
+				event := map[string]any{"text":"reason only"}
+				if source == "tagged" {
+					eventType = "assistantResponseEvent"
+					event = map[string]any{"content":"<thinking>reason only</thinking>"}
+				}
+				frame := buildEventStreamFrame(t, eventType, event)
+				frame = append(frame, buildEventStreamFrame(t, "messageStopEvent", map[string]any{"stopReason":stopReason})...)
+				requestCtx := KiroRequestContext{ThinkingEnabled:true}
+				result, err := ParseNonStreamingEventStreamWithContext(bytes.NewReader(frame), "model", requestCtx)
+				require.NoError(t, err)
+				require.Equal(t, stopReason, result.StopReason)
+				require.Equal(t, stopReason, gjson.GetBytes(result.ResponseBody, "stop_reason").String())
+				require.Equal(t, "reason only", gjson.GetBytes(result.ResponseBody, "content.0.thinking").String())
+				var out bytes.Buffer
+				streamResult, err := StreamEventStreamAsAnthropicWithContext(context.Background(), bytes.NewReader(frame), &out, "model", 0, requestCtx)
+				require.NoError(t, err)
+				require.Equal(t, stopReason, streamResult.StopReason)
+				require.Contains(t, out.String(), `"stop_reason":"`+stopReason+`"`)
+			})
+		}
+	}
+}
+
+func TestThinkingTruncationSurvivesTrailingEndTurn(t *testing.T) {
+	frame := buildEventStreamFrame(t, "reasoningContentEvent", map[string]any{"text":"reason only","stopReason":"max_tokens"})
+	frame = append(frame, buildEventStreamFrame(t, "messageStopEvent", map[string]any{"stopReason":"end_turn"})...)
+	requestCtx := KiroRequestContext{ThinkingEnabled:true}
+	result, err := ParseNonStreamingEventStreamWithContext(bytes.NewReader(frame), "model", requestCtx)
+	require.NoError(t, err)
+	require.Equal(t, "max_tokens", gjson.GetBytes(result.ResponseBody,"stop_reason").String())
+	var out bytes.Buffer
+	streamResult, err := StreamEventStreamAsAnthropicWithContext(context.Background(), bytes.NewReader(frame), &out, "model", 0, requestCtx)
+	require.NoError(t, err)
+	require.Equal(t, "max_tokens", streamResult.StopReason)
 }
