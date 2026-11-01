@@ -48,9 +48,9 @@ func (w *kiroStreamChunkCollector) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func bufferKiroAnthropicStream(ctx context.Context, body io.Reader, mappedModel string, inputTokens int) ([][]byte, *kiropkg.StreamResult, error) {
+func bufferKiroAnthropicStream(ctx context.Context, body io.Reader, mappedModel string, inputTokens int, requestCtx kiropkg.KiroRequestContext) ([][]byte, *kiropkg.StreamResult, error) {
 	collector := &kiroStreamChunkCollector{}
-	result, err := kiropkg.StreamEventStreamAsAnthropicWithContext(ctx, body, collector, mappedModel, inputTokens, kiropkg.KiroRequestContext{})
+	result, err := kiropkg.StreamEventStreamAsAnthropicWithContext(ctx, body, collector, mappedModel, inputTokens, requestCtx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -145,7 +145,7 @@ func (s *GatewayService) streamKiroWebSearchAsAnthropic(
 			return errKiroWebSearchFallback
 		}
 
-		resp, _, err := s.executeKiroUpstream(ctx, account, currentBody, mappedModel, requestModel, token, headers)
+		resp, requestCtx, err := s.executeKiroUpstream(ctx, account, currentBody, mappedModel, requestModel, token, headers)
 		if err != nil {
 			return err
 		}
@@ -153,9 +153,11 @@ func (s *GatewayService) streamKiroWebSearchAsAnthropic(
 			return &kiroWebSearchHTTPError{Response: resp}
 		}
 
+		requestCtx.CacheEmulationUsage = cacheUsage.toKiroUsage()
+		requestCtx.EstimatedInputTokens = inputTokens
 		chunks, _, streamErr := func() ([][]byte, *kiropkg.StreamResult, error) {
 			defer func() { _ = resp.Body.Close() }()
-			return bufferKiroAnthropicStream(ctx, resp.Body, mappedModel, inputTokens)
+			return bufferKiroAnthropicStream(ctx, resp.Body, mappedModel, inputTokens, requestCtx)
 		}()
 		if streamErr != nil {
 			return streamErr
@@ -233,7 +235,7 @@ func (s *GatewayService) executeKiroWebSearch(ctx context.Context, account *Acco
 			return nil, errKiroWebSearchFallback
 		}
 
-		resp, _, err := s.executeKiroUpstream(ctx, account, currentBody, mappedModel, requestModel, token, headers)
+		resp, requestCtx, err := s.executeKiroUpstream(ctx, account, currentBody, mappedModel, requestModel, token, headers)
 		if err != nil {
 			return nil, err
 		}
@@ -247,7 +249,9 @@ func (s *GatewayService) executeKiroWebSearch(ctx context.Context, account *Acco
 				cacheUsage = s.buildKiroCacheEmulationUsage(account, group, anthropicBody, mappedModel, inputTokens)
 				cacheUsageResolved = true
 			}
-			return kiropkg.ParseNonStreamingEventStreamWithContext(resp.Body, mappedModel, kiropkg.KiroRequestContext{CacheEmulationUsage: cacheUsage.toKiroUsage(), EstimatedInputTokens: inputTokens})
+			requestCtx.CacheEmulationUsage = cacheUsage.toKiroUsage()
+			requestCtx.EstimatedInputTokens = inputTokens
+			return kiropkg.ParseNonStreamingEventStreamWithContext(resp.Body, mappedModel, requestCtx)
 		}()
 		if parseErr != nil {
 			return nil, parseErr

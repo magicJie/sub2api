@@ -168,7 +168,7 @@ func AnalyzeBufferedStream(chunks [][]byte) BufferedStreamResult {
 func FilterChunksForClient(chunks [][]byte, webSearchToolUseIndex, indexOffset int) [][]byte {
 	filtered := make([][]byte, 0, len(chunks))
 	for _, chunk := range chunks {
-		adjusted, shouldForward := filterSSEChunk(chunk, webSearchToolUseIndex, indexOffset)
+		adjusted, shouldForward := filterSSEChunk(chunk, webSearchToolUseIndex, indexOffset, false)
 		if shouldForward {
 			filtered = append(filtered, adjusted)
 		}
@@ -177,7 +177,7 @@ func FilterChunksForClient(chunks [][]byte, webSearchToolUseIndex, indexOffset i
 }
 
 func AdjustSSEChunk(chunk []byte, offset int) ([]byte, bool) {
-	return filterSSEChunk(chunk, -1, offset)
+	return filterSSEChunk(chunk, -1, offset, true)
 }
 
 func MaxContentBlockIndex(chunks [][]byte) int {
@@ -207,7 +207,7 @@ func MaxContentBlockIndex(chunks [][]byte) int {
 	return maxIndex
 }
 
-func filterSSEChunk(chunk []byte, webSearchToolUseIndex, indexOffset int) ([]byte, bool) {
+func filterSSEChunk(chunk []byte, webSearchToolUseIndex, indexOffset int, preserveTerminal bool) ([]byte, bool) {
 	lines := strings.Split(string(chunk), "\n")
 	var builder strings.Builder
 	hasContent := false
@@ -217,7 +217,7 @@ func filterSSEChunk(chunk []byte, webSearchToolUseIndex, indexOffset int) ([]byt
 		if strings.HasPrefix(line, "event: ") {
 			if i+1 < len(lines) && strings.HasPrefix(lines[i+1], "data: ") {
 				payload := strings.TrimSpace(strings.TrimPrefix(lines[i+1], "data: "))
-				if shouldSuppressEventPayload(payload, webSearchToolUseIndex) {
+				if shouldSuppressEventPayload(payload, webSearchToolUseIndex, preserveTerminal) {
 					i++
 					continue
 				}
@@ -232,7 +232,7 @@ func filterSSEChunk(chunk []byte, webSearchToolUseIndex, indexOffset int) ([]byt
 			if payload == "[DONE]" {
 				continue
 			}
-			if shouldSuppressEventPayload(payload, webSearchToolUseIndex) {
+			if shouldSuppressEventPayload(payload, webSearchToolUseIndex, preserveTerminal) {
 				continue
 			}
 			adjusted := adjustEventPayload(payload, indexOffset)
@@ -256,7 +256,7 @@ func filterSSEChunk(chunk []byte, webSearchToolUseIndex, indexOffset int) ([]byt
 	return []byte(builder.String()), true
 }
 
-func shouldSuppressEventPayload(payload string, webSearchToolUseIndex int) bool {
+func shouldSuppressEventPayload(payload string, webSearchToolUseIndex int, preserveTerminal bool) bool {
 	if payload == "" {
 		return false
 	}
@@ -265,7 +265,7 @@ func shouldSuppressEventPayload(payload string, webSearchToolUseIndex int) bool 
 		return false
 	}
 	eventType, _ := event["type"].(string)
-	if eventType == "message_start" || eventType == "message_delta" || eventType == "message_stop" {
+	if eventType == "message_start" || (!preserveTerminal && (eventType == "message_delta" || eventType == "message_stop")) {
 		return true
 	}
 	if webSearchToolUseIndex < 0 {
