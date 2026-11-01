@@ -81,7 +81,7 @@ func (p *KiroTokenProvider) GetAccessToken(ctx context.Context, account *Account
 				}
 			}
 		} else {
-			account = result.Account
+			*account = *snapshotOAuthRefreshAccount(result.Account)
 			expiresAt = account.GetCredentialAsTime("expires_at")
 		}
 	} else if needsRefresh && p.tokenCache != nil {
@@ -99,6 +99,7 @@ func (p *KiroTokenProvider) GetAccessToken(ctx context.Context, account *Account
 	if p.tokenCache != nil {
 		latestAccount, isStale := CheckTokenVersion(ctx, account, p.accountRepo)
 		if isStale && latestAccount != nil {
+			*account = *snapshotOAuthRefreshAccount(latestAccount)
 			accessToken = latestAccount.GetCredential("access_token")
 			if strings.TrimSpace(accessToken) == "" {
 				return "", errors.New("access_token not found after version check")
@@ -139,35 +140,58 @@ func (p *KiroTokenProvider) ForceRefreshAccessToken(ctx context.Context, account
 	}
 
 	cacheKey := KiroTokenCacheKey(account)
-	lockHeld := false
+	failedAccessToken := strings.TrimSpace(account.GetCredential("access_token"))
 	if p.tokenCache != nil {
 		locked, lockErr := p.tokenCache.AcquireRefreshLock(ctx, cacheKey, 30*time.Second)
-		if lockErr == nil && locked {
-			lockHeld = true
-			defer func() { _ = p.tokenCache.ReleaseRefreshLock(ctx, cacheKey) }()
+		if lockErr != nil {
+			return "", lockErr
 		}
+		if !locked {
+			latest, stale := CheckTokenVersion(ctx, account, p.accountRepo)
+			if stale && latest != nil {
+				if token := strings.TrimSpace(latest.GetCredential("access_token")); token != "" && token != failedAccessToken {
+					*account = *snapshotOAuthRefreshAccount(latest)
+					return token, nil
+				}
+			}
+			if p.refreshPolicy.OnLockHeld == ProviderLockHeldWaitForCache {
+				if token, err := p.tokenCache.GetAccessToken(ctx, cacheKey); err == nil {
+					token = strings.TrimSpace(token)
+					// A cache token needs a matching DB snapshot for its profile metadata.
+					if token != "" && token != failedAccessToken && latest != nil && token == strings.TrimSpace(latest.GetCredential("access_token")) {
+						*account = *snapshotOAuthRefreshAccount(latest)
+						account.Credentials["access_token"] = token
+						return token, nil
+					}
+				}
+			}
+			return "", errRefreshSkipped
+		}
+		defer func() { _ = p.tokenCache.ReleaseRefreshLock(ctx, cacheKey) }()
 	}
 
-	if p.accountRepo != nil {
-		if latestAccount, err := p.accountRepo.GetByID(ctx, account.ID); err == nil && latestAccount != nil {
-			account = latestAccount
+	if latestAccount, stale := CheckTokenVersion(ctx, account, p.accountRepo); latestAccount != nil {
+		accessToken := strings.TrimSpace(latestAccount.GetCredential("access_token"))
+		*account = *snapshotOAuthRefreshAccount(latestAccount)
+		if stale && accessToken != "" {
+			_ = p.cacheAccessToken(ctx, account, accessToken)
+			return accessToken, nil
 		}
 	}
 
 	tokenInfo, err := p.kiroOAuthService.RefreshAccountToken(ctx, account)
 	if err != nil {
-		if !lockHeld {
-			if latestAccount, stale := CheckTokenVersion(ctx, account, p.accountRepo); stale && latestAccount != nil {
-				account = latestAccount
-				if accessToken := strings.TrimSpace(account.GetCredential("access_token")); accessToken != "" {
-					_ = p.cacheAccessToken(ctx, account, accessToken)
-					return accessToken, nil
-				}
+		if latestAccount, stale := CheckTokenVersion(ctx, account, p.accountRepo); stale && latestAccount != nil {
+			if accessToken := strings.TrimSpace(latestAccount.GetCredential("access_token")); accessToken != "" {
+				*account = *snapshotOAuthRefreshAccount(latestAccount)
+				_ = p.cacheAccessToken(ctx, account, accessToken)
+				return accessToken, nil
 			}
 		}
 		if isNonRetryableRefreshError(err) && p.accountRepo != nil {
 			errorMsg := "Token refresh failed (non-retryable): " + err.Error()
 			_ = p.accountRepo.SetError(ctx, account.ID, errorMsg)
+			account.Status = StatusError
 		}
 		return "", err
 	}
