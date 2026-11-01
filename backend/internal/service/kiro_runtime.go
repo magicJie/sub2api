@@ -655,6 +655,13 @@ func (s *GatewayService) executeKiroUpstreamWithParsed(ctx context.Context, acco
 
 				if account.Type == AccountTypeOAuth && s.kiroTokenProvider != nil && (resp.StatusCode == http.StatusUnauthorized || isKiroTokenErrorBody(respBody)) && attempt < maxRetries {
 					refreshedToken, refreshErr := s.kiroTokenProvider.ForceRefreshAccessToken(ctx, account)
+					if errors.Is(refreshErr, errRefreshSkipped) {
+						return nil, requestCtx, &UpstreamFailoverError{
+							StatusCode:             http.StatusServiceUnavailable,
+							ResponseBody:           []byte("Kiro access token refresh is already in progress"),
+							RequestScopedTransient: true,
+						}
+					}
 					if refreshErr == nil && strings.TrimSpace(refreshedToken) != "" {
 						currentToken = refreshedToken
 						accountKey = buildKiroAccountKey(account)
