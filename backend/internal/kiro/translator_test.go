@@ -643,7 +643,7 @@ func TestParseNonStreamingEventStream(t *testing.T) {
 	result, err := ParseNonStreamingEventStreamWithContext(stream, "claude-sonnet-4-5", KiroRequestContext{})
 	require.NoError(t, err)
 	require.Equal(t, "end_turn", result.StopReason)
-	require.Equal(t, 15, result.Usage.InputTokens)
+	require.Equal(t, 12, result.Usage.InputTokens)
 	require.Equal(t, 7, result.Usage.OutputTokens)
 	require.Equal(t, 22, result.Usage.TotalTokens)
 
@@ -2425,4 +2425,47 @@ func TestAbsentToolResultContentRemainsEmpty(t *testing.T) {
 		}
 		require.Equal(t, status, result.Get("status").String())
 	}
+}
+
+func TestNativeCacheUsageSeparatesOrdinaryInput(t *testing.T) {
+	for _, tc := range []struct {
+		uncached bool
+		total bool
+		creation int
+	}{
+		{true, true, 0},
+		{false, true, 0},
+		{true, false, 0},
+		{false, true, 5},
+	} {
+		tokens := map[string]any{"cacheReadInputTokens":3, "cacheCreationInputTokens":tc.creation, "outputTokens":7}
+		if tc.uncached { tokens["uncachedInputTokens"] = 12 }
+		if tc.total { tokens["totalTokens"] = 22+tc.creation }
+		frame := buildEventStreamFrame(t, "messageMetadataEvent", map[string]any{"tokenUsage":tokens})
+		result, err := ParseNonStreamingEventStreamWithContext(bytes.NewReader(frame), "model", KiroRequestContext{})
+		require.NoError(t, err)
+		require.Equal(t, 12, result.Usage.InputTokens)
+		require.Equal(t, 3, result.Usage.CacheReadInputTokens)
+		require.Equal(t, tc.creation, result.Usage.CacheCreationInputTokens)
+		require.Equal(t, 7, result.Usage.OutputTokens)
+		require.Equal(t, 22+tc.creation, result.Usage.TotalTokens)
+		require.Equal(t, int64(12), gjson.GetBytes(result.ResponseBody,"usage.input_tokens").Int())
+		var out bytes.Buffer
+		streamResult, err := StreamEventStreamAsAnthropicWithContext(context.Background(), bytes.NewReader(frame), &out, "model", 100, KiroRequestContext{})
+		require.NoError(t, err)
+		require.Equal(t, result.Usage, streamResult.Usage)
+		require.Contains(t, out.String(), `"input_tokens":12`)
+	}
+}
+
+func TestNativeZeroUncachedUsageOverridesRequestEstimate(t *testing.T) {
+	frame := buildEventStreamFrame(t, "messageMetadataEvent", map[string]any{"tokenUsage":map[string]any{"uncachedInputTokens":0,"cacheReadInputTokens":3,"outputTokens":7,"totalTokens":10}})
+	result, err := ParseNonStreamingEventStreamWithContext(bytes.NewReader(frame), "model", KiroRequestContext{EstimatedInputTokens:100})
+	require.NoError(t, err)
+	require.Zero(t, result.Usage.InputTokens)
+	require.Equal(t, 10, result.Usage.TotalTokens)
+	var out bytes.Buffer
+	streamResult, err := StreamEventStreamAsAnthropicWithContext(context.Background(), bytes.NewReader(frame), &out, "model", 100, KiroRequestContext{})
+	require.NoError(t, err)
+	require.Equal(t, result.Usage, streamResult.Usage)
 }

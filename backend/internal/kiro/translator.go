@@ -54,6 +54,7 @@ type Usage struct {
 	// MeteringUsage 是 meteringEvent 报告的本次扣点（单位通常为 credit）。两者只用于观测，不参与计费。
 	ContextUsagePercentage float64
 	MeteringUsage          float64
+	inputTokensReported bool
 }
 
 type StreamResult struct {
@@ -476,9 +477,9 @@ func ParseNonStreamingEventStreamWithContext(body io.Reader, model string, reque
 			return nil, err
 		}
 	}
-	if usage.InputTokens == 0 && requestCtx.EstimatedInputTokens > 0 {
+	if !usage.inputTokensReported && usage.InputTokens == 0 && requestCtx.EstimatedInputTokens > 0 {
 		usage.InputTokens = requestCtx.EstimatedInputTokens
-		usage.TotalTokens = usage.InputTokens + usage.OutputTokens
+		usage.TotalTokens = usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens + usage.OutputTokens
 	}
 	if requestCtx.CacheEmulationUsage != nil {
 		usage = mergeKiroCacheEmulationUsage(usage, requestCtx.CacheEmulationUsage)
@@ -1160,7 +1161,7 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 		}
 	}
 	if usage.TotalTokens == 0 {
-		usage.TotalTokens = usage.InputTokens + usage.OutputTokens
+		usage.TotalTokens = usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens + usage.OutputTokens
 	}
 	if requestCtx.CacheEmulationUsage != nil {
 		usage = mergeKiroCacheEmulationUsage(usage, requestCtx.CacheEmulationUsage)
@@ -2300,7 +2301,7 @@ func parseEventStreamWithReasoning(body io.Reader) (string, []KiroToolUse, Usage
 		}
 	}
 	if usage.TotalTokens == 0 {
-		usage.TotalTokens = usage.InputTokens + usage.OutputTokens
+		usage.TotalTokens = usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens + usage.OutputTokens
 	}
 	if stopReason == "" {
 		if hasUsableToolUses(toolUses) {
@@ -3213,25 +3214,6 @@ func updateUsageFromEvent(usage *Usage, eventType string, event map[string]any) 
 	if len(meta) == 0 {
 		meta = event
 	}
-	if tokenUsage, ok := meta["tokenUsage"].(map[string]any); ok {
-		if value, ok := toInt(tokenUsage["uncachedInputTokens"]); ok {
-			usage.InputTokens = value
-		}
-		if value, ok := toInt(tokenUsage["outputTokens"]); ok {
-			usage.OutputTokens = value
-		}
-		if value, ok := toInt(tokenUsage["totalTokens"]); ok {
-			usage.TotalTokens = value
-		}
-		if value, ok := toInt(tokenUsage["cacheReadInputTokens"]); ok {
-			usage.CacheReadInputTokens = value
-			if usage.InputTokens == 0 {
-				usage.InputTokens = value
-			} else {
-				usage.InputTokens += value
-			}
-		}
-	}
 	if value, ok := toInt(event["inputTokens"]); ok && value > 0 {
 		usage.InputTokens = value
 	}
@@ -3249,6 +3231,30 @@ func updateUsageFromEvent(usage *Usage, eventType string, event map[string]any) 
 	}
 	if value, ok := toInt(meta["totalTokens"]); ok && value > 0 {
 		usage.TotalTokens = value
+	}
+	if tokenUsage, ok := meta["tokenUsage"].(map[string]any); ok {
+		if value, ok := toInt(tokenUsage["outputTokens"]); ok {
+			usage.OutputTokens = value
+		}
+		if value, ok := toInt(tokenUsage["totalTokens"]); ok {
+			usage.TotalTokens = value
+		}
+		if value, ok := toInt(tokenUsage["cacheReadInputTokens"]); ok {
+			usage.CacheReadInputTokens = value
+		}
+		if value, ok := toInt(tokenUsage["cacheCreationInputTokens"]); ok {
+			usage.CacheCreationInputTokens = value
+		}
+		if value, ok := toInt(tokenUsage["uncachedInputTokens"]); ok {
+			usage.InputTokens = value
+			usage.inputTokensReported = true
+		} else if value, ok := toInt(tokenUsage["inputTokens"]); ok {
+			usage.InputTokens = value
+			usage.inputTokensReported = true
+		} else if _, ok := toInt(tokenUsage["totalTokens"]); ok {
+			usage.InputTokens = max(0, usage.TotalTokens-usage.OutputTokens-usage.CacheReadInputTokens-usage.CacheCreationInputTokens)
+			usage.inputTokensReported = true
+		}
 	}
 	if value, ok := toFloat(meta["contextUsagePercentage"]); ok && value > 0 {
 		usage.ContextUsagePercentage = value
