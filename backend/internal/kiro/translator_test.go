@@ -2374,3 +2374,26 @@ func TestToolInputNumbersSurviveResponsesAndHistory(t *testing.T) {
 		require.Contains(t, string(built.Payload), "9007199254740995")
 	}
 }
+
+func TestToolChoiceNoneSurvivesHistoryAndRejectsUpstreamTools(t *testing.T) {
+	body := []byte(`{"tool_choice":{"type":"none"},"tools":[{"name":"inspect","input_schema":{"type":"object"}}],"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"old","name":"inspect","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"old","content":"ok"}]}]}`)
+	built, err := BuildKiroPayloadWithContext(body, "claude-sonnet-4.5", "", "", nil)
+	require.NoError(t, err)
+	require.True(t, built.Context.ToolChoiceNone)
+	require.False(t, gjson.GetBytes(built.Payload, "conversationState.currentMessage.userInputMessage.userInputMessageContext.tools").Exists())
+	for _, eventType := range []string{"toolUseEvent", "assistantResponseEvent"} {
+		event := map[string]any{"toolUseId":"new", "name":"inspect", "input":map[string]any{}, "stop":true}
+		if eventType == "assistantResponseEvent" {
+			event = map[string]any{"toolUses":[]any{event}}
+		}
+		frame := buildEventStreamFrame(t, eventType, event)
+		_, err = ParseNonStreamingEventStreamWithContext(bytes.NewReader(frame), "model", built.Context)
+		require.Error(t, err)
+		var out bytes.Buffer
+		_, err = StreamEventStreamAsAnthropicWithContext(context.Background(), bytes.NewReader(frame), &out, "model", 0, built.Context)
+		require.Error(t, err)
+		require.Contains(t, out.String(), "event: error")
+		require.NotContains(t, out.String(), `"type":"tool_use"`)
+		require.NotContains(t, out.String(), "event: message_stop")
+	}
+}

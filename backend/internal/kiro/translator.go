@@ -86,6 +86,7 @@ type KiroRequestContext struct {
 	// ToolRequiredFields 是请求里每个工具 input_schema.required 的字段，按原名和发给上游的名字索引。
 	ToolRequiredFields  map[string][]string
 	ThinkingEnabled     bool
+	ToolChoiceNone      bool
 	CacheEmulationUsage *Usage
 	// EstimatedInputTokens 是网关按请求体估算的输入 token 数；上游未回报输入用量时用它填充
 	// 非流式响应的 usage.input_tokens（流式路径通过参数 inputTokens 传入）。
@@ -342,6 +343,7 @@ func BuildKiroPayloadWithContinuation(claudeBody []byte, modelID, profileArn, or
 func buildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, headers http.Header) (*KiroBuildResult, error) {
 	outputCap := kiroMaxOutputTokensForModel(modelID)
 	requestCtx := KiroRequestContext{ToolNameMap: map[string]string{}}
+	requestCtx.ToolChoiceNone = isToolChoiceNone(claudeBody)
 	var maxTokens int64
 	if mt := gjson.GetBytes(claudeBody, "max_tokens"); mt.Exists() {
 		maxTokens = mt.Int()
@@ -393,13 +395,15 @@ func buildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, hea
 	}
 	history = prependSystemHistory(history, systemPrompt, modelID, normalizeOrigin(origin), systemCachePoint)
 	var tools gjson.Result
-	if !isToolChoiceNone(claudeBody) {
+	if !requestCtx.ToolChoiceNone {
 		tools = gjson.GetBytes(claudeBody, "tools")
 	}
 	kiroTools := convertClaudeToolsToKiro(tools, &requestCtx)
 	currentToolResults, orphanedToolUseIDs := validateToolPairing(history, currentToolResults)
 	removeOrphanedToolUses(history, orphanedToolUseIDs)
-	kiroTools = appendMissingPlaceholderTools(kiroTools, collectHistoryToolNames(history))
+	if !requestCtx.ToolChoiceNone {
+		kiroTools = appendMissingPlaceholderTools(kiroTools, collectHistoryToolNames(history))
+	}
 	if currentUserMsg != nil {
 		currentUserMsg.Content = buildFinalContent(currentUserMsg.Content, currentToolResults)
 		currentToolResults = deduplicateToolResults(currentToolResults)
@@ -463,6 +467,9 @@ func ParseNonStreamingEventStreamWithContext(body io.Reader, model string, reque
 	content, toolUses, usage, stopReason, continuation, reasoningMeta, err := parseEventStreamWithReasoning(body)
 	if err != nil {
 		return nil, err
+	}
+	if requestCtx.ToolChoiceNone && len(toolUses) > 0 {
+		return nil, &StreamError{Message: "upstream emitted a tool call while tool_choice is none", StatusCode: http.StatusBadGateway}
 	}
 	if usage.InputTokens == 0 && requestCtx.EstimatedInputTokens > 0 {
 		usage.InputTokens = requestCtx.EstimatedInputTokens
@@ -1004,6 +1011,11 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 	applySemanticEvent := func(evt *kiroSemanticEvent) error {
 		if evt == nil {
 			return nil
+		}
+		if requestCtx.ToolChoiceNone && (evt.Type == kiroSemanticToolUse || evt.Type == kiroSemanticToolInput || evt.Type == kiroSemanticAssistantTU) {
+			err := &StreamError{Message: "upstream emitted a tool call while tool_choice is none", StatusCode: http.StatusBadGateway}
+			_ = writeEvent("error", anthropicStreamErrorEvent(err))
+			return err
 		}
 		// Kiro may attach provider-specific or interim stop reasons to an
 		// otherwise non-terminal frame. Only forward Anthropic values that are
