@@ -1,5 +1,5 @@
-// profit-preview 读取生产只读导出的 JSON（分组利润配置、账号倍率与探测状态、
-// 用户覆盖倍率、主力模型清单），复用线上 U/D/阈值判定做五平台离线预演。
+// profit-preview 读取分组利润配置、账号倍率与探测状态、用户覆盖倍率和模型清单 JSON，
+// 复用应用的 U/D/阈值判定做离线预演。
 //
 // 用法：
 //
@@ -55,7 +55,7 @@ type inputDoc struct {
 }
 
 func main() {
-	inputPath := flag.String("input", "", "生产只读导出 JSON 路径")
+	inputPath := flag.String("input", "", "利润配置与账号数据 JSON 路径")
 	assumeEnabled := flag.Bool("assume-enabled", false, "把当前关闭的支持平台分组按保存配置视为已启用")
 	jsonOut := flag.Bool("json", false, "以 JSON 输出完整报告（默认输出可读表格）")
 	flag.Parse()

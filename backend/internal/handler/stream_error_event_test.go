@@ -15,13 +15,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// Regression for the production incident on 2026-05-24 around 9:13 CST:
-// user 16 sent /v1/responses with stream:true via Codex CLI; the user-concurrency
-// slot wait sent SSE ping comments (flushing HTTP 200 + headers), then the 30s
-// timeout fired and the handler emitted `event: error\ndata: {...}`. Codex CLI
-// does not recognize that as a Responses terminal event and reports
-// "stream closed before response.completed". The fix is to emit a synthetic
-// response.failed event when the inbound endpoint is /v1/responses.
+// After SSE ping comments flush HTTP 200 and headers, a concurrency-slot timeout
+// must terminate /v1/responses with response.failed. A generic error event leaves
+// Responses clients waiting for a protocol terminal event.
 
 func newGinContextForEndpoint(t *testing.T, endpoint string) (*gin.Context, *httptest.ResponseRecorder) {
 	t.Helper()

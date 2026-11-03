@@ -22,7 +22,7 @@ func TestExtractGeminiCLISessionHash(t *testing.T) {
 	}{
 		{
 			name:             "with privileged-user-id and tmp dir",
-			body:             `{"contents":[{"parts":[{"text":"The project's temporary directory is: /Users/ianshaw/.gemini/tmp/f7851b009ed314d1baee62e83115f486160283f4a55a582d89fdac8b9fe3b740"}]}]}`,
+			body:             `{"contents":[{"parts":[{"text":"The project's temporary directory is: /Users/testuser/.gemini/tmp/f7851b009ed314d1baee62e83115f486160283f4a55a582d89fdac8b9fe3b740"}]}]}`,
 			privilegedUserID: "90785f52-8bbe-4b17-b111-a1ddea1636c3",
 			wantEmpty:        false,
 			wantHash: func() string {
@@ -33,7 +33,7 @@ func TestExtractGeminiCLISessionHash(t *testing.T) {
 		},
 		{
 			name:             "without privileged-user-id but with tmp dir",
-			body:             `{"contents":[{"parts":[{"text":"The project's temporary directory is: /Users/ianshaw/.gemini/tmp/f7851b009ed314d1baee62e83115f486160283f4a55a582d89fdac8b9fe3b740"}]}]}`,
+			body:             `{"contents":[{"parts":[{"text":"The project's temporary directory is: /Users/testuser/.gemini/tmp/f7851b009ed314d1baee62e83115f486160283f4a55a582d89fdac8b9fe3b740"}]}]}`,
 			privilegedUserID: "",
 			wantEmpty:        false,
 			wantHash:         "f7851b009ed314d1baee62e83115f486160283f4a55a582d89fdac8b9fe3b740",
@@ -85,19 +85,19 @@ func TestGeminiCLITmpDirRegex(t *testing.T) {
 	}{
 		{
 			name:      "valid tmp dir path",
-			input:     "/Users/ianshaw/.gemini/tmp/f7851b009ed314d1baee62e83115f486160283f4a55a582d89fdac8b9fe3b740",
+			input:     "/Users/testuser/.gemini/tmp/f7851b009ed314d1baee62e83115f486160283f4a55a582d89fdac8b9fe3b740",
 			wantMatch: true,
 			wantHash:  "f7851b009ed314d1baee62e83115f486160283f4a55a582d89fdac8b9fe3b740",
 		},
 		{
 			name:      "valid tmp dir path in text",
-			input:     "The project's temporary directory is: /Users/ianshaw/.gemini/tmp/f7851b009ed314d1baee62e83115f486160283f4a55a582d89fdac8b9fe3b740\nOther text",
+			input:     "The project's temporary directory is: /Users/testuser/.gemini/tmp/f7851b009ed314d1baee62e83115f486160283f4a55a582d89fdac8b9fe3b740\nOther text",
 			wantMatch: true,
 			wantHash:  "f7851b009ed314d1baee62e83115f486160283f4a55a582d89fdac8b9fe3b740",
 		},
 		{
 			name:      "invalid hash length",
-			input:     "/Users/ianshaw/.gemini/tmp/abc123",
+			input:     "/Users/testuser/.gemini/tmp/abc123",
 			wantMatch: false,
 		},
 		{

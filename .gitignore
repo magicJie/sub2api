@@ -5,6 +5,9 @@
 # 环境实例配置和运行脚本由仓库外的运维工作区管理
 /deploy/uat/
 /deploy/uatenv/
+/deploy/prod/
+/deploy/testenv/
+/deploy/aio/
 
 # ===================
 # Go 后端

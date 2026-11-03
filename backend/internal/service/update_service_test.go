@@ -186,7 +186,7 @@ func TestUpdateServiceRollbackToVersionAcceptsVPrefix(t *testing.T) {
 	require.Contains(t, err.Error(), "no compatible release found")
 }
 
-// testenv 镜像版本号为 <上游 tag>-<短 commit>[-dirty]，检查更新只比较 x.y.z，后缀不算新版本。
+// 自定义构建版本号形如 <tag>-<short commit>[-dirty]，检查更新只比较 x.y.z，构建后缀不算新版本。
 func TestCompareVersionsIgnoresBuildSuffix(t *testing.T) {
 	require.Equal(t, 0, compareVersions("0.2.19-44857a7", "0.2.19"))
 	require.Equal(t, 0, compareVersions("0.2.19-44857a7-dirty", "v0.2.19"))
