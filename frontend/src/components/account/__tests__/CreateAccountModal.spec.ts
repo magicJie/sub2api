@@ -11,6 +11,7 @@ const {
   createAccountMock,
   probeUpstreamBillingMock,
   syncUpstreamModelsMock,
+  showErrorMock,
   showWarningMock,
   importCodexSessionMock,
   createOpenAICodexPATMock,
@@ -26,6 +27,7 @@ const {
   createAccountMock: vi.fn(),
   probeUpstreamBillingMock: vi.fn(),
   syncUpstreamModelsMock: vi.fn(),
+  showErrorMock: vi.fn(),
   showWarningMock: vi.fn(),
   importCodexSessionMock: vi.fn(),
   createOpenAICodexPATMock: vi.fn(),
@@ -41,7 +43,7 @@ const {
 
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
-    showError: vi.fn(),
+    showError: showErrorMock,
     showSuccess: vi.fn(),
     showWarning: showWarningMock,
   }),
@@ -1161,6 +1163,8 @@ describe('CreateAccountModal Ollama Cloud platform', () => {
     createAccountMock.mockReset().mockResolvedValue({ id: 58, platform: 'ollama', type: 'apikey' })
     probeUpstreamBillingMock.mockReset().mockResolvedValue({})
     syncUpstreamModelsMock.mockReset().mockResolvedValue({ models: [], metadata: {} })
+    showErrorMock.mockReset()
+    showWarningMock.mockReset()
   })
 
   it('creates an apikey-only Ollama Cloud account with default base_url and force_chat_completions mode', async () => {
@@ -1186,6 +1190,52 @@ describe('CreateAccountModal Ollama Cloud platform', () => {
     })
     expect(payload?.extra?.openai_responses_mode).toBe('force_chat_completions')
     expect(payload?.upstream_billing_probe_enabled).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('shows the API rejection and keeps the Ollama form available for correction and retry', async () => {
+    createAccountMock.mockRejectedValueOnce({
+      status: 400,
+      reason: 'PROXY_POOL_PROXY_UNAVAILABLE',
+      message: 'Select a proxy with a fresh quality check'
+    })
+    const wrapper = mountModal()
+    await wrapper.get('[data-testid="platform-button-ollama"]').trigger('click')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('ollama-retry')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('ollama-secret-key')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(showErrorMock).toHaveBeenCalledWith('Select a proxy with a fresh quality check')
+    expect(wrapper.emitted('created')).toBeUndefined()
+    expect(wrapper.emitted('close')).toBeUndefined()
+    expect(wrapper.get<HTMLInputElement>('form#create-account-form input[type="text"]').element.value).toBe('ollama-retry')
+    expect(wrapper.get<HTMLInputElement>('form#create-account-form input[type="password"]').element.value).toBe('ollama-secret-key')
+
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(wrapper.emitted('created')).toHaveLength(1)
+    expect(wrapper.emitted('close')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('reports a normalized session-save rejection while completing account creation', async () => {
+    saveOllamaSessionMock.mockReset().mockRejectedValue({
+      status: 400,
+      message: 'Ollama session cookie is invalid'
+    })
+    const wrapper = mountModal()
+    await wrapper.get('[data-testid="platform-button-ollama"]').trigger('click')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('ollama-session-error')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('ollama-secret-key')
+    await wrapper.get('#create-ollama-session').setValue('invalid-cookie')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(showWarningMock).toHaveBeenCalledWith('Ollama session cookie is invalid')
+    expect(showErrorMock).not.toHaveBeenCalled()
+    expect(wrapper.emitted('created')).toHaveLength(1)
+    expect(wrapper.emitted('close')).toHaveLength(1)
     wrapper.unmount()
   })
 

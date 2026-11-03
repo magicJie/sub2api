@@ -4358,7 +4358,7 @@ import Icon from '@/components/icons/Icon.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
 import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
 import proxyPoolAPI, { type ProxyPreviewUse } from '@/proxyPool/api' // 代理池（fork）
-import { extractI18nErrorMessage } from '@/utils/apiError'
+import { extractApiErrorMessage, extractI18nErrorMessage } from '@/utils/apiError'
 import { useProxyPoolOptions } from '@/proxyPool/useProxyPools'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
@@ -5851,8 +5851,8 @@ const ensureAntigravityMixedChannelConfirmed = async (onConfirm: () => Promise<v
       }
     })
     return false
-  } catch (error: any) {
-    appStore.showError(error.response?.data?.message || error.response?.data?.detail || t('admin.accounts.failedToCreate'))
+  } catch (error: unknown) {
+    appStore.showError(extractApiErrorMessage(error, t('admin.accounts.failedToCreate')))
     return false
   }
 }
@@ -5876,8 +5876,8 @@ const setupOllamaUsageAfterCreate = async (accountId: number) => {
     } else {
       appStore.showSuccess(t('admin.accounts.ollamaCloud.createCheckOk'))
     }
-  } catch (error: any) {
-    appStore.showWarning(error?.response?.data?.message || t('admin.accounts.ollamaCloud.sessionSaveFailed'))
+  } catch (error: unknown) {
+    appStore.showWarning(extractApiErrorMessage(error, t('admin.accounts.ollamaCloud.sessionSaveFailed')))
   }
 }
 
@@ -5930,7 +5930,7 @@ const submitCreateAccount = async (payload: CreateAccountRequest) => {
       })
       return
     }
-    appStore.showError(error.response?.data?.message || error.response?.data?.detail || t('admin.accounts.failedToCreate'))
+    appStore.showError(extractApiErrorMessage(error, t('admin.accounts.failedToCreate')))
   } finally {
     submitting.value = false
   }

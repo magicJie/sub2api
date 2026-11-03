@@ -143,6 +143,32 @@ func TestDirectAccountProxyAdmission(t *testing.T) {
 	require.ErrorIs(t, svc.checkNewAccountProxy(ctx, account, nil, &id), ErrProxyPoolQualityUnavailable)
 }
 
+func TestOllamaCreationRequiresFullProxyQualityEvidence(t *testing.T) {
+	id := int64(12)
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{}}
+	svc := accountAdmissionService(&upstreamBillingProbeAdminRepo{repo}, id)
+	info := svc.proxyLatencyCache.(*accountAdmissionCache).info
+	info.QualityBaseEligible = false
+	info.QualityStatus = "challenge"
+	info.QualitySummary = "IPOK 缺少当前多源风险证据"
+	input := &CreateAccountInput{
+		Platform: PlatformOllama, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "synthetic-key", "base_url": DefaultOllamaBaseURL},
+		ProxyID: &id, SkipDefaultGroupBind: true,
+	}
+
+	account, err := svc.CreateAccount(context.Background(), input)
+	require.ErrorIs(t, err, ErrProxyPoolProxyNotInPool)
+	require.Nil(t, account)
+	require.Empty(t, repo.accounts)
+
+	info.QualityBaseEligible = true
+	account, err = svc.CreateAccount(context.Background(), input)
+	require.NoError(t, err)
+	require.Equal(t, &id, account.ProxyID)
+	require.Equal(t, PlatformOllama, repo.accounts[account.ID].Platform)
+}
+
 func TestManualAccountMutationUsesTargetAdmission(t *testing.T) {
 	ctx := context.Background()
 	id := int64(9)

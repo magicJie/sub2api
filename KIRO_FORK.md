@@ -232,6 +232,7 @@ cd backend && go build ./... && go test -tags=unit ./...
 - 账号的 `IsOpenAI()` / `IsOpenAIApiKey()` 复用 OpenAI API Key 的归一化、模型映射、请求头覆写、计费、探测和错误处置；OAuth 生命周期仍限定原 OpenAI 平台。分组保留 Messages 调度映射、reasoning 策略与模型目录配置。
 - `/v1/chat/completions`、`/v1/responses`、`/v1/messages` 默认都转换为上游 `/v1/chat/completions`，使用 Bearer。默认路由优先于旧 `openai_responses_supported=true` 探测标记；显式 `force_responses` 保留原账号覆盖语义。Codex 工具与历史归一化沿用共享管线，输出 token cap 与 raw CC reasoning 别名按 Ollama 平台生效。
 - 用量身份统一为 `platform=ollama && type=apikey`；base URL 用于默认值与校验。仓储用平台查询，SQL URL 正则只保留在一次性迁移的旧数据识别中。用量抓取、429 短冷却与探测、到期提醒继续使用原有机制。CRS 刷新已有账号时保留已迁移的 Ollama 平台。
+- 创建弹窗通过 `extractApiErrorMessage` 读取 API client 归一化后的错误，保留后端拒绝原因与待修改的表单。创建后的 Cookie 保存/用量查询失败显示具体警告，已创建账号仍正常刷新列表并关闭弹窗。
 - `mcp_xml_inject` 原值随分组保留。当前 OpenAI 网关只持久化和投影该字段，实际 MCP XML 注入实现位于 Antigravity transformer；Ollama 维持迁移前的请求处理语义。
 - 自动迁移 `backend/migrations/256_ollama_platform.sql`：按旧正则识别六个宿主平台的未删除 API Key 账号；同一存储 key 保留 active 优先、ID 最小的账号，其余设为 `disabled` 并写 `extra.migrated_to_account_id`。保留原关系，为保留账号补齐兄弟账号的分组关系；保留 proxy、key、extra，旧 base URL 规范成默认地址。
 - 纯 Ollama 分组改平台；混合分组列出 ID 并报错。受影响平台现存用户额度、冲突兄弟配置、歧义渠道/路由等配置在写入前报错。用户额度的 Redis 脏计数按平台存储，现有停止流程只做有限刷新，因此额度行保留原值，要求管理员先结算并明确配置新预算；独立的默认额度授予配置与渠道定价可以原地迁移。错误规则列表追加 Ollama，代理绑定历史同步平台，Ollama IP 策略继承 OpenAI 池选择与两个账号数上限，采用 `sticky/pause`。

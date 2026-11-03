@@ -2,9 +2,12 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"strings"
 	"time"
+
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
 // proxyQualityTargetForAccount follows the account's actual upstream access path. An empty
@@ -92,7 +95,12 @@ func (s *adminServiceImpl) checkNewAccountProxy(ctx context.Context, account *Ac
 		return err
 	}
 	if !proxyQualityAdmissibleForTarget(proxy, info, proxyQualityTargetForAccount(account), now) {
-		return ErrProxyPoolProxyNotInPool
+		summary := "full quality evidence is missing, expired, or unsuitable for this account"
+		if info != nil && strings.TrimSpace(info.QualitySummary) != "" {
+			summary = info.QualitySummary
+		}
+		return infraerrors.BadRequest(ErrProxyPoolProxyNotInPool.Reason,
+			fmt.Sprintf("proxy #%d cannot be assigned to this account: %s. Run a full quality check on the Proxies page and select an eligible proxy; a connection test alone is insufficient", proxy.ID, summary))
 	}
 	return nil
 }
