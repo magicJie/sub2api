@@ -203,6 +203,22 @@ Sub2API is an AI API gateway platform designed to distribute and manage API quot
 - **Composite Groups** - Admin routing layer that resolves requested models to concrete providers for multi-provider groups ([Operator Guide](docs/COMPOSITE_GROUPS.md))
 - **External System Integration** - Embed external systems (e.g. ticketing) via iframe to extend the admin dashboard
 
+### Automated model fingerprint and capability screening
+
+In an account's Scheduled Tests dialog, create a fingerprint, quality, or comprehensive plan with an explicit model and Cron schedule. Run Now executes the same saved plan immediately. Challenges, grading, and history collection run automatically; existing plans remain connectivity tests.
+
+**Batch setup:** select accounts in the account list (including all filtered results), then choose **Batch test plans** to configure one model, test type, threshold, and schedule for up to 1,000 accounts. The same model ID applies to every target; filtering by platform first is recommended. Results show created, skipped, and failed counts, with retry for failed accounts only. Identical existing configurations are skipped and existing plans stay unchanged. Creation does not call upstream models immediately; use each account's dialog for history or Run Now.
+
+- **Fingerprint:** three independent numeric challenges scored against the MIT-licensed [ModelTrace bank and algorithm](https://github.com/xqy2006/ModelTrace/tree/6cd4a8ff0f3f4e49d6d6969dd2fbadfa1569fde2). Optionally configure an expected candidate model ID. Identity comparison requires three usable answers, at least 80% leading-candidate probability, and a 20-percentage-point lead; other outcomes remain inconclusive.
+- **Quality:** one request batches five objectively graded tasks covering arithmetic, code tracing, logic, instruction following, and data processing. Each task is worth 20 points; the default passing threshold is 80. Results include expected and actual answers. Refusals and malformed responses remain inconclusive.
+- **Comprehensive:** both checks, totaling four upstream requests. Probes consume the account's upstream quota. Plans support pausing, editing, deletion, and retention of 1–1000 results.
+
+Automation uses `/api/v1/admin/scheduled-test-plans`. Create requests accept `account_id`, `model_id`, `cron_expression`, `test_type` (`fingerprint`, `quality`, or `comprehensive`), optional `expected_model`, and `quality_threshold`. `POST /api/v1/admin/scheduled-test-plans/:id/run` returns the persisted result, or `409` when the plan is already running; `GET .../:id/results` reads history. Each run has a five-minute execution budget; allow 330 seconds in client and reverse-proxy read timeouts. Startup migration `262_scheduled_test_diagnostics.sql` adds configuration columns and structured reports.
+
+`POST /api/v1/admin/scheduled-test-plans/batch` accepts `account_ids` instead of `account_id`, with the same shared configuration. It returns `created`, `skipped`, `failed`, and per-account `results` containing `account_id`, `status`, and optional `plan` / `error`. Invalid shared configuration returns `400` before any writes. Account-local failures preserve successful creations, and duplicate account IDs in one request are processed once.
+
+**Interpretation:** fingerprint probabilities are relative to the bundled closed-set candidates; unknown models and upstream system/client context can bias attribution. Quality scores are lightweight absolute-threshold screening signals. Scoring findings only affect diagnostic results; plan-level auto-recovery is restricted to connectivity tests. Credential and quota observations retain existing connectivity-test handling, including Grok quota recovery. Diagnostics require real text-generation accounts; TypeSafe, media models, and synthetic test accounts return explicit errors.
+
 ## Ecosystem
 
 Community projects that extend or integrate with Sub2API:

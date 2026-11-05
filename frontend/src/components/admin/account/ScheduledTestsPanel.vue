@@ -6,14 +6,14 @@
     @close="emit('close')"
   >
     <div class="space-y-4">
-      <!-- Add Plan Button -->
-      <div class="flex items-center justify-between">
+      <!-- Top Bar -->
+      <div class="flex items-center justify-between gap-3">
         <p class="text-sm text-gray-500 dark:text-gray-400">
-          {{ t('admin.scheduledTests.title') }}
+          {{ t('admin.scheduledTests.subtitle') }}
         </p>
         <button
           @click="showAddForm = !showAddForm"
-          class="btn btn-primary flex items-center gap-1.5 text-sm"
+          class="btn btn-primary flex shrink-0 items-center gap-1.5 text-sm"
         >
           <Icon name="plus" size="sm" :stroke-width="2" />
           {{ t('admin.scheduledTests.addPlan') }}
@@ -31,13 +31,46 @@
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+              {{ t('admin.scheduledTests.testType') }}
+            </label>
+            <Select
+              :model-value="newPlan.test_type"
+              :options="testTypeOptions"
+              :searchable="false"
+              @update:model-value="(val) => handleNewPlanTestTypeChange(String(val || 'connectivity'))"
+            />
+          </div>
+          <div>
+            <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
               {{ t('admin.scheduledTests.model') }}
             </label>
             <Select
               v-model="newPlan.model_id"
               :options="modelOptions"
               :placeholder="t('admin.scheduledTests.model')"
-              :searchable="modelOptions.length > 5"
+              :searchable="true"
+              :creatable="true"
+            />
+          </div>
+          <div v-if="includesFingerprint(newPlan.test_type)">
+            <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+              {{ t('admin.scheduledTests.expectedModel') }}
+            </label>
+            <Input
+              v-model="newPlan.expected_model"
+              :placeholder="t('admin.scheduledTests.expectedModelPlaceholder')"
+              :hint="t('admin.scheduledTests.expectedModelHelp')"
+            />
+          </div>
+          <div v-if="includesQuality(newPlan.test_type)">
+            <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+              {{ t('admin.scheduledTests.qualityThreshold') }}
+            </label>
+            <Input
+              v-model="newPlan.quality_threshold"
+              type="number"
+              placeholder="80"
+              :hint="t('admin.scheduledTests.qualityThresholdHelp')"
             />
           </div>
           <div>
@@ -98,16 +131,40 @@
           </div>
           <div class="flex items-end">
             <div>
-              <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-                <Toggle v-model="newPlan.auto_recover" />
+              <label
+                :class="[
+                  'flex items-center gap-2 text-sm',
+                  isConnectivityType(newPlan.test_type)
+                    ? 'text-gray-700 dark:text-gray-300'
+                    : 'text-gray-400 dark:text-gray-500'
+                ]"
+              >
+                <Toggle
+                  v-model="newPlan.auto_recover"
+                  :disabled="!isConnectivityType(newPlan.test_type)"
+                />
                 {{ t('admin.scheduledTests.autoRecover') }}
               </label>
               <p class="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
-                {{ t('admin.scheduledTests.autoRecoverHelp') }}
+                {{
+                  isConnectivityType(newPlan.test_type)
+                    ? t('admin.scheduledTests.autoRecoverHelp')
+                    : t('admin.scheduledTests.autoRecoverConnectivityOnly')
+                }}
               </p>
             </div>
           </div>
         </div>
+
+        <!-- Upstream Cost & Limitation Notice -->
+        <div class="mt-3 rounded-lg border border-amber-200/80 bg-amber-50/70 p-2.5 text-xs text-amber-800 dark:border-amber-800/60 dark:bg-amber-900/20 dark:text-amber-300">
+          <div class="font-medium">{{ t('admin.scheduledTests.costNoticeTitle') }}</div>
+          <p class="mt-0.5">{{ getCostNoticeText(newPlan.test_type) }}</p>
+          <p v-if="includesFingerprint(newPlan.test_type)" class="mt-1 text-amber-700/90 dark:text-amber-300/90">
+            {{ t('admin.scheduledTests.closedSetLimitation') }}
+          </p>
+        </div>
+
         <div class="mt-3 flex justify-end gap-2">
           <button
             @click="showAddForm = false; resetNewPlan()"
@@ -155,14 +212,36 @@
             class="flex cursor-pointer items-center justify-between px-4 py-3"
             @click="toggleExpand(plan.id)"
           >
-            <div class="flex flex-1 items-center gap-4">
-              <!-- Model -->
+            <div class="flex flex-1 flex-wrap items-center gap-3">
+              <!-- Model & Type -->
               <div class="min-w-0">
-                <div class="text-sm font-medium text-gray-900 dark:text-gray-100">
-                  {{ plan.model_id }}
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="text-sm font-medium text-gray-900 dark:text-gray-100">
+                    {{ plan.model_id }}
+                  </span>
+                  <span
+                    :class="[
+                      'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
+                      getTestTypeBadgeClass(plan.test_type)
+                    ]"
+                  >
+                    {{ getTestTypeLabel(plan.test_type) }}
+                  </span>
                 </div>
-                <div class="mt-0.5 font-mono text-xs text-gray-500 dark:text-gray-400">
-                  {{ plan.cron_expression }}
+                <div class="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                  <span class="font-mono">{{ plan.cron_expression }}</span>
+                  <span
+                    v-if="includesFingerprint(plan.test_type) && plan.expected_model"
+                    class="font-mono text-gray-500 dark:text-gray-400"
+                  >
+                    · {{ t('admin.scheduledTests.expectedModelLabel') }}: {{ plan.expected_model }}
+                  </span>
+                  <span
+                    v-if="includesQuality(plan.test_type)"
+                    class="font-mono text-gray-500 dark:text-gray-400"
+                  >
+                    · {{ t('admin.scheduledTests.qualityThresholdLabel') }}: {{ plan.quality_threshold ?? 80 }}
+                  </span>
                 </div>
               </div>
 
@@ -179,7 +258,7 @@
 
               <!-- Auto Recover Badge -->
               <span
-                v-if="plan.auto_recover"
+                v-if="plan.auto_recover && isConnectivityType(plan.test_type)"
                 class="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400"
               >
                 {{ t('admin.scheduledTests.autoRecover') }}
@@ -201,6 +280,23 @@
 
               <!-- Actions -->
               <div class="flex items-center gap-1" @click.stop>
+                <button
+                  data-testid="run-plan-btn"
+                  @click="handleRunNow(plan)"
+                  :disabled="runningPlanIds.has(plan.id)"
+                  class="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium text-emerald-600 transition-colors hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-emerald-400 dark:hover:bg-emerald-900/20"
+                  :title="runningPlanIds.has(plan.id) ? t('admin.scheduledTests.runNowRunning') : t('admin.scheduledTests.runNow')"
+                >
+                  <Icon
+                    :name="runningPlanIds.has(plan.id) ? 'refresh' : 'play'"
+                    size="sm"
+                    :class="runningPlanIds.has(plan.id) ? 'animate-spin' : ''"
+                    :stroke-width="2"
+                  />
+                  <span class="hidden sm:inline">
+                    {{ runningPlanIds.has(plan.id) ? t('admin.scheduledTests.runNowRunning') : t('admin.scheduledTests.runNow') }}
+                  </span>
+                </button>
                 <button
                   @click="startEdit(plan)"
                   class="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-blue-50 hover:text-blue-500 dark:hover:bg-blue-900/20"
@@ -241,13 +337,46 @@
             <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+                  {{ t('admin.scheduledTests.testType') }}
+                </label>
+                <Select
+                  :model-value="editForm.test_type"
+                  :options="testTypeOptions"
+                  :searchable="false"
+                  @update:model-value="(val) => handleEditFormTestTypeChange(String(val || 'connectivity'))"
+                />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
                   {{ t('admin.scheduledTests.model') }}
                 </label>
                 <Select
                   v-model="editForm.model_id"
                   :options="modelOptions"
                   :placeholder="t('admin.scheduledTests.model')"
-                  :searchable="modelOptions.length > 5"
+                  :searchable="true"
+                  :creatable="true"
+                />
+              </div>
+              <div v-if="includesFingerprint(editForm.test_type)">
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+                  {{ t('admin.scheduledTests.expectedModel') }}
+                </label>
+                <Input
+                  v-model="editForm.expected_model"
+                  :placeholder="t('admin.scheduledTests.expectedModelPlaceholder')"
+                  :hint="t('admin.scheduledTests.expectedModelHelp')"
+                />
+              </div>
+              <div v-if="includesQuality(editForm.test_type)">
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+                  {{ t('admin.scheduledTests.qualityThreshold') }}
+                </label>
+                <Input
+                  v-model="editForm.quality_threshold"
+                  type="number"
+                  placeholder="80"
+                  :hint="t('admin.scheduledTests.qualityThresholdHelp')"
                 />
               </div>
               <div>
@@ -308,16 +437,40 @@
               </div>
               <div class="flex items-end">
                 <div>
-                  <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-                    <Toggle v-model="editForm.auto_recover" />
+                  <label
+                    :class="[
+                      'flex items-center gap-2 text-sm',
+                      isConnectivityType(editForm.test_type)
+                        ? 'text-gray-700 dark:text-gray-300'
+                        : 'text-gray-400 dark:text-gray-500'
+                    ]"
+                  >
+                    <Toggle
+                      v-model="editForm.auto_recover"
+                      :disabled="!isConnectivityType(editForm.test_type)"
+                    />
                     {{ t('admin.scheduledTests.autoRecover') }}
                   </label>
                   <p class="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
-                    {{ t('admin.scheduledTests.autoRecoverHelp') }}
+                    {{
+                      isConnectivityType(editForm.test_type)
+                        ? t('admin.scheduledTests.autoRecoverHelp')
+                        : t('admin.scheduledTests.autoRecoverConnectivityOnly')
+                    }}
                   </p>
                 </div>
               </div>
             </div>
+
+            <!-- Upstream Cost & Limitation Notice -->
+            <div class="mt-3 rounded-lg border border-amber-200/80 bg-amber-50/70 p-2.5 text-xs text-amber-800 dark:border-amber-800/60 dark:bg-amber-900/20 dark:text-amber-300">
+              <div class="font-medium">{{ t('admin.scheduledTests.costNoticeTitle') }}</div>
+              <p class="mt-0.5">{{ getCostNoticeText(editForm.test_type) }}</p>
+              <p v-if="includesFingerprint(editForm.test_type)" class="mt-1 text-amber-700/90 dark:text-amber-300/90">
+                {{ t('admin.scheduledTests.closedSetLimitation') }}
+              </p>
+            </div>
+
             <div class="mt-3 flex justify-end gap-2">
               <button
                 @click="cancelEdit"
@@ -360,32 +513,38 @@
             </div>
 
             <!-- Results List -->
-            <div v-else class="max-h-64 space-y-2 overflow-y-auto">
+            <div v-else class="max-h-96 space-y-2.5 overflow-y-auto">
               <div
                 v-for="result in results"
                 :key="result.id"
-                class="rounded-lg border border-gray-100 bg-gray-50 p-3 dark:border-dark-700 dark:bg-dark-900"
+                :class="[
+                  'rounded-lg border p-3',
+                  result.status === 'warning'
+                    ? 'border-amber-200/80 bg-amber-50/30 dark:border-amber-800/50 dark:bg-amber-900/10'
+                    : 'border-gray-100 bg-gray-50 dark:border-dark-700 dark:bg-dark-900'
+                ]"
               >
                 <div class="flex items-center justify-between">
-                  <div class="flex items-center gap-2">
+                  <div class="flex flex-wrap items-center gap-2">
                     <!-- Status Badge -->
                     <span
                       :class="[
                         'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
-                        result.status === 'success'
-                          ? 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400'
-                          : result.status === 'running'
-                            ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400'
-                            : 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400'
+                        getResultStatusBadgeClass(result.status)
                       ]"
                     >
-                      {{
-                        result.status === 'success'
-                          ? t('admin.scheduledTests.success')
-                          : result.status === 'running'
-                            ? t('admin.scheduledTests.running')
-                            : t('admin.scheduledTests.failed')
-                      }}
+                      {{ getResultStatusLabel(result.status) }}
+                    </span>
+
+                    <!-- Diagnostic Test Type Badge -->
+                    <span
+                      v-if="result.diagnostics?.test_type"
+                      :class="[
+                        'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
+                        getTestTypeBadgeClass(result.diagnostics.test_type)
+                      ]"
+                    >
+                      {{ getTestTypeLabel(result.diagnostics.test_type) }}
                     </span>
 
                     <!-- Latency -->
@@ -400,10 +559,173 @@
                   </span>
                 </div>
 
+                <!-- Structured Diagnostics Summary -->
+                <div
+                  v-if="result.diagnostics && (result.diagnostics.fingerprint || result.diagnostics.quality)"
+                  class="mt-2.5 space-y-2"
+                >
+                  <!-- Fingerprint Card -->
+                  <div
+                    v-if="result.diagnostics.fingerprint"
+                    class="rounded-lg border border-gray-200/80 bg-white/80 p-2.5 text-xs dark:border-dark-700 dark:bg-dark-800/80"
+                  >
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                      <span class="font-medium text-gray-700 dark:text-gray-200">
+                        {{ t('admin.scheduledTests.fingerprintTitle') }}
+                      </span>
+                      <span
+                        :class="[
+                          'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium',
+                          getFingerprintStatusBadgeClass(result.diagnostics.fingerprint.status)
+                        ]"
+                      >
+                        {{ getFingerprintStatusLabel(result.diagnostics.fingerprint.status) }}
+                      </span>
+                    </div>
+
+                    <div class="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-gray-600 dark:text-gray-300">
+                      <div>
+                        <span class="text-gray-400 dark:text-gray-500">{{ t('admin.scheduledTests.predictedModel') }}: </span>
+                        <span class="font-mono font-semibold text-gray-900 dark:text-gray-100">
+                          {{ result.diagnostics.fingerprint.prediction || '-' }}
+                        </span>
+                      </div>
+                      <div v-if="result.diagnostics.expected_model">
+                        <span class="text-gray-400 dark:text-gray-500">{{ t('admin.scheduledTests.expectedModelLabel') }}: </span>
+                        <span class="font-mono">{{ result.diagnostics.expected_model }}</span>
+                      </div>
+                      <div>
+                        <span class="text-gray-400 dark:text-gray-500">{{ t('admin.scheduledTests.relativeProbability') }}: </span>
+                        <span class="font-mono font-medium">
+                          {{ formatProbability(result.diagnostics.fingerprint.probability) }}
+                        </span>
+                      </div>
+                      <div v-if="result.diagnostics.fingerprint.used_outputs > 0">
+                        <span class="text-gray-400 dark:text-gray-500">{{ t('admin.scheduledTests.usedOutputs') }}: </span>
+                        <span class="font-mono">{{ result.diagnostics.fingerprint.used_outputs }}</span>
+                      </div>
+                    </div>
+
+                    <!-- Top Candidates -->
+                    <div
+                      v-if="result.diagnostics.fingerprint.candidates && result.diagnostics.fingerprint.candidates.length > 0"
+                      class="mt-2"
+                    >
+                      <div class="mb-1 text-[11px] text-gray-400 dark:text-gray-500">
+                        {{ t('admin.scheduledTests.topCandidates') }}
+                      </div>
+                      <div class="flex flex-wrap gap-1.5">
+                        <span
+                          v-for="cand in result.diagnostics.fingerprint.candidates.slice(0, 4)"
+                          :key="cand.model"
+                          class="inline-flex items-center gap-1 rounded bg-gray-100 px-2 py-0.5 font-mono text-[11px] text-gray-700 dark:bg-dark-700 dark:text-gray-300"
+                        >
+                          <span>{{ cand.model }}</span>
+                          <span v-if="cand.family" class="text-gray-400 dark:text-gray-500">({{ cand.family }})</span>
+                          <span class="font-semibold text-primary-600 dark:text-primary-400">
+                            {{ formatProbability(cand.probability) }}
+                          </span>
+                        </span>
+                      </div>
+                    </div>
+
+                    <!-- Fingerprint Error -->
+                    <div
+                      v-if="result.diagnostics.fingerprint.error"
+                      class="mt-1.5 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
+                    >
+                      {{ result.diagnostics.fingerprint.error }}
+                    </div>
+                  </div>
+
+                  <!-- Quality / Ability Evaluation Card -->
+                  <div
+                    v-if="result.diagnostics.quality"
+                    class="rounded-lg border border-gray-200/80 bg-white/80 p-2.5 text-xs dark:border-dark-700 dark:bg-dark-800/80"
+                  >
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                      <span class="font-medium text-gray-700 dark:text-gray-200">
+                        {{ t('admin.scheduledTests.qualityTitle') }}
+                      </span>
+                      <span
+                        :class="[
+                          'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium',
+                          getQualityStatusBadgeClass(result.diagnostics.quality.status)
+                        ]"
+                      >
+                        {{ getQualityStatusLabel(result.diagnostics.quality.status) }}
+                      </span>
+                    </div>
+
+                    <div class="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-gray-600 dark:text-gray-300">
+                      <div>
+                        <span class="text-gray-400 dark:text-gray-500">{{ t('admin.scheduledTests.qualityScore') }}: </span>
+                        <span class="font-mono font-semibold text-gray-900 dark:text-gray-100">
+                          {{ result.diagnostics.quality.score }}/100
+                        </span>
+                      </div>
+                      <div>
+                        <span class="text-gray-400 dark:text-gray-500">{{ t('admin.scheduledTests.qualityThresholdLabel') }}: </span>
+                        <span class="font-mono">{{ result.diagnostics.quality.threshold }}</span>
+                      </div>
+                      <div>
+                        <span class="text-gray-400 dark:text-gray-500">{{ t('admin.scheduledTests.qualityChecksPassed') }}: </span>
+                        <span class="font-mono">
+                          {{ result.diagnostics.quality.passed }}/{{ result.diagnostics.quality.total }}
+                        </span>
+                      </div>
+                    </div>
+
+                    <!-- Per-check details -->
+                    <div
+                      v-if="result.diagnostics.quality.checks && result.diagnostics.quality.checks.length > 0"
+                      class="mt-2 space-y-1"
+                    >
+                      <div
+                        v-for="check in result.diagnostics.quality.checks"
+                        :key="check.id"
+                        class="flex flex-wrap items-center justify-between gap-2 rounded bg-gray-50 px-2 py-1 text-[11px] dark:bg-dark-900/60"
+                      >
+                        <div class="flex items-center gap-1.5">
+                          <span
+                            :class="[
+                              'inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium',
+                              check.passed
+                                ? 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400'
+                                : 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400'
+                            ]"
+                          >
+                            {{ check.passed ? t('admin.scheduledTests.checkPassed') : t('admin.scheduledTests.checkFailed') }}
+                          </span>
+                          <span class="font-mono font-medium text-gray-700 dark:text-gray-200">{{ check.id }}</span>
+                        </div>
+                        <div class="font-mono text-gray-500 dark:text-gray-400">
+                          <span>{{ t('admin.scheduledTests.checkExpected') }}: {{ check.expected }}</span>
+                          <span class="mx-1">·</span>
+                          <span>{{ t('admin.scheduledTests.checkActual') }}: {{ check.actual || '-' }}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Quality Error -->
+                    <div
+                      v-if="result.diagnostics.quality.error"
+                      class="mt-1.5 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
+                    >
+                      {{ result.diagnostics.quality.error }}
+                    </div>
+                  </div>
+                </div>
+
                 <!-- Response / Error (collapsible) -->
                 <div v-if="result.error_message" class="mt-2">
                   <div
-                    class="cursor-pointer text-xs font-medium text-red-600 dark:text-red-400"
+                    :class="[
+                      'cursor-pointer text-xs font-medium',
+                      result.status === 'warning'
+                        ? 'text-amber-700 dark:text-amber-400'
+                        : 'text-red-600 dark:text-red-400'
+                    ]"
                     @click="toggleResultDetail(result.id)"
                   >
                     {{ t('admin.scheduledTests.errorMessage') }}
@@ -418,7 +740,12 @@
                   </div>
                   <pre
                     v-if="expandedResultIds.has(result.id)"
-                    class="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-red-50 p-2 text-xs text-red-700 dark:bg-red-900/20 dark:text-red-300"
+                    :class="[
+                      'mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded p-2 text-xs',
+                      result.status === 'warning'
+                        ? 'bg-amber-50 text-amber-800 dark:bg-amber-900/20 dark:text-amber-300'
+                        : 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300'
+                    ]"
                   >{{ result.error_message }}</pre>
                 </div>
                 <div v-else-if="result.response_text" class="mt-2">
@@ -463,7 +790,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch, onBeforeUnmount } from 'vue'
+import { computed, ref, reactive, watch, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
@@ -475,7 +802,7 @@ import { Icon } from '@/components/icons'
 import { adminAPI } from '@/api/admin'
 import { useAppStore } from '@/stores/app'
 import { formatDateTime } from '@/utils/format'
-import type { ScheduledTestPlan, ScheduledTestResult } from '@/types'
+import type { ScheduledTestPlan, ScheduledTestResult, ScheduledTestType } from '@/types'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -497,21 +824,158 @@ const loadingResults = ref(false)
 const plans = ref<ScheduledTestPlan[]>([])
 const results = ref<ScheduledTestResult[]>([])
 const expandedPlanId = ref<number | null>(null)
+const runningPlanIds = reactive(new Set<number>())
+let panelSessionId = 0
 let resultsRequestId = 0
+
 watch(expandedPlanId, () => {
   resultsRequestId++
   results.value = []
   loadingResults.value = false
 }, { flush: 'sync' })
-onBeforeUnmount(() => { resultsRequestId++ })
+
+onBeforeUnmount(() => {
+  panelSessionId++
+  resultsRequestId++
+})
+
 const expandedResultIds = reactive(new Set<number>())
 const showAddForm = ref(false)
 const showDeleteConfirm = ref(false)
 const deletingPlan = ref<ScheduledTestPlan | null>(null)
 const editingPlanId = ref<number | null>(null)
 const updating = ref(false)
+
+const testTypeOptions = computed<SelectOption[]>(() => [
+  { value: 'connectivity', label: t('admin.scheduledTests.testTypeConnectivity') },
+  { value: 'fingerprint', label: t('admin.scheduledTests.testTypeFingerprint') },
+  { value: 'quality', label: t('admin.scheduledTests.testTypeQuality') },
+  { value: 'comprehensive', label: t('admin.scheduledTests.testTypeComprehensive') }
+])
+
+const normalizeTestType = (type?: string | null): ScheduledTestType => {
+  if (type === 'fingerprint' || type === 'quality' || type === 'comprehensive') {
+    return type
+  }
+  return 'connectivity'
+}
+
+const isConnectivityType = (type?: string | null): boolean =>
+  normalizeTestType(type) === 'connectivity'
+
+const includesFingerprint = (type?: string | null): boolean => {
+  const normalized = normalizeTestType(type)
+  return normalized === 'fingerprint' || normalized === 'comprehensive'
+}
+
+const includesQuality = (type?: string | null): boolean => {
+  const normalized = normalizeTestType(type)
+  return normalized === 'quality' || normalized === 'comprehensive'
+}
+
+const normalizeQualityThreshold = (raw: string | number | undefined): number => {
+  const parsed = Number(raw)
+  if (!Number.isFinite(parsed) || parsed <= 0) return 80
+  return Math.min(100, Math.max(1, Math.round(parsed)))
+}
+
+const normalizeMaxResults = (raw: string | number | undefined): number => {
+  const parsed = Number(raw)
+  if (!Number.isFinite(parsed) || parsed <= 0) return 100
+  return Math.min(1000, Math.max(1, Math.round(parsed)))
+}
+
+const getTestTypeLabel = (type?: string | null): string => {
+  const normalized = normalizeTestType(type)
+  if (normalized === 'fingerprint') return t('admin.scheduledTests.testTypeFingerprint')
+  if (normalized === 'quality') return t('admin.scheduledTests.testTypeQuality')
+  if (normalized === 'comprehensive') return t('admin.scheduledTests.testTypeComprehensive')
+  return t('admin.scheduledTests.testTypeConnectivity')
+}
+
+const getTestTypeBadgeClass = (type?: string | null): string => {
+  const normalized = normalizeTestType(type)
+  if (normalized === 'fingerprint') {
+    return 'bg-purple-100 text-purple-700 dark:bg-purple-500/20 dark:text-purple-300'
+  }
+  if (normalized === 'quality') {
+    return 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300'
+  }
+  if (normalized === 'comprehensive') {
+    return 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300'
+  }
+  return 'bg-gray-100 text-gray-700 dark:bg-dark-700 dark:text-gray-300'
+}
+
+const getCostNoticeText = (type?: string | null): string => {
+  const normalized = normalizeTestType(type)
+  if (normalized === 'fingerprint') return t('admin.scheduledTests.costNoticeFingerprint')
+  if (normalized === 'quality') return t('admin.scheduledTests.costNoticeQuality')
+  if (normalized === 'comprehensive') return t('admin.scheduledTests.costNoticeComprehensive')
+  return t('admin.scheduledTests.costNoticeConnectivity')
+}
+
+const getResultStatusLabel = (status: string): string => {
+  if (status === 'success') return t('admin.scheduledTests.success')
+  if (status === 'warning') return t('admin.scheduledTests.warning')
+  if (status === 'running') return t('admin.scheduledTests.running')
+  return t('admin.scheduledTests.failed')
+}
+
+const getResultStatusBadgeClass = (status: string): string => {
+  if (status === 'success') {
+    return 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400'
+  }
+  if (status === 'warning') {
+    return 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400'
+  }
+  if (status === 'running') {
+    return 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400'
+  }
+  return 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400'
+}
+
+const getFingerprintStatusLabel = (status?: string): string => {
+  if (status === 'match') return t('admin.scheduledTests.fingerprintMatch')
+  if (status === 'mismatch') return t('admin.scheduledTests.fingerprintMismatch')
+  if (status === 'observed') return t('admin.scheduledTests.fingerprintObserved')
+  return t('admin.scheduledTests.fingerprintInconclusive')
+}
+
+const getFingerprintStatusBadgeClass = (status?: string): string => {
+  if (status === 'match') {
+    return 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400'
+  }
+  if (status === 'observed') {
+    return 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-400'
+  }
+  return 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400'
+}
+
+const getQualityStatusLabel = (status?: string): string => {
+  if (status === 'passed') return t('admin.scheduledTests.qualityPassed')
+  if (status === 'degraded') return t('admin.scheduledTests.qualityDegraded')
+  return t('admin.scheduledTests.qualityInconclusive')
+}
+
+const getQualityStatusBadgeClass = (status?: string): string => {
+  if (status === 'passed') {
+    return 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400'
+  }
+  return 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400'
+}
+
+const formatProbability = (prob?: number): string => {
+  const num = Number(prob)
+  if (!Number.isFinite(num) || num < 0) return '0.0%'
+  return `${(num * 100).toFixed(1)}%`
+}
+
 const editForm = reactive({
+  test_type: 'connectivity' as ScheduledTestType,
   model_id: '' as string,
+  expected_model: '' as string,
+  quality_threshold: '80' as string,
   cron_expression: '' as string,
   max_results: '100' as string,
   enabled: true,
@@ -519,94 +983,147 @@ const editForm = reactive({
 })
 
 const newPlan = reactive({
+  test_type: 'connectivity' as ScheduledTestType,
   model_id: '' as string,
+  expected_model: '' as string,
+  quality_threshold: '80' as string,
   cron_expression: '' as string,
   max_results: '100' as string,
   enabled: true,
   auto_recover: false
 })
 
+const handleNewPlanTestTypeChange = (type: string) => {
+  const normalized = normalizeTestType(type)
+  newPlan.test_type = normalized
+  if (normalized !== 'connectivity') {
+    newPlan.auto_recover = false
+  }
+}
+
+const handleEditFormTestTypeChange = (type: string) => {
+  const normalized = normalizeTestType(type)
+  editForm.test_type = normalized
+  if (normalized !== 'connectivity') {
+    editForm.auto_recover = false
+  }
+}
+
 const resetNewPlan = () => {
+  newPlan.test_type = 'connectivity'
   newPlan.model_id = ''
+  newPlan.expected_model = ''
+  newPlan.quality_threshold = '80'
   newPlan.cron_expression = ''
   newPlan.max_results = '100'
   newPlan.enabled = true
   newPlan.auto_recover = false
 }
 
-// Load plans when dialog opens
+// Load plans when dialog opens or account switches
 watch(
-  () => props.show,
-  async (visible) => {
-    if (visible && props.accountId) {
+  [() => props.show, () => props.accountId],
+  async ([visible, accountId]) => {
+    panelSessionId++
+    resultsRequestId++
+    plans.value = []
+    results.value = []
+    loading.value = false
+    loadingResults.value = false
+    creating.value = false
+    updating.value = false
+    expandedPlanId.value = null
+    expandedResultIds.clear()
+    runningPlanIds.clear()
+    editingPlanId.value = null
+    showAddForm.value = false
+    showDeleteConfirm.value = false
+    deletingPlan.value = null
+    if (visible && accountId) {
       await loadPlans()
-    } else {
-      plans.value = []
-      results.value = []
-      expandedPlanId.value = null
-      expandedResultIds.clear()
-      showAddForm.value = false
-      showDeleteConfirm.value = false
     }
   }
 )
 
 const loadPlans = async () => {
   if (!props.accountId) return
+  const sessionId = panelSessionId
   loading.value = true
   try {
-    plans.value = await adminAPI.scheduledTests.listByAccount(props.accountId)
+    const data = await adminAPI.scheduledTests.listByAccount(props.accountId)
+    if (sessionId !== panelSessionId) return
+    plans.value = data
   } catch (error: any) {
+    if (sessionId !== panelSessionId) return
     appStore.showError(error?.message || 'Failed to load plans')
   } finally {
-    loading.value = false
+    if (sessionId === panelSessionId) {
+      loading.value = false
+    }
   }
 }
 
 const handleCreate = async () => {
   if (!props.accountId || !newPlan.model_id || !newPlan.cron_expression) return
+  const sessionId = panelSessionId
   creating.value = true
   try {
-    const maxResults = Number(newPlan.max_results) || 100
+    const testType = normalizeTestType(newPlan.test_type)
     await adminAPI.scheduledTests.create({
       account_id: props.accountId,
       model_id: newPlan.model_id,
+      test_type: testType,
+      expected_model: includesFingerprint(testType) ? newPlan.expected_model.trim() : '',
+      quality_threshold: includesQuality(testType)
+        ? normalizeQualityThreshold(newPlan.quality_threshold)
+        : 80,
       cron_expression: newPlan.cron_expression,
       enabled: newPlan.enabled,
-      max_results: maxResults,
-      auto_recover: newPlan.auto_recover
+      max_results: normalizeMaxResults(newPlan.max_results),
+      auto_recover: testType === 'connectivity' ? newPlan.auto_recover : false
     })
-    appStore.showSuccess(t('admin.scheduledTests.createSuccess'))
+    if (sessionId !== panelSessionId) return
+    appStore.showSuccess?.(t('admin.scheduledTests.createSuccess'))
     showAddForm.value = false
     resetNewPlan()
     await loadPlans()
   } catch (error: any) {
+    if (sessionId !== panelSessionId) return
     appStore.showError(error?.message || 'Failed to create plan')
   } finally {
-    creating.value = false
+    if (sessionId === panelSessionId) {
+      creating.value = false
+    }
   }
 }
 
 const handleToggleEnabled = async (plan: ScheduledTestPlan, enabled: boolean) => {
+  const sessionId = panelSessionId
   try {
     const updated = await adminAPI.scheduledTests.update(plan.id, { enabled })
+    if (sessionId !== panelSessionId) return
     const index = plans.value.findIndex((p) => p.id === plan.id)
     if (index !== -1) {
       plans.value[index] = updated
     }
-    appStore.showSuccess(t('admin.scheduledTests.updateSuccess'))
+    appStore.showSuccess?.(t('admin.scheduledTests.updateSuccess'))
   } catch (error: any) {
+    if (sessionId !== panelSessionId) return
     appStore.showError(error?.message || 'Failed to update plan')
   }
 }
 
 const startEdit = (plan: ScheduledTestPlan) => {
+  const testType = normalizeTestType(plan.test_type)
   editingPlanId.value = plan.id
+  editForm.test_type = testType
   editForm.model_id = plan.model_id
+  editForm.expected_model = plan.expected_model || ''
+  editForm.quality_threshold = String(plan.quality_threshold ?? 80)
   editForm.cron_expression = plan.cron_expression
-  editForm.max_results = String(plan.max_results)
+  editForm.max_results = String(plan.max_results || 100)
   editForm.enabled = plan.enabled
-  editForm.auto_recover = plan.auto_recover
+  editForm.auto_recover = testType === 'connectivity' ? plan.auto_recover : false
 }
 
 const cancelEdit = () => {
@@ -615,25 +1132,36 @@ const cancelEdit = () => {
 
 const handleEdit = async () => {
   if (!editingPlanId.value || !editForm.model_id || !editForm.cron_expression) return
+  const sessionId = panelSessionId
   updating.value = true
   try {
+    const testType = normalizeTestType(editForm.test_type)
     const updated = await adminAPI.scheduledTests.update(editingPlanId.value, {
       model_id: editForm.model_id,
+      test_type: testType,
+      expected_model: includesFingerprint(testType) ? editForm.expected_model.trim() : '',
+      quality_threshold: includesQuality(testType)
+        ? normalizeQualityThreshold(editForm.quality_threshold)
+        : 80,
       cron_expression: editForm.cron_expression,
-      max_results: Number(editForm.max_results) || 100,
+      max_results: normalizeMaxResults(editForm.max_results),
       enabled: editForm.enabled,
-      auto_recover: editForm.auto_recover
+      auto_recover: testType === 'connectivity' ? editForm.auto_recover : false
     })
+    if (sessionId !== panelSessionId) return
     const index = plans.value.findIndex((p) => p.id === editingPlanId.value)
     if (index !== -1) {
       plans.value[index] = updated
     }
-    appStore.showSuccess(t('admin.scheduledTests.updateSuccess'))
+    appStore.showSuccess?.(t('admin.scheduledTests.updateSuccess'))
     editingPlanId.value = null
   } catch (error: any) {
+    if (sessionId !== panelSessionId) return
     appStore.showError(error?.message || 'Failed to update plan')
   } finally {
-    updating.value = false
+    if (sessionId === panelSessionId) {
+      updating.value = false
+    }
   }
 }
 
@@ -644,19 +1172,54 @@ const confirmDeletePlan = (plan: ScheduledTestPlan) => {
 
 const handleDelete = async () => {
   if (!deletingPlan.value) return
+  const sessionId = panelSessionId
+  const targetId = deletingPlan.value.id
   try {
-    await adminAPI.scheduledTests.delete(deletingPlan.value.id)
-    appStore.showSuccess(t('admin.scheduledTests.deleteSuccess'))
-    plans.value = plans.value.filter((p) => p.id !== deletingPlan.value!.id)
-    if (expandedPlanId.value === deletingPlan.value.id) {
+    await adminAPI.scheduledTests.delete(targetId)
+    if (sessionId !== panelSessionId) return
+    appStore.showSuccess?.(t('admin.scheduledTests.deleteSuccess'))
+    plans.value = plans.value.filter((p) => p.id !== targetId)
+    if (expandedPlanId.value === targetId) {
       expandedPlanId.value = null
       results.value = []
     }
   } catch (error: any) {
+    if (sessionId !== panelSessionId) return
     appStore.showError(error?.message || 'Failed to delete plan')
   } finally {
-    showDeleteConfirm.value = false
-    deletingPlan.value = null
+    if (sessionId === panelSessionId) {
+      showDeleteConfirm.value = false
+      deletingPlan.value = null
+    }
+  }
+}
+
+const fetchPlanResults = async (planId: number, fallbackResult?: ScheduledTestResult) => {
+  resultsRequestId++
+  const requestId = resultsRequestId
+  const sessionId = panelSessionId
+  loadingResults.value = true
+  try {
+    const data = await adminAPI.scheduledTests.listResults(planId, 20)
+    if (sessionId !== panelSessionId || requestId !== resultsRequestId) return
+    if (Array.isArray(data) && data.length > 0) {
+      results.value =
+        fallbackResult && !data.some((item) => item.id === fallbackResult.id)
+          ? [fallbackResult, ...data]
+          : data
+    } else if (fallbackResult) {
+      results.value = [fallbackResult]
+    } else {
+      results.value = []
+    }
+  } catch (error: any) {
+    if (sessionId !== panelSessionId || requestId !== resultsRequestId) return
+    appStore.showError(error?.message || 'Failed to load results')
+    results.value = fallbackResult ? [fallbackResult] : []
+  } finally {
+    if (sessionId === panelSessionId && requestId === resultsRequestId) {
+      loadingResults.value = false
+    }
   }
 }
 
@@ -670,18 +1233,31 @@ const toggleExpand = async (planId: number) => {
 
   expandedPlanId.value = planId
   expandedResultIds.clear()
-  loadingResults.value = true
-  const requestId = resultsRequestId
+  await fetchPlanResults(planId)
+}
+
+const handleRunNow = async (plan: ScheduledTestPlan) => {
+  if (runningPlanIds.has(plan.id)) return
+  const sessionId = panelSessionId
+  runningPlanIds.add(plan.id)
   try {
-    const data = await adminAPI.scheduledTests.listResults(planId, 20)
-    if (requestId !== resultsRequestId) return
-    results.value = data
+    const executed = await adminAPI.scheduledTests.runNow(plan.id)
+    if (sessionId !== panelSessionId) return
+    const currentPlan = plans.value.find((p) => p.id === plan.id)
+    if (currentPlan && (executed?.finished_at || executed?.started_at)) {
+      currentPlan.last_run_at = executed.finished_at || executed.started_at
+    }
+    appStore.showSuccess?.(t('admin.scheduledTests.runSuccess'))
+    if (expandedPlanId.value !== plan.id) {
+      expandedPlanId.value = plan.id
+      expandedResultIds.clear()
+    }
+    await fetchPlanResults(plan.id, executed)
   } catch (error: any) {
-    if (requestId !== resultsRequestId) return
-    appStore.showError(error?.message || 'Failed to load results')
-    results.value = []
+    if (sessionId !== panelSessionId) return
+    appStore.showError(error?.message || t('admin.scheduledTests.runFailed'))
   } finally {
-    if (requestId === resultsRequestId) loadingResults.value = false
+    if (sessionId === panelSessionId) runningPlanIds.delete(plan.id)
   }
 }
 

@@ -2672,10 +2672,60 @@ export interface TotpLogin2FARequest {
 
 // ==================== Scheduled Test Types ====================
 
+export type ScheduledTestType = 'connectivity' | 'fingerprint' | 'quality' | 'comprehensive'
+
+export type ModelFingerprintStatus = 'match' | 'mismatch' | 'inconclusive' | 'observed'
+
+export type ModelQualityStatus = 'passed' | 'degraded' | 'inconclusive'
+
+export interface ModelDetectionCandidate {
+  model: string
+  probability: number
+  family: string
+}
+
+export interface ModelFingerprintReport {
+  status: ModelFingerprintStatus | string
+  prediction: string
+  probability: number
+  used_outputs: number
+  candidates?: ModelDetectionCandidate[]
+  error?: string
+}
+
+export interface ModelQualityCheck {
+  id: string
+  passed: boolean
+  expected: string
+  actual: string
+}
+
+export interface ModelQualityReport {
+  status: ModelQualityStatus | string
+  score: number
+  threshold: number
+  passed: number
+  total: number
+  checks?: ModelQualityCheck[]
+  error?: string
+}
+
+export interface ModelDetectionReport {
+  version: string
+  test_type: ScheduledTestType | string
+  model: string
+  expected_model?: string
+  fingerprint?: ModelFingerprintReport
+  quality?: ModelQualityReport
+}
+
 export interface ScheduledTestPlan {
   id: number
   account_id: number
   model_id: string
+  test_type?: ScheduledTestType | string
+  expected_model?: string
+  quality_threshold?: number
   cron_expression: string
   enabled: boolean
   max_results: number
@@ -2693,6 +2743,7 @@ export interface ScheduledTestResult {
   response_text: string
   error_message: string
   latency_ms: number
+  diagnostics?: ModelDetectionReport | null
   started_at: string
   finished_at: string
   created_at: string
@@ -2701,6 +2752,9 @@ export interface ScheduledTestResult {
 export interface CreateScheduledTestPlanRequest {
   account_id: number
   model_id: string
+  test_type?: ScheduledTestType | string
+  expected_model?: string
+  quality_threshold?: number
   cron_expression: string
   enabled?: boolean
   max_results?: number
@@ -2709,10 +2763,41 @@ export interface CreateScheduledTestPlanRequest {
 
 export interface UpdateScheduledTestPlanRequest {
   model_id?: string
+  test_type?: ScheduledTestType | string
+  expected_model?: string
+  quality_threshold?: number
   cron_expression?: string
   enabled?: boolean
   max_results?: number
   auto_recover?: boolean
+}
+
+export type BatchScheduledTestPlanItemStatus = 'created' | 'skipped' | 'failed'
+
+export interface BatchCreateScheduledTestPlansRequest {
+  account_ids: number[]
+  model_id: string
+  test_type?: ScheduledTestType | string
+  expected_model?: string
+  quality_threshold?: number
+  cron_expression: string
+  enabled?: boolean
+  max_results?: number
+  auto_recover?: boolean
+}
+
+export interface BatchScheduledTestPlanResultItem {
+  account_id: number
+  status: BatchScheduledTestPlanItemStatus
+  plan?: ScheduledTestPlan
+  error?: string
+}
+
+export interface BatchCreateScheduledTestPlansResponse {
+  created: number
+  skipped: number
+  failed: number
+  results: BatchScheduledTestPlanResultItem[]
 }
 
 // Payment types

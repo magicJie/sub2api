@@ -15,11 +15,20 @@ function deferred<T>() {
 }
 
 import ScheduledTestsPanel from '../ScheduledTestsPanel.vue'
-const { listByAccount, listResults, showError } = vi.hoisted(() => ({
-  listByAccount: vi.fn(), listResults: vi.fn(), showError: vi.fn(),
+import type { ScheduledTestResult } from '@/types'
+const { listByAccount, listResults, runNow, create, update, showError, showSuccess } = vi.hoisted(() => ({
+  listByAccount: vi.fn(),
+  listResults: vi.fn(),
+  runNow: vi.fn(),
+  create: vi.fn(),
+  update: vi.fn(),
+  showError: vi.fn(),
+  showSuccess: vi.fn(),
 }))
-vi.mock('@/api/admin', () => ({ adminAPI: { scheduledTests: { listByAccount, listResults } } }))
-vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showError }) }))
+vi.mock('@/api/admin', () => ({
+  adminAPI: { scheduledTests: { listByAccount, listResults, runNow, create, update } }
+}))
+vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showError, showSuccess }) }))
 
 async function openPanel() {
   const wrapper = shallowMount(ScheduledTestsPanel, {
@@ -82,5 +91,99 @@ describe('scheduled test result selection', () => {
     old.resolve([result(11)])
     await flushPromises()
     expect(wrapper.html()).toBe(current)
+  })
+
+  it('runs a plan immediately, expands results, and renders diagnostic warning summary', async () => {
+    const diagnosticResult = {
+      id: 99,
+      plan_id: 1,
+      status: 'warning',
+      response_text: '',
+      error_message: 'fingerprint mismatch; ability below threshold',
+      latency_ms: 420,
+      started_at: '2026-11-05T10:00:00Z',
+      finished_at: '2026-11-05T10:00:01Z',
+      created_at: '2026-11-05T10:00:01Z',
+      diagnostics: {
+        version: 'v1',
+        test_type: 'comprehensive',
+        model: 'claude-sonnet-4-5',
+        expected_model: 'claude-opus-4-6',
+        fingerprint: {
+          status: 'mismatch',
+          prediction: 'claude-sonnet-4-5',
+          probability: 0.912,
+          used_outputs: 3,
+          candidates: [
+            { model: 'claude-sonnet-4-5', probability: 0.912, family: 'claude' },
+            { model: 'claude-opus-4-6', probability: 0.064, family: 'claude' }
+          ]
+        },
+        quality: {
+          status: 'degraded',
+          score: 60,
+          threshold: 80,
+          passed: 3,
+          total: 5,
+          checks: [
+            { id: 'math_exact', passed: true, expected: '42', actual: '42' },
+            { id: 'logic_order', passed: false, expected: 'B>A>C', actual: 'A>B>C' }
+          ]
+        }
+      }
+    }
+    runNow.mockResolvedValueOnce(diagnosticResult)
+    listResults.mockResolvedValueOnce([diagnosticResult])
+
+    const wrapper = await openPanel()
+    const runButtons = wrapper.findAll('[data-testid="run-plan-btn"]')
+    expect(runButtons.length).toBe(2)
+
+    await runButtons[0].trigger('click')
+    await flushPromises()
+
+    expect(runNow).toHaveBeenCalledWith(1)
+    expect(listResults).toHaveBeenCalledWith(1, 20)
+    expect(wrapper.text()).toContain('admin.scheduledTests.warning')
+    expect(wrapper.text()).toContain('admin.scheduledTests.fingerprintMismatch')
+    expect(wrapper.text()).toContain('claude-sonnet-4-5')
+    expect(wrapper.text()).toContain('91.2%')
+    expect(wrapper.text()).toContain('admin.scheduledTests.qualityDegraded')
+    expect(wrapper.text()).toContain('60/100')
+    expect(wrapper.text()).toContain('logic_order')
+  })
+
+  it('ignores stale runNow completion when the panel closes before it finishes', async () => {
+    const pendingRun = deferred<Partial<ScheduledTestResult>>()
+    runNow.mockReturnValueOnce(pendingRun.promise)
+
+    const wrapper = await openPanel()
+    await wrapper.findAll('[data-testid="run-plan-btn"]')[0].trigger('click')
+    await wrapper.setProps({ show: false })
+    pendingRun.reject(new Error('late failure after close'))
+    await flushPromises()
+
+    expect(showError).not.toHaveBeenCalled()
+    expect(listResults).not.toHaveBeenCalled()
+  })
+
+  it('keeps a reopened plan busy when the previous panel run finishes', async () => {
+    const previous = deferred<Partial<ScheduledTestResult>>()
+    const current = deferred<Partial<ScheduledTestResult>>()
+    runNow.mockReturnValueOnce(previous.promise).mockReturnValueOnce(current.promise)
+    listResults.mockResolvedValue([])
+    const wrapper = await openPanel()
+    await wrapper.findAll('[data-testid="run-plan-btn"]')[0].trigger('click')
+    await wrapper.setProps({ show: false })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    await wrapper.findAll('[data-testid="run-plan-btn"]')[0].trigger('click')
+    previous.reject(new Error('previous panel finished'))
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid="run-plan-btn"]')[0].attributes('disabled')).toBeDefined()
+    current.resolve({ ...result(33), finished_at: '2026-11-05T10:00:01Z' })
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid="run-plan-btn"]')[0].attributes('disabled')).toBeUndefined()
+    expect(showError).not.toHaveBeenCalled()
   })
 })

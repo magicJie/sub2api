@@ -8,7 +8,9 @@ import type {
   ScheduledTestPlan,
   ScheduledTestResult,
   CreateScheduledTestPlanRequest,
-  UpdateScheduledTestPlanRequest
+  UpdateScheduledTestPlanRequest,
+  BatchCreateScheduledTestPlansRequest,
+  BatchCreateScheduledTestPlansResponse
 } from '@/types'
 
 /**
@@ -37,6 +39,21 @@ export async function create(req: CreateScheduledTestPlanRequest): Promise<Sched
 }
 
 /**
+ * Batch create scheduled test plans across multiple accounts
+ * @param req - Batch plan creation request
+ * @returns Batch creation summary and per-account results
+ */
+export async function batchCreate(
+  req: BatchCreateScheduledTestPlansRequest
+): Promise<BatchCreateScheduledTestPlansResponse> {
+  const { data } = await apiClient.post<BatchCreateScheduledTestPlansResponse>(
+    '/admin/scheduled-test-plans/batch',
+    req
+  )
+  return data
+}
+
+/**
  * Update an existing scheduled test plan
  * @param id - Plan ID
  * @param req - Fields to update
@@ -58,6 +75,22 @@ export async function deletePlan(id: number): Promise<void> {
   await apiClient.delete(`/admin/scheduled-test-plans/${id}`)
 }
 
+export const SCHEDULED_TEST_RUN_TIMEOUT_MS = 330000
+
+/**
+ * Execute a scheduled test plan immediately
+ * @param id - Plan ID
+ * @returns Executed test result
+ */
+export async function runNow(id: number): Promise<ScheduledTestResult> {
+  const { data } = await apiClient.post<ScheduledTestResult>(
+    `/admin/scheduled-test-plans/${id}/run`,
+    undefined,
+    { timeout: SCHEDULED_TEST_RUN_TIMEOUT_MS }
+  )
+  return data
+}
+
 /**
  * List test results for a plan
  * @param planId - Plan ID
@@ -77,8 +110,10 @@ export async function listResults(planId: number, limit?: number): Promise<Sched
 export const scheduledTestsAPI = {
   listByAccount,
   create,
+  batchCreate,
   update,
   delete: deletePlan,
+  runNow,
   listResults
 }
 

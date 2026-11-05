@@ -583,7 +583,8 @@ export default {
         probeUpstreamBilling: 'Probe Upstream Rate',
         resetStatusSuccess: 'Successfully reset {count} account(s) status',
         refreshTokenSuccess: 'Successfully refreshed {count} account(s) token',
-        partialSuccess: 'Partially completed: {success} succeeded, {failed} failed'
+        partialSuccess: 'Partially completed: {success} succeeded, {failed} failed',
+        batchSchedule: 'Batch test plans'
       },
       bulkEdit: {
         title: 'Bulk Edit Accounts',

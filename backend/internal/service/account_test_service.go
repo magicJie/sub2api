@@ -370,6 +370,21 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 		return s.sendErrorAndEnd(c, "Account not found")
 	}
 	bindAccountTestPlatform(c, account)
+	if _, detecting := ctx.Value(modelDetectionPromptKey{}).(string); detecting {
+		upstreamModel := account.GetMappedModel(modelID)
+		mediaModel := isOpenAIImageModel(modelID) || isImageGenerationModel(modelID) || grokDiagnosticIndependentCapability(modelID)
+		if !mediaModel && upstreamModel != modelID {
+			mediaModel = isOpenAIImageModel(upstreamModel) || isImageGenerationModel(upstreamModel) || grokDiagnosticIndependentCapability(upstreamModel)
+		}
+		if account.IsSyntheticUITest() || account.IsTypeSafe() || mediaModel {
+			return s.sendErrorAndEnd(c, "Model diagnostics require a real text-generation model")
+		}
+		// Adaptive connectivity tests concatenate several endpoints. Diagnostics
+		// need one independent answer per challenge, so use its Chat endpoint.
+		if account.RoutesProtocolByInbound() && account.GetAPIProtocol() == APIProtocolAdaptive {
+			return s.testCNProviderChatCompletionsConnection(c, account, modelID, prompt)
+		}
+	}
 
 	// Synthetic UI load-test accounts exercise the real SSE parsing and modal
 	// interactions, but intentionally do not send their placeholder credentials
@@ -569,6 +584,7 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create test payload")
 	}
+	applyModelDetectionPayload(ctx, payload)
 	payloadBytes, _ := json.Marshal(payload)
 
 	// Send test_start event
@@ -646,6 +662,7 @@ func (s *AccountTestService) testClaudeVertexServiceAccountConnection(c *gin.Con
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create test payload")
 	}
+	applyModelDetectionPayload(ctx, payload)
 	payloadBytes, _ := json.Marshal(payload)
 	vertexBody, err := buildVertexAnthropicRequestBody(payloadBytes)
 	if err != nil {
@@ -730,6 +747,7 @@ func (s *AccountTestService) testBedrockAccountConnection(c *gin.Context, ctx co
 		"max_tokens":  256,
 		"temperature": 1,
 	}
+	applyModelDetectionPayload(ctx, bedrockPayload)
 	bedrockBody, _ := json.Marshal(bedrockPayload)
 
 	// Use non-streaming endpoint (response is standard Claude JSON)
@@ -895,6 +913,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		upstreamTestModelID = normalizeOpenAIModelForUpstream(credentialAccount, testModelID)
 	}
 	payload := createOpenAITestPayload(upstreamTestModelID, isOAuth)
+	applyModelDetectionPayload(ctx, payload)
 	payloadBytes, _ := json.Marshal(payload)
 
 	// Send test_start event once. A task-invalid Agent Identity response may
@@ -1260,6 +1279,14 @@ func (s *AccountTestService) testGrokResponsesConnection(c *gin.Context, ctx con
 	payloadBytes, err := buildGrokQuotaProbeBody(testModelID)
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create Grok test payload")
+	}
+	if _, detecting := ctx.Value(modelDetectionPromptKey{}).(string); detecting {
+		payload := map[string]any{"model": testModelID, "input": "", "stream": true, "store": false}
+		applyModelDetectionPayload(ctx, payload)
+		payloadBytes, err = json.Marshal(payload)
+		if err != nil {
+			return s.sendErrorAndEnd(c, "Failed to encode Grok diagnostic payload")
+		}
 	}
 
 	if !agentIdentityTaskRecoveryWasTried(ctx) {
@@ -3306,6 +3333,10 @@ func (s *AccountTestService) sendErrorAndEnd(c *gin.Context, errorMsg string) er
 // RunTestBackground executes an account test in-memory (no real HTTP client),
 // capturing SSE output via httptest.NewRecorder, then parses the result.
 func (s *AccountTestService) RunTestBackground(ctx context.Context, accountID int64, modelID string) (*ScheduledTestResult, error) {
+	return s.runTestBackground(ctx, accountID, modelID, "")
+}
+
+func (s *AccountTestService) runTestBackground(ctx context.Context, accountID int64, modelID, prompt string) (*ScheduledTestResult, error) {
 	startedAt := time.Now()
 
 	w := httptest.NewRecorder()
@@ -3313,7 +3344,7 @@ func (s *AccountTestService) RunTestBackground(ctx context.Context, accountID in
 	ginCtx.Request = (&http.Request{}).WithContext(ctx)
 	ginCtx.Set(accountTestBackgroundKey, true)
 
-	testErr := s.TestAccountConnection(ginCtx, accountID, modelID, "", AccountTestModeDefault)
+	testErr := s.TestAccountConnection(ginCtx, accountID, modelID, prompt, AccountTestModeDefault)
 
 	finishedAt := time.Now()
 	body := w.Body.String()

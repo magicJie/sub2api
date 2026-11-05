@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -12,28 +13,47 @@ import (
 // ScheduledTestHandler handles admin scheduled-test-plan management.
 type ScheduledTestHandler struct {
 	scheduledTestSvc *service.ScheduledTestService
+	runner           *service.ScheduledTestRunnerService
 }
 
 // NewScheduledTestHandler creates a new ScheduledTestHandler.
-func NewScheduledTestHandler(scheduledTestSvc *service.ScheduledTestService) *ScheduledTestHandler {
-	return &ScheduledTestHandler{scheduledTestSvc: scheduledTestSvc}
+func NewScheduledTestHandler(scheduledTestSvc *service.ScheduledTestService, runner *service.ScheduledTestRunnerService) *ScheduledTestHandler {
+	return &ScheduledTestHandler{scheduledTestSvc: scheduledTestSvc, runner: runner}
 }
 
 type createScheduledTestPlanRequest struct {
-	AccountID      int64  `json:"account_id" binding:"required"`
-	ModelID        string `json:"model_id"`
-	CronExpression string `json:"cron_expression" binding:"required"`
-	Enabled        *bool  `json:"enabled"`
-	MaxResults     int    `json:"max_results"`
-	AutoRecover    *bool  `json:"auto_recover"`
+	AccountID        int64  `json:"account_id" binding:"required"`
+	ModelID          string `json:"model_id"`
+	TestType         string `json:"test_type"`
+	ExpectedModel    string `json:"expected_model"`
+	QualityThreshold *int   `json:"quality_threshold" binding:"omitempty,min=1,max=100"`
+	CronExpression   string `json:"cron_expression" binding:"required"`
+	Enabled          *bool  `json:"enabled"`
+	MaxResults       int    `json:"max_results"`
+	AutoRecover      *bool  `json:"auto_recover"`
+}
+
+type batchCreateScheduledTestPlanRequest struct {
+	AccountIDs       []int64 `json:"account_ids" binding:"required,min=1,max=1000,dive,gt=0"`
+	ModelID          string  `json:"model_id"`
+	TestType         string  `json:"test_type"`
+	ExpectedModel    string  `json:"expected_model"`
+	QualityThreshold *int    `json:"quality_threshold" binding:"omitempty,min=1,max=100"`
+	CronExpression   string  `json:"cron_expression" binding:"required"`
+	Enabled          *bool   `json:"enabled"`
+	MaxResults       int     `json:"max_results"`
+	AutoRecover      bool    `json:"auto_recover"`
 }
 
 type updateScheduledTestPlanRequest struct {
-	ModelID        string `json:"model_id"`
-	CronExpression string `json:"cron_expression"`
-	Enabled        *bool  `json:"enabled"`
-	MaxResults     int    `json:"max_results"`
-	AutoRecover    *bool  `json:"auto_recover"`
+	ModelID          *string `json:"model_id"`
+	TestType         *string `json:"test_type"`
+	ExpectedModel    *string `json:"expected_model"`
+	QualityThreshold *int    `json:"quality_threshold"`
+	CronExpression   *string `json:"cron_expression"`
+	Enabled          *bool   `json:"enabled"`
+	MaxResults       *int    `json:"max_results"`
+	AutoRecover      *bool   `json:"auto_recover"`
 }
 
 // ListByAccount GET /admin/accounts/:id/scheduled-test-plans
@@ -63,9 +83,14 @@ func (h *ScheduledTestHandler) Create(c *gin.Context) {
 	plan := &service.ScheduledTestPlan{
 		AccountID:      req.AccountID,
 		ModelID:        req.ModelID,
+		TestType:       req.TestType,
+		ExpectedModel:  req.ExpectedModel,
 		CronExpression: req.CronExpression,
 		Enabled:        true,
 		MaxResults:     req.MaxResults,
+	}
+	if req.QualityThreshold != nil {
+		plan.QualityThreshold = *req.QualityThreshold
 	}
 	if req.Enabled != nil {
 		plan.Enabled = *req.Enabled
@@ -80,6 +105,32 @@ func (h *ScheduledTestHandler) Create(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, created)
+}
+
+// BatchCreate POST /admin/scheduled-test-plans/batch
+func (h *ScheduledTestHandler) BatchCreate(c *gin.Context) {
+	var req batchCreateScheduledTestPlanRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	plan := service.ScheduledTestPlan{
+		ModelID: req.ModelID, TestType: req.TestType, ExpectedModel: req.ExpectedModel,
+		CronExpression: req.CronExpression, MaxResults: req.MaxResults,
+		Enabled: true, AutoRecover: req.AutoRecover,
+	}
+	if req.QualityThreshold != nil {
+		plan.QualityThreshold = *req.QualityThreshold
+	}
+	if req.Enabled != nil {
+		plan.Enabled = *req.Enabled
+	}
+	result, err := h.scheduledTestSvc.BatchCreatePlans(c.Request.Context(), req.AccountIDs, plan)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, result)
 }
 
 // Update PUT /admin/scheduled-test-plans/:id
@@ -102,17 +153,26 @@ func (h *ScheduledTestHandler) Update(c *gin.Context) {
 		return
 	}
 
-	if req.ModelID != "" {
-		existing.ModelID = req.ModelID
+	if req.ModelID != nil {
+		existing.ModelID = *req.ModelID
 	}
-	if req.CronExpression != "" {
-		existing.CronExpression = req.CronExpression
+	if req.TestType != nil {
+		existing.TestType = *req.TestType
+	}
+	if req.ExpectedModel != nil {
+		existing.ExpectedModel = *req.ExpectedModel
+	}
+	if req.QualityThreshold != nil {
+		existing.QualityThreshold = *req.QualityThreshold
+	}
+	if req.CronExpression != nil {
+		existing.CronExpression = *req.CronExpression
 	}
 	if req.Enabled != nil {
 		existing.Enabled = *req.Enabled
 	}
-	if req.MaxResults > 0 {
-		existing.MaxResults = req.MaxResults
+	if req.MaxResults != nil {
+		existing.MaxResults = *req.MaxResults
 	}
 	if req.AutoRecover != nil {
 		existing.AutoRecover = *req.AutoRecover
@@ -160,4 +220,29 @@ func (h *ScheduledTestHandler) ListResults(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, results)
+}
+
+// RunNow POST /admin/scheduled-test-plans/:id/run executes and persists a plan immediately.
+func (h *ScheduledTestHandler) RunNow(c *gin.Context) {
+	planID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || planID <= 0 {
+		response.BadRequest(c, "invalid plan id")
+		return
+	}
+
+	plan, err := h.scheduledTestSvc.GetPlan(c.Request.Context(), planID)
+	if err != nil {
+		response.NotFound(c, "plan not found")
+		return
+	}
+	result, err := h.runner.RunPlan(c.Request.Context(), plan)
+	if err != nil {
+		if errors.Is(err, service.ErrScheduledTestAlreadyRunning) {
+			response.Error(c, http.StatusConflict, err.Error())
+			return
+		}
+		response.InternalError(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, result)
 }

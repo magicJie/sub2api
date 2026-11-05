@@ -58,6 +58,7 @@ func (s *AccountTestService) testKiroAccountConnection(c *gin.Context, account *
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create Kiro test payload")
 	}
+	applyModelDetectionPayload(ctx, testPayload)
 	testBody, err := json.Marshal(testPayload)
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to encode Kiro test payload")

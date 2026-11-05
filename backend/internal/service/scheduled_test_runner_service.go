@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -11,6 +12,8 @@ import (
 )
 
 const scheduledTestDefaultMaxWorkers = 10
+
+var ErrScheduledTestAlreadyRunning = errors.New("test plan is already running")
 
 // ScheduledTestRunnerService periodically scans due test plans and executes them.
 type ScheduledTestRunnerService struct {
@@ -23,6 +26,7 @@ type ScheduledTestRunnerService struct {
 	cron      *cron.Cron
 	startOnce sync.Once
 	stopOnce  sync.Once
+	running   sync.Map
 }
 
 // NewScheduledTestRunnerService creates a new runner.
@@ -120,30 +124,47 @@ func (s *ScheduledTestRunnerService) runScheduled() {
 }
 
 func (s *ScheduledTestRunnerService) runOnePlan(ctx context.Context, plan *ScheduledTestPlan) {
-	result, err := s.accountTestSvc.RunTestBackground(ctx, plan.AccountID, plan.ModelID)
+	if _, err := s.RunPlan(ctx, plan); err != nil && !errors.Is(err, ErrScheduledTestAlreadyRunning) {
+		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d execution failed: %v", plan.ID, err)
+	}
+}
+
+// RunPlan executes and persists the same path for manual and scheduled runs.
+// Slow upstreams can span several scheduler ticks; one plan runs once at a time.
+func (s *ScheduledTestRunnerService) RunPlan(ctx context.Context, plan *ScheduledTestPlan) (*ScheduledTestResult, error) {
+	if _, loaded := s.running.LoadOrStore(plan.ID, struct{}{}); loaded {
+		return nil, ErrScheduledTestAlreadyRunning
+	}
+	defer s.running.Delete(plan.ID)
+	runCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	var result *ScheduledTestResult
+	var err error
+	if plan.TestType == "" || plan.TestType == "connectivity" {
+		result, err = s.accountTestSvc.RunTestBackground(runCtx, plan.AccountID, plan.ModelID)
+	} else {
+		result, err = s.accountTestSvc.runModelDetection(runCtx, plan)
+	}
 	if err != nil {
-		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d RunTestBackground error: %v", plan.ID, err)
-		return
+		return nil, err
 	}
-
-	if err := s.scheduledSvc.SaveResult(ctx, plan.ID, plan.MaxResults, result); err != nil {
-		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d SaveResult error: %v", plan.ID, err)
+	// A cancelled upstream request is still useful diagnostic evidence.
+	saveCtx, saveCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer saveCancel()
+	if err := s.scheduledSvc.SaveResult(saveCtx, plan.ID, plan.MaxResults, result); err != nil {
+		return nil, err
 	}
-
-	// Auto-recover account if test succeeded and auto_recover is enabled.
-	if result.Status == "success" && plan.AutoRecover {
-		s.tryRecoverAccount(ctx, plan.AccountID, plan.ID)
-	}
-
-	nextRun, err := computeNextRun(plan.CronExpression, time.Now())
+	nextRun, err := computeNextRun(plan.CronExpression, result.FinishedAt)
 	if err != nil {
-		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d computeNextRun error: %v", plan.ID, err)
-		return
+		return nil, err
 	}
-
-	if err := s.planRepo.UpdateAfterRun(ctx, plan.ID, time.Now(), nextRun); err != nil {
-		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d UpdateAfterRun error: %v", plan.ID, err)
+	if err := s.planRepo.UpdateAfterRun(saveCtx, plan.ID, result.FinishedAt, nextRun); err != nil {
+		return nil, err
 	}
+	if result.Status == "success" && plan.AutoRecover && (plan.TestType == "" || plan.TestType == "connectivity") {
+		s.tryRecoverAccount(saveCtx, plan.AccountID, plan.ID)
+	}
+	return result, nil
 }
 
 // tryRecoverAccount attempts to recover an account from recoverable runtime state.
