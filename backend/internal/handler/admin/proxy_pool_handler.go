@@ -600,9 +600,10 @@ func (h *ProxyPoolHandler) ResumeAccount(c *gin.Context) {
 }
 
 type ProxyMigrateResultDTO struct {
-	AccountID int64  `json:"account_id"`
-	ToProxyID *int64 `json:"to_proxy_id"`
-	Error     string `json:"error,omitempty"`
+	AccountID    int64  `json:"account_id"`
+	ToProxyID    *int64 `json:"to_proxy_id"`
+	Error        string `json:"error,omitempty"`
+	ErrorMessage string `json:"error_message,omitempty"`
 }
 
 // MigrateProxyAccounts POST /api/v1/admin/proxies/:id/migrate-accounts
@@ -619,7 +620,7 @@ func (h *ProxyPoolHandler) MigrateProxyAccounts(c *gin.Context) {
 	}
 	out := make([]ProxyMigrateResultDTO, 0, len(results))
 	for _, r := range results {
-		out = append(out, ProxyMigrateResultDTO{AccountID: r.AccountID, ToProxyID: r.ToProxyID, Error: r.Error})
+		out = append(out, ProxyMigrateResultDTO{AccountID: r.AccountID, ToProxyID: r.ToProxyID, Error: r.Error, ErrorMessage: r.ErrorMessage})
 	}
 	response.Success(c, out)
 }

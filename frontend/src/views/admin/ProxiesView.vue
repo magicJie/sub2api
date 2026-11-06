@@ -978,7 +978,7 @@
       @close="closeQualityReportDialog"
     >
       <div v-if="qualityReport" class="space-y-4">
-        <!-- Header Summary & Scoped Admission Status -->
+        <!-- Header Summary & Advisory Recommendation Status -->
         <div class="rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-dark-600 dark:bg-dark-700">
           <div class="flex flex-col gap-3">
             <div class="min-w-0 flex-1">
@@ -1000,8 +1000,13 @@
           </div>
 
           <div class="mt-2.5 rounded border border-gray-200 bg-white px-3 py-2 text-xs text-gray-700 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-200">
-            <span class="font-medium">{{ t('admin.proxies.qualityAdmissionLabel') }}:</span>
-            <span class="ml-1">{{ qualityReportAdmissionReason(qualityReport) }}</span>
+            <div>
+              <span class="font-medium">{{ t('admin.proxies.qualityAdmissionLabel') }}:</span>
+              <span class="ml-1">{{ qualityReportAdmissionReason(qualityReport) }}</span>
+            </div>
+            <div class="mt-1 text-gray-500 dark:text-gray-400">
+              {{ t('admin.proxies.qualityAdvisoryNotice') }}
+            </div>
           </div>
 
           <!-- Explicit Unauthenticated Boundary vs Real Login/Inference Notice -->
@@ -1262,12 +1267,12 @@
                   </span>
                 </div>
                 <div v-else-if="typeof qualityReport.reputation?.risk_score === 'number'" class="text-right">
-                  <div class="text-xl font-semibold" :class="qualityReport.reputation.risk_score >= 50 ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-white'">
+                  <div class="text-xl font-semibold" :class="qualityReport.reputation.risk_score >= 50 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-900 dark:text-white'">
                     {{ t('admin.proxies.qualityRiskScoreDisplay', { score: qualityReport.reputation.risk_score }) }}
                   </div>
                   <span
                     class="badge mt-0.5"
-                    :class="qualityReport.reputation.risk_score >= 50 ? 'badge-danger' : 'badge-success'"
+                    :class="qualityReport.reputation.risk_score >= 50 ? 'badge-warning' : 'badge-success'"
                   >
                     {{ qualityReport.reputation.risk_score >= 50 ? t('admin.proxies.qualityRiskLevelHigh') : t('admin.proxies.qualityRiskLevelLow') }}
                   </span>
@@ -2630,7 +2635,7 @@ const qualityOverallLabel = (status?: string, row?: Proxy) => {
 const qualityReportBaseClass = (report: ProxyQualityCheckResult) => {
   if (isReputationUnknown(report)) return 'badge-warning'
   if (report.base_eligible) return 'badge-success'
-  return 'badge-danger'
+  return 'badge-warning'
 }
 
 const qualityReportBaseLabel = (report: ProxyQualityCheckResult) => {
@@ -2641,7 +2646,7 @@ const qualityReportBaseLabel = (report: ProxyQualityCheckResult) => {
 
 const qualityReportEligibleClass = (report: ProxyQualityCheckResult) => {
   if (isReputationUnknown(report)) return 'badge-warning'
-  if (!report.base_eligible) return 'badge-danger'
+  if (!report.base_eligible) return 'badge-warning'
   if (!hasAnyAIAssessments(report)) return 'badge-warning'
   const { eligible, total } = getQualityAITargetCounts(report)
   if (eligible === 0 || !report.eligible) return 'badge-warning'
@@ -2689,11 +2694,11 @@ const QUALITY_BACKEND_REASON_KEYS: Record<string, string> = {
   '代理探测服务未配置': 'proberNotConfigured',
   '静态落地代理 host 必须是出口 IP，域名无法确认固定出口': 'exitHostNotIP',
   '实际出口与登记落地 IP 不一致': 'exitIPMismatch',
-  'IP 风险证据不足，请重新检测后分配': 'reputationInsufficient',
-  'IP 风险达到拒绝准入阈值 50': 'reputationHighRisk',
-  '基础出口或出口身份校验未通过': 'baseCheckFailed',
-  '基础 IP 检查通过；按账号实际使用的 AI 路径分别决定准入': 'basePassScopedAdmission',
-  '基础 IP 检查通过，AI 路径尚无可达候选；请查看各服务证据并复检': 'basePassNoAITargets',
+  'IP 风险证据不足，暂不推荐优先分配': 'reputationInsufficient',
+  'IP 风险达到高风险参考阈值 50，建议优先选择低风险 IP': 'reputationHighRisk',
+  '基础出口或出口身份校验未通过，暂不推荐优先分配': 'baseCheckFailed',
+  '基础 IP 检查通过；按账号实际使用的 AI 路径分别给出推荐': 'basePassScopedAdmission',
+  '基础 IP 检查通过，AI 路径尚无推荐；可查看各服务证据并复检': 'basePassNoAITargets',
   '当前多源 IP 风险证据可用': 'reputationCurrentOk',
   '出口不是有效公网 IP': 'reputationNotPublicIP',
   '无法构建 IP 信誉检测请求': 'reputationReqBuildErr',
@@ -2730,7 +2735,7 @@ const translateQualityReason = (rawReason?: string, evidence?: string, status?: 
   if (trimmed && QUALITY_BACKEND_REASON_KEYS[trimmed]) {
     return t(`admin.proxies.qualityReasonMap.${QUALITY_BACKEND_REASON_KEYS[trimmed]}`)
   }
-  const highRiskMatch = trimmed.match(/^IP 风险 (\d+)\/100，达到拒绝准入阈值 50；信号：(.*)$/)
+  const highRiskMatch = trimmed.match(/^IP 风险 (\d+)\/100，达到高风险参考阈值 50，建议优先选择低风险 IP；信号：(.*)$/)
   if (highRiskMatch) {
     const signals = highRiskMatch[2]?.trim()
     const base = `${t('admin.proxies.qualityRiskScoreDisplay', { score: highRiskMatch[1] })} · ${t('admin.proxies.qualityReasonMap.reputationHighRisk')}`
@@ -2924,15 +2929,15 @@ const buildQualityAIProviderGroups = (report: ProxyQualityCheckResult): QualityA
       }
 
       let candidateLabel = t('admin.proxies.qualityTargetCandidateNo')
-      let candidateBadgeClass = 'badge-danger'
+      let candidateBadgeClass = 'badge-warning'
       if (!hasAssessment) {
         candidateLabel = t('admin.proxies.qualityTargetCandidateMissing')
         candidateBadgeClass = 'badge-warning'
       } else if (eligible) {
         candidateLabel = t('admin.proxies.qualityTargetCandidateYes')
         candidateBadgeClass = 'badge-success'
-      } else if (status === 'rate_limited' || status === 'account_limited' || status === 'unknown') {
-        candidateBadgeClass = 'badge-warning'
+      } else if (status === 'restricted' || status === 'challenge' || status === 'unavailable') {
+        candidateBadgeClass = 'badge-danger'
       }
 
       const url = item?.url || spec.defaultUrl
@@ -2994,7 +2999,7 @@ const buildQualityAIProviderGroups = (report: ProxyQualityCheckResult): QualityA
       badgeClass = 'badge-success'
     } else if (eligibleCount === 0) {
       summaryText = t('admin.proxies.qualityPlatformSummaryNone', { total })
-      badgeClass = hardFailCount > 0 || !baseOk ? 'badge-danger' : 'badge-warning'
+      badgeClass = hardFailCount > 0 ? 'badge-danger' : 'badge-warning'
     }
 
     return {

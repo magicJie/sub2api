@@ -78,6 +78,27 @@
         </div>
       </div>
 
+      <div
+        v-if="migrateFailures[inc.id]?.length"
+        data-test="incident-migrate-failures"
+        role="alert"
+        class="mt-2 rounded-md border border-red-200 bg-red-50 p-2.5 text-xs text-red-800 dark:border-red-800/60 dark:bg-red-950/40 dark:text-red-200"
+      >
+        <ul class="space-y-1">
+          <li
+            v-for="failure in migrateFailures[inc.id]"
+            :key="failure.account_id"
+            data-test="incident-migrate-failure-item"
+            class="break-all"
+          >
+            <span class="font-medium">{{ failure.account_name || `#${failure.account_id}` }}</span>
+            <span v-if="failure.account_name" class="ml-1 text-red-600 dark:text-red-300">#{{ failure.account_id }}</span>
+            <span class="mx-1">:</span>
+            <span>{{ failure.message }}</span>
+          </li>
+        </ul>
+      </div>
+
       <div v-if="inc.accounts.length > 0" class="mt-2 overflow-x-auto">
         <table class="min-w-full text-sm">
           <thead class="text-left text-xs text-gray-500 dark:text-dark-300">
@@ -167,6 +188,13 @@ const showResolved = ref(false)
 const busyKey = ref('')
 const confirmMigrate = ref<ProxyEgressIncident | null>(null)
 const replace = reactive({ open: false, accountId: null as number | null, accountName: '' })
+
+interface MigrateFailureItem {
+  account_id: number
+  account_name: string
+  message: string
+}
+const migrateFailures = reactive<Record<number, MigrateFailureItem[]>>({})
 
 const config = ref<ProxyEgressHealthConfig>({ enabled: true, interval_seconds: 120, fail_threshold: 3 })
 const configForm = reactive<ProxyEgressHealthConfig>({ ...config.value })
@@ -283,9 +311,27 @@ const migrate = () => {
   const inc = confirmMigrate.value
   confirmMigrate.value = null
   if (!inc) return
+  const accountNames = new Map(inc.accounts.map((a) => [a.account_id, a.account_name]))
+  delete migrateFailures[inc.id]
   return run(`migrate-${inc.id}`, async () => {
     const results = await proxyPoolAPI.migrateProxyAccounts(inc.proxy_id)
-    const failed = results.filter((r) => r.error).length
+    const failures = results
+      .filter((r) => Boolean(r.error || r.error_message))
+      .map((r) => {
+        const direct = r.error_message?.trim()
+        const reason = r.error?.trim() ?? ''
+        return {
+          account_id: r.account_id,
+          account_name: accountNames.get(r.account_id) ?? '',
+          message:
+            direct ||
+            extractI18nErrorMessage({ reason, message: reason }, t, 'admin.proxyPools.errors', reason || t('admin.proxyPools.loadFailed'))
+        }
+      })
+    if (failures.length > 0) {
+      migrateFailures[inc.id] = failures
+    }
+    const failed = failures.length
     const msg = t('admin.proxyPools.migrated', { ok: results.length - failed, failed })
     if (failed > 0) appStore.showError(msg)
     else appStore.showSuccess(msg)

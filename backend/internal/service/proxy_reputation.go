@@ -141,7 +141,7 @@ func assessProxyIPReputation(data *ipokReputationResponse, addr netip.Addr, now 
 	for _, source := range assessment.CurrentSources {
 		current[source] = true
 	}
-	// Admission needs both anonymity and abuse coverage, not just geolocation.
+	// Recommendations need both anonymity and abuse coverage, not just geolocation.
 	// Vendor names do not establish independence of their underlying databases.
 	anonymousCoverage, abuseCoverage := false, false
 	for _, source := range result.Sources {
@@ -230,7 +230,7 @@ func proxyQualityFingerprint(proxy *Proxy) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func proxyQualityAdmissible(proxy *Proxy, info *ProxyLatencyInfo, now time.Time) bool {
+func proxyQualityRecommended(proxy *Proxy, info *ProxyLatencyInfo, now time.Time) bool {
 	if info == nil || !info.Success || !info.QualityBaseEligible ||
 		info.QualityCheckedAt == nil || *info.QualityCheckedAt > now.Unix() ||
 		now.Sub(time.Unix(*info.QualityCheckedAt, 0)) >= proxyQualityMaxAge ||
@@ -245,8 +245,8 @@ func proxyQualityAdmissible(proxy *Proxy, info *ProxyLatencyInfo, now time.Time)
 	return err == nil && host.Unmap() == exit.Unmap()
 }
 
-func proxyQualityAdmissibleForTarget(proxy *Proxy, info *ProxyLatencyInfo, target string, now time.Time) bool {
-	if !proxyQualityAdmissible(proxy, info, now) {
+func proxyQualityRecommendedForTarget(proxy *Proxy, info *ProxyLatencyInfo, target string, now time.Time) bool {
+	if !proxyQualityRecommended(proxy, info, now) {
 		return false
 	}
 	if target == "" {

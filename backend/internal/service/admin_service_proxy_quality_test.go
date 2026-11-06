@@ -124,13 +124,13 @@ func TestProxyAISeparateServiceEligibility(t *testing.T) {
 	proxy := &Proxy{Host: "8.8.8.8", Protocol: "socks5", Port: 1080}
 	checked := now.Unix()
 	info := &ProxyLatencyInfo{Success: true, IPAddress: proxy.Host, QualityBaseEligible: result.BaseEligible, QualityAIPlatforms: result.AIPlatforms, QualityCheckedAt: &checked, QualityValidUntil: reputation.ValidUntil, QualityFingerprint: proxyQualityFingerprint(proxy)}
-	require.True(t, proxyQualityAdmissibleForTarget(proxy, info, "gemini", now))
-	require.True(t, proxyQualityAdmissibleForTarget(proxy, info, "openai", now))
-	require.False(t, proxyQualityAdmissibleForTarget(proxy, info, "anthropic", now))
-	require.False(t, proxyQualityAdmissibleForTarget(proxy, info, "chatgpt", now))
-	require.False(t, proxyQualityAdmissibleForTarget(proxy, info, "gemini_code_assist", now))
+	require.True(t, proxyQualityRecommendedForTarget(proxy, info, "gemini", now))
+	require.True(t, proxyQualityRecommendedForTarget(proxy, info, "openai", now))
+	require.False(t, proxyQualityRecommendedForTarget(proxy, info, "anthropic", now))
+	require.False(t, proxyQualityRecommendedForTarget(proxy, info, "chatgpt", now))
+	require.False(t, proxyQualityRecommendedForTarget(proxy, info, "gemini_code_assist", now))
 	info.QualityAIPlatforms = nil
-	require.False(t, proxyQualityAdmissibleForTarget(proxy, info, "gemini", now))
+	require.False(t, proxyQualityRecommendedForTarget(proxy, info, "gemini", now))
 }
 
 func TestProxyAIWebRedirectEvidence(t *testing.T) {

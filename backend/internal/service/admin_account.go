@@ -542,8 +542,8 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	if err != nil {
 		return nil, err
 	}
-	if input.ProxyPoolID == nil {
-		if err := s.checkNewAccountProxy(ctx, account, nil, account.ProxyID); err != nil {
+	if input.ProxyPoolID == nil && account.ProxyID != nil && *account.ProxyID > 0 {
+		if err := s.checkAccountProxyAvailable(ctx, *account.ProxyID); err != nil {
 			return nil, err
 		}
 	}
@@ -626,7 +626,6 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	}
 	previousProbeIdentity := upstreamBillingProbeIdentity(account)
 	previousProxyID := account.ProxyID
-	previousProxyTarget := proxyQualityTargetForAccount(account)
 	previousOllamaUsageIdentity := ollamaCloudUsageIdentity(account)
 	previousKiroUsageIdentity := kiroUsageIdentity(account) // Kiro（fork）
 	previousOpenCodeUsageIdentity := openCodeGoUsageIdentity(account)
@@ -810,12 +809,10 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		account.Proxy = nil // 清除关联对象，防止 GORM Save 时根据 Proxy.ID 覆盖 ProxyID
 	}
 	if !account.IsCredentialShadow() {
-		currentProxyID := previousProxyID
-		if previousProxyTarget != proxyQualityTargetForAccount(account) {
-			currentProxyID = nil
-		}
-		if err := s.checkNewAccountProxy(ctx, account, currentProxyID, account.ProxyID); err != nil {
-			return nil, err
+		if proxyIDChanged(previousProxyID, account.ProxyID) && account.ProxyID != nil && *account.ProxyID > 0 {
+			if err := s.checkAccountProxyAvailable(ctx, *account.ProxyID); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if !reflect.DeepEqual(previousProbeIdentity, upstreamBillingProbeIdentity(account)) && account.Extra != nil {
@@ -1116,39 +1113,13 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 			return nil, err
 		}
 	}
-	if input.ProxyID != nil || len(input.Credentials) > 0 {
-		evidenceByProxy := make(map[int64]struct {
-			proxy   *Proxy
-			quality *ProxyLatencyInfo
-		})
-		now := time.Now()
+	if input.ProxyID != nil && *input.ProxyID > 0 {
 		for _, account := range cachedTargets {
-			if account == nil || account.IsCredentialShadow() {
-				continue
-			}
-			target := *account
-			if len(input.Credentials) > 0 {
-				target.Credentials = mergeMap(account.Credentials, input.Credentials)
-			}
-			requested := account.ProxyID
-			if input.ProxyID != nil {
-				requested = input.ProxyID
-			}
-			if requested == nil || *requested <= 0 ||
-				(!proxyIDChanged(account.ProxyID, requested) && proxyQualityTargetForAccount(account) == proxyQualityTargetForAccount(&target)) {
-				continue
-			}
-			evidence, ok := evidenceByProxy[*requested]
-			if !ok {
-				var err error
-				evidence.proxy, evidence.quality, err = s.accountProxyAdmissionEvidence(ctx, *requested, now)
-				if err != nil {
+			if account != nil && proxyIDChanged(account.ProxyID, input.ProxyID) {
+				if err := s.checkAccountProxyAvailable(ctx, *input.ProxyID); err != nil {
 					return nil, err
 				}
-				evidenceByProxy[*requested] = evidence
-			}
-			if !proxyQualityAdmissibleForTarget(evidence.proxy, evidence.quality, proxyQualityTargetForAccount(&target), now) {
-				return nil, ErrProxyPoolProxyNotInPool
+				break
 			}
 		}
 	}

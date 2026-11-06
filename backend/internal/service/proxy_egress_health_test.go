@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/proxychain"
 	"github.com/stretchr/testify/require"
 )
@@ -51,6 +52,7 @@ type healthPoolRepo struct {
 	incidents   map[int64]*ProxyEgressIncident // proxy id -> 未恢复故障
 	records     []ProxyEgressIncidentAccount
 	nextID      int64
+	unlockLog   []int64
 }
 
 func (r *healthPoolRepo) ListPools(context.Context) ([]ProxyPool, error) {
@@ -59,6 +61,22 @@ func (r *healthPoolRepo) ListPools(context.Context) ([]ProxyPool, error) {
 		out = append(out, *p)
 	}
 	return out, nil
+}
+
+func (r *healthPoolRepo) UnlockBinding(_ context.Context, accountID int64) error {
+	r.unlockLog = append(r.unlockLog, accountID)
+	delete(r.locked, accountID)
+	return nil
+}
+
+func (r *healthPoolRepo) LockBinding(ctx context.Context, accountID, poolID int64) error {
+	if err := r.proxyPoolRepoStub.LockBinding(ctx, accountID, poolID); err != nil {
+		return err
+	}
+	if r.locked != nil {
+		r.locked[accountID] = true
+	}
+	return nil
 }
 
 func (r *healthPoolRepo) ListProxyAccountIDs(_ context.Context, proxyID int64) ([]int64, error) {
@@ -388,6 +406,30 @@ func TestMigrateProxyAccounts(t *testing.T) {
 	}
 }
 
+func TestMigrateProxyAccountsErrorMessage(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		err     error
+		reason  string
+		message string
+	}{
+		{"structured", ErrProxyPoolBindingNotFound, ErrProxyPoolBindingNotFound.Reason, infraerrors.Message(ErrProxyPoolBindingNotFound)},
+		{"ordinary", errors.New("binding store unavailable"), "binding store unavailable", "binding store unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, repo, _, _ := healthFixture(t)
+			repo.lockErr = tc.err
+			results, err := svc.pool.MigrateProxyAccounts(context.Background(), 1)
+			require.NoError(t, err)
+			require.Len(t, results, 3)
+			for _, result := range results {
+				require.Equal(t, tc.reason, result.Error)
+				require.Equal(t, tc.message, result.ErrorMessage)
+			}
+		})
+	}
+}
+
 type healthProxyRepo struct {
 	ProxyRepository
 	active []ProxyWithAccountCount
@@ -530,9 +572,9 @@ func TestProbeProxyChain_GroupDownReturnsReadableError(t *testing.T) {
 	require.NotContains(t, err.Error(), "proxychain-unavailable")
 }
 
-func TestProxyReplacementQualityAdmission(t *testing.T) {
+func TestProxyReplacementQualityIsAdvisory(t *testing.T) {
 	ctx := context.Background()
-	for _, tc := range poolQualityAdmissionCases() {
+	for _, tc := range poolQualityEvidenceCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			svc, repo, accounts, _ := healthFixture(t)
 			cache := svc.pool.latencyCache.(*poolQualityCache)
@@ -548,67 +590,72 @@ func TestProxyReplacementQualityAdmission(t *testing.T) {
 			if tc.cacheError {
 				cache.err = errors.New("cache offline")
 			}
-			unavailable := tc.noCache || tc.cacheError
 			candidates, err := svc.pool.ReplaceCandidates(ctx, 11)
-			switch {
-			case tc.admissible:
-				require.NoError(t, err)
-				require.Len(t, candidates, 1)
-				require.Equal(t, int64(2), candidates[0].Proxy.ID)
-			case unavailable:
-				require.ErrorIs(t, err, ErrProxyPoolQualityUnavailable)
-				require.Empty(t, candidates)
-			default:
-				require.NoError(t, err)
-				require.Empty(t, candidates)
-			}
-
+			require.NoError(t, err)
+			require.Len(t, candidates, 1)
+			require.Equal(t, int64(2), candidates[0].Proxy.ID)
 			target := int64(2)
 			proxy, err := svc.pool.ReplaceAccountProxy(ctx, 11, &target, 0)
-			switch {
-			case tc.admissible:
-				require.NoError(t, err)
-				require.Equal(t, int64(2), proxy.ID)
-			case unavailable:
-				require.ErrorIs(t, err, ErrProxyPoolQualityUnavailable)
-			default:
-				require.ErrorIs(t, err, ErrProxyPoolProxyNotInPool)
+			require.NoError(t, err)
+			require.Equal(t, int64(2), proxy.ID)
+			require.Equal(t, &target, accounts.accounts[11].ProxyID)
+			source := int64(1)
+			accounts.accounts[11].ProxyID = &source
+			accounts.accounts[11].Schedulable = false
+			repo.records = append(repo.records, ProxyEgressIncidentAccount{IncidentID: 1, AccountID: 11, Action: ProxyIncidentActionPaused})
+			results, err := svc.pool.MigrateProxyAccounts(ctx, 1)
+			require.NoError(t, err)
+			require.Len(t, results, 3)
+			for _, result := range results {
+				require.Empty(t, result.Error)
+				require.Empty(t, result.ErrorMessage)
+				require.Equal(t, &target, result.ToProxyID)
+				require.Equal(t, &target, accounts.accounts[result.AccountID].ProxyID)
 			}
-
-			proxy, err = svc.pool.ReplaceAccountProxy(ctx, 12, nil, 0)
-			switch {
-			case tc.admissible:
-				require.NoError(t, err)
-				require.Equal(t, int64(2), proxy.ID)
-			case unavailable:
-				require.ErrorIs(t, err, ErrProxyPoolQualityUnavailable)
-			default:
-				require.ErrorIs(t, err, ErrProxyPoolNoAvailable)
-			}
-			if !tc.admissible {
-				require.Equal(t, int64(1), *accounts.accounts[11].ProxyID)
-				require.Equal(t, int64(1), *accounts.accounts[12].ProxyID)
-				require.Empty(t, repo.lockLog)
-				require.Empty(t, repo.records)
-			}
+			require.True(t, accounts.accounts[11].Schedulable)
+			require.NotNil(t, repo.records[0].ResumedAt)
 		})
 	}
 }
 
-func TestProxyReplacementCountryLookupFailsClosed(t *testing.T) {
-	svc, _, accounts, _ := healthFixture(t)
+func TestProxyReplacementCountryLookupIsBestEffort(t *testing.T) {
+	svc, _, _, _ := healthFixture(t)
 	cache := svc.pool.latencyCache.(*poolQualityCache)
 	cache.err, cache.failAt = errors.New("cache unavailable during country lookup"), 2
 	candidates, err := svc.pool.ReplaceCandidates(context.Background(), 11)
-	require.ErrorIs(t, err, ErrProxyPoolQualityUnavailable)
-	require.Empty(t, candidates)
-	require.Equal(t, int64(1), *accounts.accounts[11].ProxyID)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Equal(t, int64(2), candidates[0].Proxy.ID)
 }
 
-func TestProxyReplacementUsesAccountAccessPath(t *testing.T) {
+func TestProxyReplacementListPrefersSameCountryWithoutChangingAutomaticChoice(t *testing.T) {
+	svc, repo, _, _ := healthFixture(t)
+	third := poolMember(3, StatusActive, nil)
+	repo.members = append(repo.members, third)
+	cache := svc.pool.latencyCache.(*poolQualityCache)
+	cache.infos[1].CountryCode = "US"
+	cache.infos[2].CountryCode = "DE"
+	cache.infos[3] = poolQualityFixture([]ProxyPoolMember{third}).infos[3]
+	cache.infos[3].CountryCode = "US"
+	cache.infos[3].QualityBaseEligible = false
+
+	candidates, err := svc.pool.ReplaceCandidates(context.Background(), 11)
+	require.NoError(t, err)
+	require.Len(t, candidates, 2)
+	require.Equal(t, int64(3), candidates[0].Proxy.ID)
+	require.True(t, candidates[0].SameCountry)
+	require.Equal(t, int64(2), candidates[1].Proxy.ID)
+	require.False(t, candidates[1].SameCountry)
+
+	chosen, err := svc.pool.ReplaceAccountProxy(context.Background(), 11, nil, 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), chosen.ID)
+}
+
+func TestProxyReplacementRecommendationsFollowAccountAccessPath(t *testing.T) {
 	for _, tc := range []struct {
 		name, platform, kind, oauthType string
-		allowed                         bool
+		recommended                     bool
 	}{
 		{"Claude", "anthropic", "oauth", "", false},
 		{"OpenAI API", "openai", "apikey", "", true},
@@ -617,45 +664,91 @@ func TestProxyReplacementUsesAccountAccessPath(t *testing.T) {
 		{"Gemini Code Assist", "gemini", "oauth", "code_assist", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			for _, manual := range []bool{false, true} {
-				svc, repo, accounts, _ := healthFixture(t)
-				account := accounts.accounts[11]
-				account.Platform, account.Type = tc.platform, tc.kind
-				account.Credentials = map[string]any{"oauth_type": tc.oauthType}
-				if tc.oauthType == "code_assist" {
-					account.Credentials["project_id"] = "project"
-				}
-				repo.policies = append(repo.policies, churnPolicy(tc.platform, 5))
-				cache := svc.pool.latencyCache.(*poolQualityCache)
-				info := accountAdmissionService(nil, 2).proxyLatencyCache.(*accountAdmissionCache).info
-				info.QualityFingerprint = proxyQualityFingerprint(&repo.members[1].Proxy)
-				info.IPAddress = repo.members[1].Proxy.Host
-				cache.infos[2] = info
-				candidates, err := svc.pool.ReplaceCandidates(context.Background(), 11)
-				require.NoError(t, err)
-				if tc.allowed {
-					require.Len(t, candidates, 1)
-				} else {
-					require.Empty(t, candidates)
-				}
-				var preferred *int64
-				if manual {
-					id := int64(2)
-					preferred = &id
-				}
-				proxy, err := svc.pool.ReplaceAccountProxy(context.Background(), 11, preferred, 0)
-				if tc.allowed {
-					require.NoError(t, err)
-					require.Equal(t, int64(2), proxy.ID)
-				} else {
-					expected := ErrProxyPoolNoAvailable
-					if manual {
-						expected = ErrProxyPoolProxyNotInPool
-					}
-					require.ErrorIs(t, err, expected)
-					require.Equal(t, int64(1), *account.ProxyID)
-				}
+			svc, repo, accounts, _ := healthFixture(t)
+			account := accounts.accounts[11]
+			account.Platform, account.Type = tc.platform, tc.kind
+			account.Credentials = map[string]any{"oauth_type": tc.oauthType}
+			if tc.oauthType == "code_assist" {
+				account.Credentials["project_id"] = "project"
 			}
+			repo.policies = append(repo.policies, churnPolicy(tc.platform, 5))
+			third := poolMember(3, StatusActive, nil)
+			repo.members = append(repo.members, third)
+			cache := svc.pool.latencyCache.(*poolQualityCache)
+			cache.infos[2].QualityBaseEligible = false
+			info := accountAdmissionService(nil, 3).proxyLatencyCache.(*accountAdmissionCache).info
+			info.QualityFingerprint = proxyQualityFingerprint(&third.Proxy)
+			cache.infos[3] = info
+			candidates, err := svc.pool.ReplaceCandidates(context.Background(), 11)
+			require.NoError(t, err)
+			require.Len(t, candidates, 2)
+			want := int64(2)
+			if tc.recommended {
+				want = 3
+			}
+			require.Equal(t, want, candidates[0].Proxy.ID)
+			proxy, err := svc.pool.ReplaceAccountProxy(context.Background(), 11, nil, 0)
+			require.NoError(t, err)
+			require.Equal(t, want, proxy.ID)
 		})
 	}
+}
+
+func TestProxyReplacementUnavailableKeepsExistingErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*healthPoolRepo)
+	}{
+		{"no members", func(repo *healthPoolRepo) { repo.members = nil }},
+		{"inactive", func(repo *healthPoolRepo) { repo.members[1].Proxy.Status = StatusDisabled }},
+		{"expired", func(repo *healthPoolRepo) {
+			past := time.Now().Add(-time.Minute)
+			repo.members[1].Proxy.ExpiresAt = &past
+		}},
+		{"capacity", func(repo *healthPoolRepo) {
+			repo.policies[1] = churnPolicy("opencode_go", 1)
+			repo.members[1].HistoryCounts["opencode_go"] = 1
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, repo, _, _ := healthFixture(t)
+			tc.change(repo)
+			delete(svc.pool.latencyCache.(*poolQualityCache).infos, 2)
+			candidates, err := svc.pool.ReplaceCandidates(context.Background(), 11)
+			require.NoError(t, err)
+			require.Empty(t, candidates)
+			_, err = svc.pool.ReplaceAccountProxy(context.Background(), 11, nil, 0)
+			require.ErrorIs(t, err, ErrProxyPoolNoAvailable)
+			target := int64(2)
+			_, err = svc.pool.ReplaceAccountProxy(context.Background(), 11, &target, 0)
+			require.ErrorIs(t, err, ErrProxyPoolProxyNotInPool)
+		})
+	}
+}
+
+func TestProxyReplacementHonorsPoorerExplicitTarget(t *testing.T) {
+	svc, repo, accounts, _ := healthFixture(t)
+	ctx := context.Background()
+	third := poolMember(3, StatusActive, nil)
+	repo.members = append(repo.members, third)
+	cache := svc.pool.latencyCache.(*poolQualityCache)
+	cache.infos[3] = poolQualityFixture([]ProxyPoolMember{third}).infos[3]
+	cache.infos[2].QualityBaseEligible = false
+	candidates, err := svc.pool.ReplaceCandidates(ctx, 11)
+	require.NoError(t, err)
+	require.Len(t, candidates, 2)
+	require.Equal(t, int64(3), candidates[0].Proxy.ID)
+
+	target := int64(2)
+	proxy, err := svc.pool.ReplaceAccountProxy(ctx, 11, &target, 0)
+	require.NoError(t, err)
+	require.Equal(t, target, proxy.ID)
+	require.Equal(t, &target, accounts.accounts[11].ProxyID)
+
+	repo.policies[1] = churnPolicy("opencode_go", 1)
+	repo.members[2].HistoryCounts["opencode_go"] = 1
+	target = 3
+	_, err = svc.pool.ReplaceAccountProxy(ctx, 11, &target, 0)
+	require.ErrorIs(t, err, ErrProxyPoolProxyNotInPool)
+	require.Equal(t, int64(2), *accounts.accounts[11].ProxyID)
 }

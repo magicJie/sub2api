@@ -2,17 +2,14 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"net/url"
 	"strings"
 	"time"
-
-	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
-// proxyQualityTargetForAccount follows the account's actual upstream access path. An empty
-// target admits by exit identity and reputation only, for unprobed providers.
-// Unsupported access modes use a target with no assessment and fail closed.
+// proxyQualityTargetForAccount follows the account's actual upstream access path for
+// quality recommendations. Unprobed providers use exit identity and reputation only;
+// unsupported access modes have no matching recommendation.
 func proxyQualityTargetForAccount(account *Account) string {
 	if account == nil {
 		return ""
@@ -83,42 +80,17 @@ func proxyQualityTargetForAccount(account *Account) string {
 	return target
 }
 
-// checkNewAccountProxy checks newly attached proxies. A changed upstream target
-// is a new access binding; callers pass no current proxy to recheck that target.
-func (s *adminServiceImpl) checkNewAccountProxy(ctx context.Context, account *Account, current, requested *int64) error {
-	if requested == nil || *requested <= 0 || !proxyIDChanged(current, requested) {
-		return nil
-	}
-	now := time.Now()
-	proxy, info, err := s.accountProxyAdmissionEvidence(ctx, *requested, now)
-	if err != nil {
-		return err
-	}
-	if !proxyQualityAdmissibleForTarget(proxy, info, proxyQualityTargetForAccount(account), now) {
-		summary := "full quality evidence is missing, expired, or unsuitable for this account"
-		if info != nil && strings.TrimSpace(info.QualitySummary) != "" {
-			summary = info.QualitySummary
-		}
-		return infraerrors.BadRequest(ErrProxyPoolProxyNotInPool.Reason,
-			fmt.Sprintf("proxy #%d cannot be assigned to this account: %s. Run a full quality check on the Proxies page and select an eligible proxy; a connection test alone is insufficient", proxy.ID, summary))
-	}
-	return nil
-}
-
-func (s *adminServiceImpl) accountProxyAdmissionEvidence(ctx context.Context, proxyID int64, now time.Time) (*Proxy, *ProxyLatencyInfo, error) {
-	if s.proxyRepo == nil || s.proxyLatencyCache == nil {
-		return nil, nil, ErrProxyPoolQualityUnavailable
+// checkAccountProxyAvailable validates the resource selected at the account boundary.
+func (s *adminServiceImpl) checkAccountProxyAvailable(ctx context.Context, proxyID int64) error {
+	if s.proxyRepo == nil {
+		return ErrProxyPoolUnavailable
 	}
 	proxy, err := s.proxyRepo.GetByID(ctx, proxyID)
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
-	if proxy == nil || proxy.Status != StatusActive || proxy.IsExpired(now) {
-		return nil, nil, ErrProxyPoolProxyNotInPool
+	if proxy == nil || !proxy.IsActive() || proxy.IsExpired(time.Now()) {
+		return ErrProxyPoolProxyNotInPool
 	}
-	infos, err := s.proxyLatencyCache.GetProxyLatencies(ctx, []int64{proxyID})
-	if err != nil {
-		return nil, nil, ErrProxyPoolQualityUnavailable.WithCause(err)
-	}
-	return proxy, infos[proxyID], nil
+	return nil
 }

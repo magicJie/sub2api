@@ -232,6 +232,7 @@ export interface ProxyMigrateResult {
   account_id: number
   to_proxy_id: number | null
   error?: string
+  error_message?: string
 }
 
 export async function listIncidents(): Promise<ProxyEgressIncident[]> {

@@ -178,20 +178,6 @@ func (s *adminServiceImpl) UpdateProxy(ctx context.Context, id int64, input *Upd
 	if err := applyProxyChainUpdate(ctx, proxy, &input.ProxyChainUpdateInput); err != nil { // 链式代理（fork）
 		return nil, err
 	}
-	poolChanged := (prev.PoolID == nil) != (proxy.PoolID == nil) ||
-		(prev.PoolID != nil && proxy.PoolID != nil && *prev.PoolID != *proxy.PoolID)
-	if input.PoolIDSet && poolChanged {
-		if s.proxyLatencyCache == nil {
-			return nil, ErrProxyPoolQualityUnavailable
-		}
-		infos, err := s.proxyLatencyCache.GetProxyLatencies(ctx, []int64{proxy.ID})
-		if err != nil {
-			return nil, ErrProxyPoolQualityUnavailable
-		}
-		if !proxyQualityAdmissible(proxy, infos[proxy.ID], time.Now()) {
-			return nil, ErrProxyPoolProxyNotInPool
-		}
-	}
 
 	if err := s.proxyRepo.Update(ctx, proxy); err != nil {
 		return nil, err
@@ -408,7 +394,7 @@ func (s *adminServiceImpl) CheckProxyQuality(ctx context.Context, id int64) (*Pr
 		result.WarnCount++
 	} else if *result.Reputation.RiskScore >= 50 {
 		reputationItem.Status = "fail"
-		reputationItem.Message = fmt.Sprintf("IP 风险 %d/100，达到拒绝准入阈值 50；信号：%s", *result.Reputation.RiskScore, strings.Join(result.Reputation.Signals, ", "))
+		reputationItem.Message = fmt.Sprintf("IP 风险 %d/100，达到高风险参考阈值 50，建议优先选择低风险 IP；信号：%s", *result.Reputation.RiskScore, strings.Join(result.Reputation.Signals, ", "))
 		result.FailedCount++
 	} else {
 		reputationItem.Message = fmt.Sprintf("IP 风险 %d/100；%s", *result.Reputation.RiskScore, result.Reputation.Reason)
@@ -490,13 +476,13 @@ func finalizeProxyQualityResult(result *ProxyQualityCheckResult) {
 	switch {
 	case result.Reputation == nil || result.Reputation.Status != "current" || result.Reputation.RiskScore == nil:
 		score = 0
-		result.AdmissionReason = "IP 风险证据不足，请重新检测后分配"
+		result.AdmissionReason = "IP 风险证据不足，暂不推荐优先分配"
 		if result.Reputation != nil {
 			result.AdmissionReason = result.Reputation.Reason
 		}
 	case *result.Reputation.RiskScore >= 50:
 		score = min(score, 100-*result.Reputation.RiskScore)
-		result.AdmissionReason = "IP 风险达到拒绝准入阈值 50"
+		result.AdmissionReason = "IP 风险达到高风险参考阈值 50，建议优先选择低风险 IP"
 	default:
 		score = min(score, 100-*result.Reputation.RiskScore)
 		result.BaseEligible = proxyQualityBaseConnectivityPass(result)
@@ -505,14 +491,14 @@ func finalizeProxyQualityResult(result *ProxyQualityCheckResult) {
 				result.BaseEligible = false
 			}
 		}
-		result.AdmissionReason = "基础出口或出口身份校验未通过"
+		result.AdmissionReason = "基础出口或出口身份校验未通过，暂不推荐优先分配"
 		if result.BaseEligible {
-			result.AdmissionReason = "基础 IP 检查通过；按账号实际使用的 AI 路径分别决定准入"
+			result.AdmissionReason = "基础 IP 检查通过；按账号实际使用的 AI 路径分别给出推荐"
 		}
 	}
 	assessProxyAIPlatforms(result)
 	if result.BaseEligible && !result.Eligible {
-		result.AdmissionReason = "基础 IP 检查通过，AI 路径尚无可达候选；请查看各服务证据并复检"
+		result.AdmissionReason = "基础 IP 检查通过，AI 路径尚无推荐；可查看各服务证据并复检"
 	}
 	result.Score = score
 	result.Grade = proxyQualityGrade(score)
@@ -693,11 +679,11 @@ func (s *adminServiceImpl) attachProxyLatency(ctx context.Context, proxies []Pro
 		proxies[i].QualityGrade = info.QualityGrade
 		proxies[i].QualitySummary = info.QualitySummary
 		proxies[i].QualityChecked = info.QualityCheckedAt
-		if info.QualityStatus == "healthy" && !proxyQualityAdmissible(&proxies[i].Proxy, info, time.Now()) {
+		if info.QualityStatus == "healthy" && !proxyQualityRecommended(&proxies[i].Proxy, info, time.Now()) {
 			proxies[i].QualityStatus = "warn"
 			proxies[i].QualityScore = nil
 			proxies[i].QualityGrade = "Unknown"
-			proxies[i].QualitySummary = "质量证据已失效或代理配置已变化，请重新检测后分配"
+			proxies[i].QualitySummary = "质量证据已失效或代理配置已变化，暂不推荐优先分配；可重新检测更新推荐"
 		}
 	}
 }

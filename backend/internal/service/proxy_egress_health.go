@@ -534,8 +534,8 @@ type ProxyReplaceCandidate struct {
 	SameCountry   bool
 }
 
-// ReplaceCandidates 列出账号可换的落地 IP：策略允许的池内、质量准入通过、对该平台可用、排除当前代理和有未恢复故障的代理，
-// 与当前 IP 同国家（来自探测缓存）的优先，其余按策略排序。
+// ReplaceCandidates 列出策略允许、资源可用且无未恢复故障的其他落地 IP。
+// 同国家候选优先展示，其余按当前质量推荐与平台策略排序。
 func (s *ProxyPoolService) ReplaceCandidates(ctx context.Context, accountID int64) ([]ProxyReplaceCandidate, error) {
 	account, err := s.accountRepo.GetByID(ctx, accountID)
 	if err != nil {
@@ -548,15 +548,12 @@ func (s *ProxyPoolService) ReplaceCandidates(ctx context.Context, accountID int6
 	if account.ProxyID != nil {
 		exclude = *account.ProxyID
 	}
-	cands, err := s.replaceCandidates(ctx, account, exclude)
+	cands, err := s.replaceCandidates(ctx, account, exclude, nil)
 	if err != nil {
 		return nil, err
 	}
 	if exclude > 0 && len(cands) > 0 {
-		infos, err := s.qualitySnapshots(ctx, []int64{exclude})
-		if err != nil {
-			return nil, err
-		}
+		infos := s.qualitySnapshots(ctx, []int64{exclude})
 		if current := infos[exclude]; current != nil && current.CountryCode != "" {
 			for i := range cands {
 				cands[i].SameCountry = cands[i].Country == current.CountryCode
@@ -567,7 +564,7 @@ func (s *ProxyPoolService) ReplaceCandidates(ctx context.Context, accountID int6
 	return cands, nil
 }
 
-func (s *ProxyPoolService) replaceCandidates(ctx context.Context, account *Account, excludeProxyID int64) ([]ProxyReplaceCandidate, error) {
+func (s *ProxyPoolService) replaceCandidates(ctx context.Context, account *Account, excludeProxyID int64, targetProxyID *int64) ([]ProxyReplaceCandidate, error) {
 	policies, err := s.loadPolicies(ctx)
 	if err != nil {
 		return nil, err
@@ -606,6 +603,9 @@ func (s *ProxyPoolService) replaceCandidates(ctx context.Context, account *Accou
 		}
 		for j := range ms {
 			m := ms[j]
+			if targetProxyID != nil && m.Proxy.ID != *targetProxyID {
+				continue
+			}
 			if m.Proxy.ID == excludeProxyID || broken[m.Proxy.ID] || !proxyPoolMemberAvailable(policy, &m, now) {
 				continue
 			}
@@ -613,23 +613,23 @@ func (s *ProxyPoolService) replaceCandidates(ctx context.Context, account *Accou
 			members = append(members, m)
 		}
 	}
-	ids := make([]int64, len(members))
-	for i := range members {
-		ids[i] = members[i].Proxy.ID
-	}
-	infos, err := s.qualitySnapshots(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-	sortProxyPoolCandidates(policies, policy, members)
-	target := proxyQualityTargetForAccount(account)
-	for _, m := range members {
-		if !proxyQualityAdmissibleForTarget(&m.Proxy, infos[m.Proxy.ID], target, now) {
-			continue
+	var infos map[int64]*ProxyLatencyInfo
+	if targetProxyID == nil {
+		ids := make([]int64, len(members))
+		for i := range members {
+			ids[i] = members[i].Proxy.ID
 		}
+		infos = s.qualitySnapshots(ctx, ids)
+		rankProxyPoolCandidates(policies, policy, members, infos, proxyQualityTargetForAccount(account), now)
+	}
+	for _, m := range members {
 		pool := poolOf[m.Proxy.ID]
+		var country string
+		if info := infos[m.Proxy.ID]; info != nil {
+			country = info.CountryCode
+		}
 		out = append(out, ProxyReplaceCandidate{Proxy: m.Proxy, PoolID: pool.ID, PoolName: pool.Name,
-			HistoryCounts: m.HistoryCounts, ActiveCounts: m.ActiveCounts, Country: infos[m.Proxy.ID].CountryCode})
+			HistoryCounts: m.HistoryCounts, ActiveCounts: m.ActiveCounts, Country: country})
 	}
 	return out, nil
 }
@@ -650,23 +650,17 @@ func (s *ProxyPoolService) ReplaceAccountProxy(ctx context.Context, accountID in
 	if excludeProxyID == 0 && account.ProxyID != nil {
 		excludeProxyID = *account.ProxyID
 	}
-	cands, err := s.replaceCandidates(ctx, account, excludeProxyID)
+	cands, err := s.replaceCandidates(ctx, account, excludeProxyID, targetProxyID)
 	if err != nil {
 		return nil, err
 	}
-	var chosen *ProxyReplaceCandidate
-	for i := range cands {
-		if targetProxyID == nil || cands[i].Proxy.ID == *targetProxyID {
-			chosen = &cands[i]
-			break
-		}
-	}
-	if chosen == nil {
+	if len(cands) == 0 {
 		if targetProxyID != nil {
 			return nil, ErrProxyPoolProxyNotInPool
 		}
 		return nil, ErrProxyPoolNoAvailable
 	}
+	chosen := &cands[0]
 	// 系统换绑：先解锁当前绑定，否则触发器会把新绑定沿用原池锁定（来源池不对）。
 	if err := s.repo.UnlockBinding(ctx, accountID); err != nil && !errors.Is(err, ErrProxyPoolBindingNotFound) {
 		return nil, err
@@ -729,9 +723,10 @@ func (s *ProxyPoolService) resumeIfPaused(ctx context.Context, accountID int64) 
 
 // ProxyMigrateResult 是批量迁移的单账号结果。
 type ProxyMigrateResult struct {
-	AccountID int64
-	ToProxyID *int64
-	Error     string
+	AccountID    int64
+	ToProxyID    *int64
+	Error        string
+	ErrorMessage string
 }
 
 // MigrateProxyAccounts 把挂在某落地代理上的账号逐个换到其他可用 IP（各自按平台策略选），失败的保留原状。
@@ -751,6 +746,12 @@ func (s *ProxyPoolService) MigrateProxyAccounts(ctx context.Context, proxyID int
 			res.Error = infraerrors.Reason(err)
 			if res.Error == "" {
 				res.Error = err.Error()
+			}
+			var appErr *infraerrors.ApplicationError
+			if errors.As(err, &appErr) {
+				res.ErrorMessage = infraerrors.Message(err)
+			} else {
+				res.ErrorMessage = err.Error()
 			}
 		} else {
 			res.ToProxyID = &p.ID

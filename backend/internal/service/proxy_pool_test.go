@@ -339,13 +339,12 @@ func poolQualityFixture(members []ProxyPoolMember) *poolQualityCache {
 	return cache
 }
 
-func poolQualityAdmissionCases() []struct {
+func poolQualityEvidenceCases() []struct {
 	name       string
 	change     func(*ProxyLatencyInfo)
 	missing    bool
 	noCache    bool
 	cacheError bool
-	admissible bool
 } {
 	return []struct {
 		name       string
@@ -353,11 +352,7 @@ func poolQualityAdmissionCases() []struct {
 		missing    bool
 		noCache    bool
 		cacheError bool
-		admissible bool
 	}{
-		{name: "legacy", change: func(info *ProxyLatencyInfo) {
-			info.QualityBaseEligible, info.QualityFingerprint = false, ""
-		}},
 		{name: "unknown reputation", change: func(info *ProxyLatencyInfo) {
 			info.QualityBaseEligible, info.QualityStatus, info.QualityGrade = false, "warn", "Unknown"
 		}},
@@ -374,9 +369,6 @@ func poolQualityAdmissionCases() []struct {
 		{name: "failed connectivity", change: func(info *ProxyLatencyInfo) {
 			info.Success = false
 		}},
-		{name: "unrelated platform challenge", admissible: true, change: func(info *ProxyLatencyInfo) {
-			info.QualityStatus = "challenge"
-		}},
 		{name: "changed configuration", change: func(info *ProxyLatencyInfo) {
 			info.QualityFingerprint = "outdated"
 		}},
@@ -386,13 +378,13 @@ func poolQualityAdmissionCases() []struct {
 		{name: "missing snapshot", missing: true},
 		{name: "missing cache", noCache: true},
 		{name: "cache read failure", cacheError: true},
-		{name: "fresh low risk", admissible: true},
+		{name: "fresh low risk"},
 	}
 }
 
-func TestProxyPoolQualityAdmission(t *testing.T) {
+func TestProxyPoolQualityIsAdvisory(t *testing.T) {
 	ctx := context.Background()
-	for _, tc := range poolQualityAdmissionCases() {
+	for _, tc := range poolQualityEvidenceCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			pool := &ProxyPool{ID: 1}
 			repo := &proxyPoolRepoStub{
@@ -414,69 +406,42 @@ func TestProxyPoolQualityAdmission(t *testing.T) {
 			if tc.cacheError {
 				cache.err = errors.New("cache offline")
 			}
-			unavailable := tc.noCache || tc.cacheError
-			check := func(proxy *Proxy, err error, strict bool) {
+			check := func(proxy *Proxy, err error) {
 				t.Helper()
-				if tc.admissible {
-					require.NoError(t, err)
-					require.Equal(t, int64(1), proxy.ID)
-				} else if unavailable {
-					require.ErrorIs(t, err, ErrProxyPoolQualityUnavailable)
-					require.Nil(t, proxy)
-				} else {
-					expected := ErrProxyPoolNoAvailable
-					if strict {
-						expected = ErrProxyPoolProxyNotInPool
-					}
-					require.ErrorIs(t, err, expected)
-					require.Nil(t, proxy)
-				}
+				require.NoError(t, err)
+				require.Equal(t, int64(1), proxy.ID)
 			}
 			proxy, err := svc.PreviewProxy(ctx, 1, &Account{Platform: "kiro"}, nil)
-			check(proxy, err, false)
+			check(proxy, err)
 			id := int64(1)
 			proxy, err = svc.pickProxy(ctx, pool, &Account{Platform: "kiro"}, nil, 0, &id, true, proxyQualityTargetForAccount(&Account{Platform: "kiro"}))
-			check(proxy, err, true)
+			check(proxy, err)
 			proxy, err = svc.pickProxy(ctx, pool, &Account{Platform: "kiro"}, nil, 0, &id, false, proxyQualityTargetForAccount(&Account{Platform: "kiro"}))
-			check(proxy, err, false)
+			check(proxy, err)
 
 			input := &CreateAccountInput{Platform: "kiro", ProxyPoolID: &pool.ID}
 			release, err := beginProxyPoolAccountCreate(ctx, input, nil)
-			if tc.admissible {
-				require.NoError(t, err)
-				release()
-				require.Equal(t, int64(1), *input.ProxyID)
-			} else {
-				require.Error(t, err)
-				require.Nil(t, input.ProxyID)
-			}
+			require.NoError(t, err)
+			release()
+			require.Equal(t, int64(1), *input.ProxyID)
 
 			accounts := &healthAccountRepo{accounts: map[int64]*Account{10: {ID: 10, Platform: "kiro"}}}
 			svc.accountRepo = accounts
 			proxy, err = svc.AssignAccount(ctx, 10, 1)
-			check(proxy, err, false)
-			if !tc.admissible {
-				require.Nil(t, accounts.accounts[10].ProxyID)
-				require.Empty(t, repo.lockLog)
-			}
+			check(proxy, err)
+			require.Equal(t, &proxy.ID, accounts.accounts[10].ProxyID)
+			require.Equal(t, []int64{10}, repo.lockLog)
 
+			reads := cache.reads
 			err = svc.AssignProxies(ctx, 1, []int64{1})
-			if tc.admissible {
-				require.NoError(t, err)
-				require.Equal(t, [][]int64{{1}}, repo.assignments)
-			} else {
-				expected := ErrProxyPoolProxyNotInPool
-				if unavailable {
-					expected = ErrProxyPoolQualityUnavailable
-				}
-				require.ErrorIs(t, err, expected)
-				require.Empty(t, repo.assignments)
-			}
+			require.NoError(t, err)
+			require.Equal(t, [][]int64{{1}}, repo.assignments)
+			require.Equal(t, reads, cache.reads)
 		})
 	}
 }
 
-func TestProxyPoolPreferredUnverifiedFallsBack(t *testing.T) {
+func TestProxyPoolAutomaticPrefersRecommendedAndHonorsExplicitChoice(t *testing.T) {
 	repo := &proxyPoolRepoStub{
 		pools:    map[int64]*ProxyPool{1: {ID: 1}},
 		policies: []ProxyIPPolicy{churnPolicy("kiro", 5)},
@@ -484,12 +449,20 @@ func TestProxyPoolPreferredUnverifiedFallsBack(t *testing.T) {
 	}
 	svc := withProxyPoolService(t, repo)
 	svc.latencyCache.(*poolQualityCache).infos[1].QualityBaseEligible = false
-	preferred := int64(1)
-	proxy, err := svc.pickProxy(context.Background(), repo.pools[1], &Account{Platform: "kiro"}, nil, 0, &preferred, false, proxyQualityTargetForAccount(&Account{Platform: "kiro"}))
+	proxy, err := svc.PreviewProxy(context.Background(), 1, &Account{Platform: "kiro"}, nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), proxy.ID)
-	_, err = svc.pickProxy(context.Background(), repo.pools[1], &Account{Platform: "kiro"}, nil, 0, &preferred, true, proxyQualityTargetForAccount(&Account{Platform: "kiro"}))
-	require.ErrorIs(t, err, ErrProxyPoolProxyNotInPool)
+	preferred := int64(1)
+	proxy, err = svc.pickProxy(context.Background(), repo.pools[1], &Account{Platform: "kiro"}, nil, 0, &preferred, false, proxyQualityTargetForAccount(&Account{Platform: "kiro"}))
+	require.NoError(t, err)
+	require.Equal(t, int64(1), proxy.ID)
+	proxy, err = svc.pickProxy(context.Background(), repo.pools[1], &Account{Platform: "kiro"}, nil, 0, &preferred, true, proxyQualityTargetForAccount(&Account{Platform: "kiro"}))
+	require.NoError(t, err)
+	require.Equal(t, int64(1), proxy.ID)
+	svc.latencyCache.(*poolQualityCache).infos[2].QualityBaseEligible = false
+	proxy, err = svc.PreviewProxy(context.Background(), 1, &Account{Platform: "kiro"}, nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), proxy.ID)
 }
 
 func TestProxyPoolAssignProxiesValidatesEveryMemberAcrossPools(t *testing.T) {
@@ -503,87 +476,47 @@ func TestProxyPoolAssignProxiesValidatesEveryMemberAcrossPools(t *testing.T) {
 	cache := poolQualityFixture([]ProxyPoolMember{one, two})
 	svc.latencyCache = cache
 	cache.infos[2].QualityBaseEligible = false
-	require.ErrorIs(t, svc.AssignProxies(context.Background(), 2, []int64{1, 2}), ErrProxyPoolProxyNotInPool)
-	require.Empty(t, repo.assignments, "validate the complete selection before moving any proxy")
-	require.Equal(t, map[int64]int{1: 1, 2: 1}, repo.memberReads)
-
-	cache.infos[2].QualityBaseEligible = true
 	require.ErrorIs(t, svc.AssignProxies(context.Background(), 2, []int64{1, 99}), ErrProxyPoolProxyNotInPool)
 	require.Empty(t, repo.assignments, "nonexistent IDs must fail the entire move")
 	require.NoError(t, svc.AssignProxies(context.Background(), 2, []int64{1, 2}))
 	require.Equal(t, [][]int64{{1, 2}}, repo.assignments)
 }
 
-func TestProxyPoolAdmissionUsesAccountAccessPath(t *testing.T) {
-	ctx := context.Background()
+func TestProxyPoolRecommendationsFollowAccountAccessPath(t *testing.T) {
 	for _, tc := range []struct {
 		name, platform, kind, oauthType string
-		allowed                         bool
+		recommended                     bool
 	}{
-		{"Claude denied", "anthropic", "oauth", "", false},
-		{"Gemini API allowed", "gemini", "apikey", "", true},
-		{"Gemini Studio allowed", "gemini", "oauth", "ai_studio", true},
-		{"Gemini Code Assist denied", "gemini", "oauth", "code_assist", false},
-		{"OpenAI API allowed", "openai", "apikey", "", true},
-		{"ChatGPT denied", "openai", "oauth", "", false},
-		{"unmapped base only", "kiro", "oauth", "", true},
+		{"Claude", "anthropic", "oauth", "", false},
+		{"Gemini API", "gemini", "apikey", "", true},
+		{"Gemini Studio", "gemini", "oauth", "ai_studio", true},
+		{"Gemini Code Assist", "gemini", "oauth", "code_assist", false},
+		{"OpenAI API", "openai", "apikey", "", true},
+		{"ChatGPT", "openai", "oauth", "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			member := poolMember(9, StatusActive, nil)
 			repo := &proxyPoolRepoStub{
 				pools:    map[int64]*ProxyPool{1: {ID: 1}},
 				policies: []ProxyIPPolicy{churnPolicy(tc.platform, 5)},
-				members:  []ProxyPoolMember{member},
+				members:  []ProxyPoolMember{poolMember(8, StatusActive, nil), poolMember(9, StatusActive, nil)},
 			}
 			svc := withProxyPoolService(t, repo)
+			cache := svc.latencyCache.(*poolQualityCache)
+			cache.infos[8].QualityBaseEligible = false
 			info := accountAdmissionService(nil, 9).proxyLatencyCache.(*accountAdmissionCache).info
-			info.QualityFingerprint = proxyQualityFingerprint(&member.Proxy)
-			svc.latencyCache = &poolQualityCache{infos: map[int64]*ProxyLatencyInfo{9: info}}
-			account := &Account{ID: 10, Platform: tc.platform, Type: tc.kind, Credentials: map[string]any{"oauth_type": tc.oauthType}}
+			info.QualityFingerprint = proxyQualityFingerprint(&repo.members[1].Proxy)
+			cache.infos[9] = info
+			account := &Account{Platform: tc.platform, Type: tc.kind, Credentials: map[string]any{"oauth_type": tc.oauthType}}
 			if tc.oauthType == "code_assist" {
 				account.Credentials["project_id"] = "project"
 			}
-			svc.accountRepo = &healthAccountRepo{accounts: map[int64]*Account{10: account}}
-			check := func(proxy *Proxy, err error, strict bool) {
-				t.Helper()
-				if tc.allowed {
-					require.NoError(t, err)
-					require.Equal(t, int64(9), proxy.ID)
-				} else {
-					expected := ErrProxyPoolNoAvailable
-					if strict {
-						expected = ErrProxyPoolProxyNotInPool
-					}
-					require.ErrorIs(t, err, expected)
-					require.Nil(t, proxy)
-				}
+			proxy, err := svc.PreviewProxy(context.Background(), 1, account, nil)
+			require.NoError(t, err)
+			want := int64(8)
+			if tc.recommended {
+				want = 9
 			}
-			proxy, err := svc.PreviewProxy(ctx, 1, account, nil)
-			check(proxy, err, false)
-			id := int64(9)
-			proxy, err = svc.pickProxy(ctx, repo.pools[1], account, nil, 0, &id, true, proxyQualityTargetForAccount(account))
-			check(proxy, err, true)
-			proxy, err = svc.pickProxy(ctx, repo.pools[1], account, nil, 0, &id, false, proxyQualityTargetForAccount(account))
-			check(proxy, err, false)
-			proxy, err = svc.AssignAccount(ctx, 10, 1)
-			check(proxy, err, false)
-			input := &CreateAccountInput{Platform: tc.platform, Type: tc.kind, Credentials: account.Credentials, ProxyPoolID: &repo.pools[1].ID, ProxyID: &id}
-			release, err := beginProxyPoolAccountCreate(ctx, input, nil)
-			if tc.allowed {
-				require.NoError(t, err)
-				release()
-			} else {
-				require.ErrorIs(t, err, ErrProxyPoolNoAvailable)
-			}
-			// Pool inventory has no account surface and admits by the base evidence.
-			require.NoError(t, svc.AssignProxies(ctx, 1, []int64{9}))
-			info.QualityAIPlatforms = nil
-			_, err = svc.PreviewProxy(ctx, 1, account, nil)
-			if tc.platform == "kiro" {
-				require.NoError(t, err)
-			} else {
-				require.ErrorIs(t, err, ErrProxyPoolNoAvailable, "legacy snapshots cannot authorize mapped targets")
-			}
+			require.Equal(t, want, proxy.ID)
 		})
 	}
 }
@@ -624,50 +557,10 @@ func TestGeminiProxyPreviewDistinguishesKnownProjectFromBootstrap(t *testing.T) 
 			require.Equal(t, tc.wantProxyID, proxy.ID)
 			if tc.wantProxyID != 1 {
 				cache.infos[tc.wantProxyID].QualityAIPlatforms = nil
-				_, err = svc.PreviewProxy(context.Background(), 1, account, nil)
-				require.ErrorIs(t, err, ErrProxyPoolNoAvailable, "other-surface evidence cannot authorize the preview")
+				proxy, err = svc.PreviewProxy(context.Background(), 1, account, nil)
+				require.NoError(t, err)
+				require.Equal(t, int64(1), proxy.ID)
 			}
-		})
-	}
-}
-
-func TestGeminiSuccessfulPreviewDoesNotAuthorizeFinalAccountPath(t *testing.T) {
-	for _, tc := range []struct {
-		name          string
-		preview       map[string]any
-		final         map[string]any
-		previewTarget string
-	}{
-		{"Code Assist discovery returns no project", map[string]any{"oauth_type": "code_assist"}, map[string]any{"oauth_type": "code_assist", "project_id": ""}, "gemini_code_assist"},
-		{"Studio final credentials gain project", map[string]any{"oauth_type": "ai_studio"}, map[string]any{"oauth_type": "ai_studio", "project_id": "project"}, "gemini"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			member := poolMember(9, StatusActive, nil)
-			repo := &proxyPoolRepoStub{
-				pools:    map[int64]*ProxyPool{1: {ID: 1}},
-				policies: []ProxyIPPolicy{churnPolicy("gemini", 5)},
-				members:  []ProxyPoolMember{member},
-			}
-			svc := withProxyPoolService(t, repo)
-			info := svc.latencyCache.(*poolQualityCache).infos[9]
-			info.QualityAIPlatforms = []ProxyAIPlatformAssessment{{Target: tc.previewTarget, Status: "reachable", Eligible: true}}
-			preview, err := svc.PreviewProxy(context.Background(), 1, &Account{Platform: "gemini", Type: "oauth", Credentials: tc.preview}, nil)
-			require.NoError(t, err)
-			require.Equal(t, int64(9), preview.ID)
-
-			input := &CreateAccountInput{Platform: "gemini", Type: "oauth", Credentials: tc.final, ProxyPoolID: &repo.pools[1].ID, ProxyID: &preview.ID}
-			release, err := beginProxyPoolAccountCreate(context.Background(), input, nil)
-			require.ErrorIs(t, err, ErrProxyPoolNoAvailable)
-			require.Nil(t, release)
-
-			accounts := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{}}
-			admin := accountAdmissionService(&upstreamBillingProbeAdminRepo{accounts}, preview.ID)
-			admin.proxyLatencyCache = &accountAdmissionCache{info: info}
-			_, err = admin.CreateAccount(context.Background(), &CreateAccountInput{
-				Platform: "gemini", Type: "oauth", Credentials: tc.final, ProxyID: &preview.ID, SkipDefaultGroupBind: true,
-			})
-			require.ErrorIs(t, err, ErrProxyPoolProxyNotInPool)
-			require.Empty(t, accounts.accounts)
 		})
 	}
 }

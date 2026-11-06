@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -80,40 +81,40 @@ func TestAdminProxyPartialUpdateValidatesMergedFallback(t *testing.T) {
 	}
 }
 
-func TestAdminProxyMoveRequiresCurrentQuality(t *testing.T) {
-	for _, tc := range []struct {
-		name                                       string
-		missingCache, changedCredentials, eligible bool
-	}{
-		{name: "missing cache", missingCache: true},
-		{name: "changed credentials", changedCredentials: true},
-		{name: "verified move", eligible: true},
-	} {
+func TestAdminProxyMoveQualityIsAdvisory(t *testing.T) {
+	for _, tc := range poolQualityEvidenceCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			one, two := int64(1), int64(2)
 			original := &Proxy{ID: 9, Protocol: "socks5", Host: "8.8.8.8", Port: 1080, Status: StatusActive, PoolID: &one}
 			poolRepo := &proxyPoolRepoStub{pools: map[int64]*ProxyPool{1: {ID: 1}, 2: {ID: 2}},
 				members: []ProxyPoolMember{{Proxy: *original}}}
 			poolService := withProxyPoolService(t, poolRepo)
+			cache := poolService.latencyCache.(*poolQualityCache)
+			if tc.change != nil {
+				tc.change(cache.infos[9])
+			}
+			if tc.missing {
+				delete(cache.infos, 9)
+			}
+			if tc.cacheError {
+				cache.err = errors.New("cache offline")
+			}
 			repo := &updatingProxyRepoStub{proxyRepoStub: &proxyRepoStub{}, proxy: original}
-			svc := &adminServiceImpl{proxyRepo: repo, proxyLatencyCache: poolService.latencyCache}
-			if tc.missingCache {
+			svc := &adminServiceImpl{proxyRepo: repo, proxyLatencyCache: cache}
+			if tc.noCache {
 				svc.proxyLatencyCache = nil
 			}
-			input := &UpdateProxyInput{PoolIDSet: true, PoolID: &two}
-			if tc.changedCredentials {
-				password := "new-password"
-				input.Password = &password
-			}
-			_, err := svc.UpdateProxy(context.Background(), 9, input)
-			if tc.eligible {
-				require.NoError(t, err)
-				require.Equal(t, &two, repo.proxy.PoolID)
-			} else {
-				require.Error(t, err)
-				require.Zero(t, repo.updateCalls)
-				require.Equal(t, &one, repo.proxy.PoolID)
-			}
+			password := "synthetic-new-password"
+			_, err := svc.UpdateProxy(context.Background(), 9, &UpdateProxyInput{PoolIDSet: true, PoolID: &two, Password: &password})
+			require.NoError(t, err)
+			require.Equal(t, &two, repo.proxy.PoolID)
+			require.Equal(t, password, repo.proxy.Password)
+			require.Zero(t, cache.reads)
+
+			missingPool := int64(99)
+			_, err = svc.UpdateProxy(context.Background(), 9, &UpdateProxyInput{PoolIDSet: true, PoolID: &missingPool})
+			require.ErrorIs(t, err, ErrProxyPoolNotFound)
+			require.Equal(t, &two, repo.proxy.PoolID)
 		})
 	}
 }
@@ -132,6 +133,6 @@ func TestProxyConnectionProbeDoesNotRenewQualityEvidence(t *testing.T) {
 	})
 	require.Equal(t, checked, *cache.infos[9].QualityCheckedAt)
 	require.Equal(t, validUntil, cache.infos[9].QualityValidUntil)
-	require.True(t, proxyQualityAdmissible(&proxy, cache.infos[9], now))
-	require.False(t, proxyQualityAdmissible(&proxy, cache.infos[9], now.Add(time.Minute)))
+	require.True(t, proxyQualityRecommended(&proxy, cache.infos[9], now))
+	require.False(t, proxyQualityRecommended(&proxy, cache.infos[9], now.Add(time.Minute)))
 }

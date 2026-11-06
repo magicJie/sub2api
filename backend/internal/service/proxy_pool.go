@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,10 +33,9 @@ var (
 	ErrProxyPoolNotFound           = infraerrors.NotFound("PROXY_POOL_NOT_FOUND", "proxy pool not found")
 	ErrProxyPoolNameExists         = infraerrors.Conflict("PROXY_POOL_NAME_EXISTS", "proxy pool name already exists")
 	ErrProxyPoolDefaultDelete      = infraerrors.BadRequest("PROXY_POOL_DEFAULT_UNDELETABLE", "default proxy pool cannot be deleted")
-	ErrProxyPoolNoAvailable        = infraerrors.Conflict("PROXY_POOL_NO_AVAILABLE_PROXY", "no available proxy in pool for this platform; candidates must be active, unexpired, within policy limits and pass a fresh full quality check with low-risk IP reputation")
-	ErrProxyPoolProxyNotInPool     = infraerrors.BadRequest("PROXY_POOL_PROXY_UNAVAILABLE", "proxy must be an available pool member with a fresh full quality check and low-risk IP reputation")
+	ErrProxyPoolNoAvailable        = infraerrors.Conflict("PROXY_POOL_NO_AVAILABLE_PROXY", "no available proxy in pool for this platform; candidates must be active, unexpired and within policy limits")
+	ErrProxyPoolProxyNotInPool     = infraerrors.BadRequest("PROXY_POOL_PROXY_UNAVAILABLE", "proxy must be an available pool member within policy limits")
 	ErrProxyPoolUnavailable        = infraerrors.ServiceUnavailable("PROXY_POOL_UNAVAILABLE", "proxy pool service is not available")
-	ErrProxyPoolQualityUnavailable = infraerrors.ServiceUnavailable("PROXY_POOL_QUALITY_UNAVAILABLE", "proxy quality cache is unavailable; restore the cache and run a full quality check before allocating or moving proxies")
 	ErrAccountProxyLocked          = infraerrors.Conflict("ACCOUNT_PROXY_LOCKED", "account proxy is locked by proxy pool binding; unbind it first")
 	ErrProxyPoolShadowAccount      = infraerrors.BadRequest("PROXY_POOL_SHADOW_ACCOUNT", "shadow account inherits proxy from its parent account")
 	ErrProxyPoolLimitInvalid       = infraerrors.BadRequest("PROXY_POOL_LIMIT_INVALID", "platform limit must be >= 1")
@@ -116,7 +116,7 @@ type ProxyPoolRepository interface {
 type ProxyPoolService struct {
 	repo        ProxyPoolRepository
 	accountRepo AccountRepository
-	// latencyCache 提供分配准入所需的质量快照和换 IP 时同国家优先的信息。
+	// latencyCache 提供质量推荐排序和换 IP 时同国家优先的信息；缓存不可用不影响分配。
 	latencyCache ProxyLatencyCache
 	// mu 串行化“挑选代理 → 写入账号 → 锁定绑定”，避免并发创建超出平台上限（单实例内）。
 	mu sync.Mutex
@@ -232,16 +232,6 @@ func (s *ProxyPoolService) AssignProxies(ctx context.Context, poolID int64, prox
 			return ErrProxyPoolProxyNotInPool
 		}
 	}
-	infos, err := s.qualitySnapshots(ctx, proxyIDs)
-	if err != nil {
-		return err
-	}
-	now := time.Now()
-	for id, proxy := range selected {
-		if !proxyQualityAdmissible(proxy, infos[id], now) {
-			return ErrProxyPoolProxyNotInPool
-		}
-	}
 	return s.repo.AssignProxies(ctx, pool, proxyIDs)
 }
 
@@ -290,19 +280,31 @@ func (s *ProxyPoolService) PreviewProxy(ctx context.Context, poolID int64, accou
 	return s.pickProxy(ctx, pool, account, groupIDs, 0, nil, false, qualityTarget)
 }
 
-// qualitySnapshots 批量读取准入证据；缓存不可用时拒绝新分配和移池。
-func (s *ProxyPoolService) qualitySnapshots(ctx context.Context, proxyIDs []int64) (map[int64]*ProxyLatencyInfo, error) {
-	if len(proxyIDs) == 0 {
-		return nil, nil
-	}
-	if s.latencyCache == nil {
-		return nil, ErrProxyPoolQualityUnavailable
+// qualitySnapshots reads advisory evidence; missing or unavailable cache leaves candidates unranked.
+func (s *ProxyPoolService) qualitySnapshots(ctx context.Context, proxyIDs []int64) map[int64]*ProxyLatencyInfo {
+	if len(proxyIDs) == 0 || s.latencyCache == nil {
+		return nil
 	}
 	infos, err := s.latencyCache.GetProxyLatencies(ctx, proxyIDs)
 	if err != nil {
-		return nil, ErrProxyPoolQualityUnavailable.WithCause(err)
+		return nil
 	}
-	return infos, nil
+	return infos
+}
+
+// rankProxyPoolCandidates prefers current recommendations, preserving policy order within each tier.
+func rankProxyPoolCandidates(policies []ProxyIPPolicy, policy *ProxyIPPolicy, candidates []ProxyPoolMember, infos map[int64]*ProxyLatencyInfo, target string, now time.Time) {
+	sortProxyPoolCandidates(policies, policy, candidates)
+	if len(candidates) < 2 || len(infos) == 0 {
+		return
+	}
+	recommended := make(map[int64]bool, len(candidates))
+	for i := range candidates {
+		recommended[candidates[i].Proxy.ID] = proxyQualityRecommendedForTarget(&candidates[i].Proxy, infos[candidates[i].Proxy.ID], target, now)
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return recommended[candidates[i].Proxy.ID] && !recommended[candidates[j].Proxy.ID]
+	})
 }
 
 // pickProxy 按账号适用的策略（分组策略优先于平台策略）在池内可用落地 IP 中挑选（排序见 sortProxyPoolCandidates）。
@@ -324,18 +326,10 @@ func (s *ProxyPoolService) pickProxy(ctx context.Context, pool *ProxyPool, accou
 	if err != nil {
 		return nil, err
 	}
-	ids := make([]int64, len(members))
-	for i := range members {
-		ids[i] = members[i].Proxy.ID
-	}
-	infos, err := s.qualitySnapshots(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
 	now := time.Now()
 	candidates := make([]ProxyPoolMember, 0, len(members))
 	for i := range members {
-		if proxyPoolMemberAvailable(policy, &members[i], now) && proxyQualityAdmissibleForTarget(&members[i].Proxy, infos[members[i].Proxy.ID], qualityTarget, now) {
+		if proxyPoolMemberAvailable(policy, &members[i], now) {
 			candidates = append(candidates, members[i])
 		}
 	}
@@ -353,7 +347,11 @@ func (s *ProxyPoolService) pickProxy(ctx context.Context, pool *ProxyPool, accou
 	if len(candidates) == 0 {
 		return nil, ErrProxyPoolNoAvailable
 	}
-	sortProxyPoolCandidates(policies, policy, candidates)
+	ids := make([]int64, len(candidates))
+	for i := range candidates {
+		ids[i] = candidates[i].Proxy.ID
+	}
+	rankProxyPoolCandidates(policies, policy, candidates, s.qualitySnapshots(ctx, ids), qualityTarget, now)
 	p := candidates[0].Proxy
 	return &p, nil
 }

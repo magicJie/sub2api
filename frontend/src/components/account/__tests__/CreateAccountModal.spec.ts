@@ -276,7 +276,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     await flushPromises()
     await wrapper.get('[data-testid="generate-oauth-url"]').trigger('click')
     await flushPromises()
-    const rejection = new Error('No qualified proxy for the discovered AI path')
+    const rejection = new Error('No available proxy in pool for the discovered platform policy')
     proxyPoolPreviewMock.mockRejectedValueOnce(rejection)
     await selectButtonByText(wrapper, 'admin.accounts.oauth.completeAuth')
     await flushPromises()
@@ -1197,7 +1197,7 @@ describe('CreateAccountModal Ollama Cloud platform', () => {
     createAccountMock.mockRejectedValueOnce({
       status: 400,
       reason: 'PROXY_POOL_PROXY_UNAVAILABLE',
-      message: 'Select a proxy with a fresh quality check'
+      message: 'This proxy is not an available pool member for this platform'
     })
     const wrapper = mountModal()
     await wrapper.get('[data-testid="platform-button-ollama"]').trigger('click')
@@ -1206,7 +1206,7 @@ describe('CreateAccountModal Ollama Cloud platform', () => {
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     await flushPromises()
 
-    expect(showErrorMock).toHaveBeenCalledWith('Select a proxy with a fresh quality check')
+    expect(showErrorMock).toHaveBeenCalledWith('This proxy is not an available pool member for this platform')
     expect(wrapper.emitted('created')).toBeUndefined()
     expect(wrapper.emitted('close')).toBeUndefined()
     expect(wrapper.get<HTMLInputElement>('form#create-account-form input[type="text"]').element.value).toBe('ollama-retry')

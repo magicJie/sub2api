@@ -131,17 +131,17 @@ func TestProxyQualitySnapshotBoundToExitConfigAndTime(t *testing.T) {
 	proxy := &Proxy{Host: "8.8.8.8", Protocol: "socks5", Port: 1080}
 	checked := now.Unix()
 	info := &ProxyLatencyInfo{Success: true, IPAddress: proxy.Host, QualityStatus: "healthy", QualityBaseEligible: true, QualityCheckedAt: &checked, QualityValidUntil: now.Add(time.Hour).Unix(), QualityFingerprint: proxyQualityFingerprint(proxy)}
-	require.True(t, proxyQualityAdmissible(proxy, info, now))
-	require.False(t, proxyQualityAdmissible(proxy, info, now.Add(time.Hour)))
+	require.True(t, proxyQualityRecommended(proxy, info, now))
+	require.False(t, proxyQualityRecommended(proxy, info, now.Add(time.Hour)))
 	changed := *proxy
 	changed.Password = "new-password"
-	require.False(t, proxyQualityAdmissible(&changed, info, now))
+	require.False(t, proxyQualityRecommended(&changed, info, now))
 	info.IPAddress = "1.1.1.1"
-	require.False(t, proxyQualityAdmissible(proxy, info, now))
+	require.False(t, proxyQualityRecommended(proxy, info, now))
 	info.IPAddress = proxy.Host
 	info.QualityValidUntil = 0
-	require.False(t, proxyQualityAdmissible(proxy, info, now))
-	require.False(t, proxyQualityAdmissible(proxy, nil, now))
+	require.False(t, proxyQualityRecommended(proxy, info, now))
+	require.False(t, proxyQualityRecommended(proxy, nil, now))
 }
 
 func TestProxyReputationSelfLookupUsesObservedExit(t *testing.T) {
