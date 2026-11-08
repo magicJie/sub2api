@@ -390,15 +390,18 @@ func (s *AntigravityGatewayService) TestConnectionWithPrompt(ctx context.Context
 	if mappedModel == "" {
 		return nil, fmt.Errorf("model %s not in whitelist", modelID)
 	}
-	if _, detecting := ctx.Value(modelDetectionPromptKey{}).(string); !detecting && !isImageGenerationModel(mappedModel) {
-		prompt = ""
-	}
-
 	// 构建请求体
 	var requestBody []byte
-	if shouldUseAntigravityGeminiTestRequest(modelID, mappedModel) {
+	// 模型诊断（fork）需要足够输出预算回答挑战题；普通连接测试保持上游请求。
+	_, detecting := ctx.Value(modelDetectionPromptKey{}).(string)
+	switch gemini := shouldUseAntigravityGeminiTestRequest(modelID, mappedModel); {
+	case gemini && detecting:
+		requestBody, err = s.buildGeminiTestRequestWithBudget(projectID, mappedModel, prompt, antigravityDetectionMaxOutputTokens)
+	case gemini:
 		requestBody, err = s.buildGeminiTestRequestWithPrompt(projectID, mappedModel, prompt)
-	} else {
+	case detecting:
+		requestBody, err = s.buildClaudeTestRequestWithBudget(projectID, mappedModel, prompt, antigravityDetectionMaxOutputTokens)
+	default:
 		requestBody, err = s.buildClaudeTestRequest(projectID, mappedModel, prompt)
 	}
 	if err != nil {
@@ -471,8 +474,12 @@ func testConnectionHandleError(
 }
 
 // buildGeminiTestRequestWithPrompt 构建 Gemini 格式测试请求
-// Text connectivity probes use one output token; explicit prompts receive a full response budget.
+// 文本模型发送管理员提示词（默认 "hi"）并留出回答所需的输出 token；图片模型使用图片生成配置。
 func (s *AntigravityGatewayService) buildGeminiTestRequestWithPrompt(projectID, model, prompt string) ([]byte, error) {
+	return s.buildGeminiTestRequestWithBudget(projectID, model, prompt, antigravityTestMaxOutputTokens)
+}
+
+func (s *AntigravityGatewayService) buildGeminiTestRequestWithBudget(projectID, model, prompt string, maxTokens int) ([]byte, error) {
 	if isImageGenerationModel(model) {
 		imagePrompt := strings.TrimSpace(prompt)
 		if imagePrompt == "" {
@@ -503,17 +510,12 @@ func (s *AntigravityGatewayService) buildGeminiTestRequestWithPrompt(projectID, 
 		return s.wrapV1InternalRequest(projectID, model, payloadBytes)
 	}
 
-	text, maxTokens := ".", 1
-	if strings.TrimSpace(prompt) != "" {
-		text, maxTokens = prompt, 4096
-	}
-
 	payload := map[string]any{
 		"contents": []map[string]any{
 			{
 				"role": "user",
 				"parts": []map[string]any{
-					{"text": text},
+					{"text": antigravityTestPrompt(prompt)},
 				},
 			},
 		},
@@ -537,13 +539,13 @@ func (s *AntigravityGatewayService) buildGeminiTestRequestWithPrompt(projectID, 
 }
 
 // buildClaudeTestRequest 构建 Claude 格式测试请求并转换为 Gemini 格式
-// Empty prompts retain the minimal connectivity probe.
+// 与其他平台一致：发送管理员输入的提示词（默认 "hi"），留出足够的输出 token 以便模型回答。
 func (s *AntigravityGatewayService) buildClaudeTestRequest(projectID, mappedModel, prompt string) ([]byte, error) {
-	text, maxTokens := ".", 1
-	if strings.TrimSpace(prompt) != "" {
-		text, maxTokens = prompt, 4096
-	}
-	content, err := json.Marshal(text)
+	return s.buildClaudeTestRequestWithBudget(projectID, mappedModel, prompt, antigravityTestMaxOutputTokens)
+}
+
+func (s *AntigravityGatewayService) buildClaudeTestRequestWithBudget(projectID, mappedModel, prompt string, maxTokens int) ([]byte, error) {
+	content, err := json.Marshal(antigravityTestPrompt(prompt))
 	if err != nil {
 		return nil, err
 	}
@@ -552,7 +554,7 @@ func (s *AntigravityGatewayService) buildClaudeTestRequest(projectID, mappedMode
 		Messages: []antigravity.ClaudeMessage{
 			{
 				Role:    "user",
-				Content: content,
+				Content: json.RawMessage(content),
 			},
 		},
 		MaxTokens: maxTokens,
@@ -569,6 +571,21 @@ func (s *AntigravityGatewayService) getClaudeTransformOptions(ctx context.Contex
 	opts.EnableIdentityPatch = s.settingService.IsIdentityPatchEnabled(ctx)
 	opts.IdentityPatch = s.settingService.GetIdentityPatchPrompt(ctx)
 	return opts
+}
+
+// antigravityTestMaxOutputTokens leaves a thinking model room to think and still answer a short
+// test prompt. It was 1, so gemini-4-argon / gemini-3.8-flash returned no text at all.
+const antigravityTestMaxOutputTokens = 256
+
+// antigravityDetectionMaxOutputTokens is the model-diagnostics budget for a complete answer.
+const antigravityDetectionMaxOutputTokens = 4096
+
+// antigravityTestPrompt is the admin's test prompt, or "hi" like the other platforms' tests.
+func antigravityTestPrompt(prompt string) string {
+	if trimmed := strings.TrimSpace(prompt); trimmed != "" {
+		return trimmed
+	}
+	return defaultGeminiTextTestPrompt
 }
 
 // extractContentFromSSEResponse 从 SSE 流式响应中提取文本和内联图片
@@ -657,20 +674,32 @@ func injectIdentityPatchToGeminiRequest(body []byte) ([]byte, error) {
 		return nil, fmt.Errorf("解析 Gemini 请求失败: %w", err)
 	}
 
+	identityFound := false
+	systemChanged := false
 	// 检查现有 systemInstruction 是否已包含身份提示词
 	if sysInst, ok := request["systemInstruction"].(map[string]any); ok {
 		if parts, ok := sysInst["parts"].([]any); ok {
 			for _, part := range parts {
 				if partMap, ok := part.(map[string]any); ok {
 					if text, ok := partMap["text"].(string); ok {
-						if strings.Contains(text, "You are Antigravity") {
-							// 已包含身份提示词，直接返回原始请求
-							return body, nil
+						neutral := antigravity.NeutralizeSystemIdentity(text)
+						if neutral != text {
+							partMap["text"] = neutral
+							systemChanged = true
+						}
+						if strings.Contains(neutral, "You are Antigravity") {
+							identityFound = true
 						}
 					}
 				}
 			}
 		}
+	}
+	if identityFound {
+		if systemChanged {
+			return json.Marshal(request)
+		}
+		return body, nil
 	}
 
 	// 获取默认身份提示词
