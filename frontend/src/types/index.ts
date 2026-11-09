@@ -1254,23 +1254,40 @@ export type OllamaCloudUsageStatus = 'ok' | 'unauthorized' | 'failed'
 export interface OllamaCloudUsageWindow {
   used_percent: number
   reset_at?: string
-  reset_text?: string
 }
 
-export interface OllamaCloudUsageModel {
+export interface OllamaCloudUsageMetrics {
+  request_count: number
+  usage_usd?: number
+  input_tokens?: number
+  cached_input_tokens?: number
+  output_tokens?: number
+}
+
+export interface OllamaCloudUsageGroup extends OllamaCloudUsageMetrics {
   model: string
-  window: 'five_hour' | 'seven_day' | 'monthly'
-  requests: number
+}
+
+export interface OllamaCloudUsageTotals extends OllamaCloudUsageMetrics {
+  groups?: OllamaCloudUsageGroup[]
+  remainder?: OllamaCloudUsageMetrics
+}
+
+export interface OllamaCloudUsageHistory {
+  range: string
+  scope: string
+  from: string
+  until: string
+  totals: OllamaCloudUsageTotals
 }
 
 export interface OllamaCloudUsageData {
   email?: string
-  plan?: string
   five_hour?: OllamaCloudUsageWindow
   seven_day?: OllamaCloudUsageWindow
   monthly?: OllamaCloudUsageWindow
   balance?: string
-  models?: OllamaCloudUsageModel[]
+  usage?: OllamaCloudUsageHistory
 }
 
 export interface OllamaCloudUsageSnapshot {
@@ -1289,7 +1306,6 @@ export interface OllamaCloudUsageState {
   eligible: boolean
   configured: boolean
   auto_refresh_enabled: boolean
-  encryption_key_configured: boolean
   snapshot?: OllamaCloudUsageSnapshot
 }
 

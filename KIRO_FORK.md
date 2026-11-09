@@ -231,8 +231,13 @@ cd backend && go build ./... && go test -tags=unit ./...
 - 平台登记：`backend/internal/domain/platforms_ollama.go`，ID `ollama`，显示名 `Ollama Cloud`，gateway / LiteLLM provider 均为 `openai`。只支持 API Key，默认地址 `https://ollama.com/v1`；管理端创建、编辑、批量更新校验 HTTPS 与精确主机 `ollama.com`。
 - 账号的 `IsOpenAI()` / `IsOpenAIApiKey()` 复用 OpenAI API Key 的归一化、模型映射、请求头覆写、计费、探测和错误处置；OAuth 生命周期仍限定原 OpenAI 平台。分组保留 Messages 调度映射、reasoning 策略与模型目录配置。
 - `/v1/chat/completions`、`/v1/responses`、`/v1/messages` 默认都转换为上游 `/v1/chat/completions`，使用 Bearer。默认路由优先于旧 `openai_responses_supported=true` 探测标记；显式 `force_responses` 保留原账号覆盖语义。Codex 工具与历史归一化沿用共享管线，输出 token cap 与 raw CC reasoning 别名按 Ollama 平台生效。
-- 用量身份统一为 `platform=ollama && type=apikey`；base URL 用于默认值与校验。仓储用平台查询，SQL URL 正则只保留在一次性迁移的旧数据识别中。用量抓取、429 短冷却与探测、到期提醒继续使用原有机制。CRS 刷新已有账号时保留已迁移的 Ollama 平台。
-- 创建弹窗通过 `extractApiErrorMessage` 读取 API client 归一化后的错误，保留后端拒绝原因与待修改的表单。创建后的 Cookie 保存/用量查询失败显示具体警告，已创建账号仍正常刷新列表并关闭弹窗。
+- 用量身份统一为 `platform=ollama && type=apikey`；base URL 用于默认值与校验。仓储用平台查询，SQL URL 正则只保留在一次性迁移的旧数据识别中。CRS 刷新已有账号时保留已迁移的 Ollama 平台及相同 API Key 的自动刷新开关。
+- 官方用量通过账号已有 API Key 调用 [`GET /api/balance`](https://docs.ollama.com/api/balance) 和 [`GET /api/usage?range=7d&group_by=model`](https://docs.ollama.com/api/cloud-usage)，使用固定官方地址、账号代理和 Bearer；重定向被阻止。创建后查询一次用量，编辑页与列表支持手动刷新，自动刷新继续由全局与账号开关共同控制。
+- 新套餐按 `(1 - included.balance_usd / included.allowance_usd) * 100` 计算月度已用比例，重置时间取 `period.until`；零额度仍可展示余额。旧套餐按 `100 - remaining_percent` 展示 session/weekly 限额，使用官方 `resets_at`。余额合并 included 与 purchased，保留微小正余额供 429 恢复判断；额度耗尽按精确的 100% 判定。
+- 统计展示 `scope=self` 的七日请求数、可用的费用/Token、模型分布及其余模型合计，并标明实际 UTC 起止时间。月度额度使用 balance 账期；七日统计包含当前未结束的 UTC 日。旧套餐缺失的费用/Token 字段保持缺失。团队余额由成员共享，统计范围仍为当前用户。
+- 快照存入 `extra.ollama_cloud_usage_api_snapshot`，原自动刷新开关沿用；旧 HTML 快照和失败退避随切换失效。旧 Cookie 与 HTML 快照在账号、代理及用量写入时清除，导入与响应继续屏蔽这些历史托管键。网页会话保存/删除接口、Cookie 配置和加密密钥依赖已移除。
+- 同一 API Key 共用自动刷新开关和 API 快照，新成员优先继承已有组的显式开关；分组写入继续校验凭证、代理及托管状态。
+- 任一必需 API 查询失败时保留上次成功的 API 数据及时间，展示脱敏错误并退避；401 表示 API Key 无效，403 按账号挂起处理。官方接口各限每用户每分钟 10 次并跨 Key/设备共享，查询遵守 `Retry-After`；保留手动刷新 30 秒限制及请求驱动的自动刷新。创建后的查询失败显示警告，已创建账号仍刷新列表并关闭弹窗。
 - `mcp_xml_inject` 原值随分组保留。当前 OpenAI 网关只持久化和投影该字段，实际 MCP XML 注入实现位于 Antigravity transformer；Ollama 维持迁移前的请求处理语义。
 - 自动迁移 `backend/migrations/256_ollama_platform.sql`：按旧正则识别六个宿主平台的未删除 API Key 账号；同一存储 key 保留 active 优先、ID 最小的账号，其余设为 `disabled` 并写 `extra.migrated_to_account_id`。保留原关系，为保留账号补齐兄弟账号的分组关系；保留 proxy、key、extra，旧 base URL 规范成默认地址。
 - 纯 Ollama 分组改平台；混合分组列出 ID 并报错。受影响平台现存用户额度、冲突兄弟配置、歧义渠道/路由等配置在写入前报错。用户额度的 Redis 脏计数按平台存储，现有停止流程只做有限刷新，因此额度行保留原值，要求管理员先结算并明确配置新预算；独立的默认额度授予配置与渠道定价可以原地迁移。错误规则列表追加 Ollama，代理绑定历史同步平台，Ollama IP 策略继承 OpenAI 池选择与两个账号数上限，采用 `sticky/pause`。

@@ -146,16 +146,42 @@ func TestCRSSyncPreservesMigratedOllamaPlatformAndUsage(t *testing.T) {
 			existing := &Account{ID: 41, Platform: PlatformOllama, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "key", "base_url": DefaultOllamaBaseURL}, Extra: map[string]any{
 				"crs_account_id":                    "crs-openai-1",
 				OllamaCloudUsageSessionExtraKey:     "local-session",
+				"ollama_cloud_usage_snapshot":       map[string]any{"raw": "legacy-secret"},
+				OllamaCloudUsageSnapshotExtraKey:    map[string]any{"status": OllamaCloudUsageStatusOK},
 				OllamaCloudUsageAutoRefreshExtraKey: true,
 			}}
 			repo := newCRSLongContextAccountRepo(existing)
 			result := runCRSOpenAILongContextSync(t, repo, crsOpenAILongContextSource{collection: collection, credentials: map[string]any{"api_key": "key", "base_url": DefaultOllamaBaseURL}})
 			require.Equal(t, 1, result.Updated)
 			require.Equal(t, PlatformOllama, existing.Platform)
-			require.Equal(t, "local-session", existing.Extra[OllamaCloudUsageSessionExtraKey])
+			require.NotContains(t, existing.Extra, OllamaCloudUsageSessionExtraKey)
+			require.NotContains(t, existing.Extra, "ollama_cloud_usage_snapshot")
+			require.Equal(t, map[string]any{"status": OllamaCloudUsageStatusOK}, existing.Extra[OllamaCloudUsageSnapshotExtraKey])
 			require.Equal(t, true, existing.Extra[OllamaCloudUsageAutoRefreshExtraKey])
 		})
 	}
+}
+
+func TestOllamaAccountServiceCreateStripsImportedManagedState(t *testing.T) {
+	extra := map[string]any{
+		OllamaCloudUsageSessionExtraKey:     "legacy-secret",
+		"ollama_cloud_usage_snapshot":       map[string]any{"raw": "legacy-secret"},
+		OllamaCloudUsageAutoRefreshExtraKey: true,
+		OllamaCloudUsageSnapshotExtraKey:    map[string]any{"status": "forged"},
+		"ordinary":                          "kept",
+	}
+	repo := &longContextBillingRepoStub{}
+	account, err := NewAccountService(repo, nil).Create(context.Background(), CreateAccountRequest{
+		Name: "imported", Platform: PlatformOllama, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "key"}, Extra: extra,
+	})
+
+	require.NoError(t, err)
+	for _, key := range []string{OllamaCloudUsageSessionExtraKey, "ollama_cloud_usage_snapshot", OllamaCloudUsageAutoRefreshExtraKey, OllamaCloudUsageSnapshotExtraKey} {
+		require.NotContains(t, account.Extra, key)
+		require.Contains(t, extra, key, "the supplied import map remains unchanged")
+	}
+	require.Equal(t, "kept", account.Extra["ordinary"])
 }
 
 func TestOllamaMappedModelPricingAndCostMatchesLegacyOpenAI(t *testing.T) {

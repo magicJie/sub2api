@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/google/uuid"
@@ -31,7 +30,7 @@ import (
 const (
 	OllamaCloudUsageSessionExtraKey     = "ollama_cloud_usage_session"
 	OllamaCloudUsageAutoRefreshExtraKey = "ollama_cloud_usage_auto_refresh"
-	OllamaCloudUsageSnapshotExtraKey    = "ollama_cloud_usage_snapshot"
+	OllamaCloudUsageSnapshotExtraKey    = "ollama_cloud_usage_api_snapshot"
 
 	// OllamaCloudUsageMinFetchInterval is the hard floor between two successful
 	// fetches of the same group, mirroring the floor nextOllamaCloudUsageDelay
@@ -40,7 +39,8 @@ const (
 	// floor inside the SQL due filter.
 	OllamaCloudUsageMinFetchInterval = ollamaCloudUsageMinIntervalMinutes * time.Minute
 
-	ollamaCloudUsageSettingsURL            = "https://ollama.com/settings"
+	ollamaCloudUsageBalanceURL             = "https://ollama.com/api/balance"
+	ollamaCloudUsageHistoryURL             = "https://ollama.com/api/usage?range=7d&group_by=model"
 	ollamaCloudUsageProfileURL             = "https://ollama.com/api/me"
 	ollamaCloudUsageDefaultIntervalMinutes = 60
 	ollamaCloudUsageMinIntervalMinutes     = 15
@@ -53,7 +53,6 @@ const (
 	ollamaCloudUsageRequestTimeout         = 15 * time.Second
 	ollamaCloudUsageProfileTimeout         = 5 * time.Second
 	ollamaCloudUsageMaxBodyBytes           = 512 * 1024
-	ollamaCloudUsageMaxSessionBytes        = 16 * 1024
 	ollamaCloudUsageMaxPerCycle            = 20
 	ollamaCloudUsageConcurrency            = 4
 	ollamaCloudUsageMaxDelay               = 24 * time.Hour
@@ -68,19 +67,15 @@ var (
 	ErrOllamaCloudUsageAccountInvalid = infraerrors.BadRequest(
 		"OLLAMA_CLOUD_USAGE_ACCOUNT_INVALID", "account must be an Ollama Cloud API key account",
 	)
-	ErrOllamaCloudUsageSessionRequired = infraerrors.BadRequest(
-		"OLLAMA_CLOUD_USAGE_SESSION_REQUIRED", "an Ollama web session must be configured first",
-	)
-	ErrOllamaCloudUsageEncryptionKey = infraerrors.BadRequest(
-		"OLLAMA_CLOUD_USAGE_ENCRYPTION_KEY_NOT_CONFIGURED", "cannot store an Ollama web session without a fixed TOTP_ENCRYPTION_KEY",
+	ErrOllamaCloudUsageAPIKeyRequired = infraerrors.BadRequest(
+		"OLLAMA_CLOUD_USAGE_API_KEY_REQUIRED", "a valid Ollama API key must be configured first",
 	)
 	ErrOllamaCloudUsageIdentityChanged = infraerrors.Conflict(
-		"OLLAMA_CLOUD_USAGE_IDENTITY_CHANGED", "account identity or Ollama web session changed during refresh; retry",
+		"OLLAMA_CLOUD_USAGE_IDENTITY_CHANGED", "account identity or Ollama usage settings changed during refresh; retry",
 	)
 	ErrOllamaCloudUsageRefreshRateLimited = infraerrors.TooManyRequests(
-		"OLLAMA_CLOUD_USAGE_REFRESH_RATE_LIMITED", "Ollama Cloud usage can be refreshed manually once every 30 seconds",
+		"OLLAMA_CLOUD_USAGE_REFRESH_RATE_LIMITED", "Ollama Cloud usage refresh is rate limited; retry after the indicated delay",
 	)
-	errOllamaCloudUsageUnauthorizedHTML = errors.New("settings HTML is a sign-in page")
 )
 
 const (
@@ -104,34 +99,44 @@ type OllamaCloudUsageSettings struct {
 type OllamaCloudUsageWindow struct {
 	UsedPercent float64    `json:"used_percent"`
 	ResetAt     *time.Time `json:"reset_at,omitempty"`
-	ResetText   string     `json:"reset_text,omitempty"`
 }
 
-// OllamaCloudUsageModelWindow identifies the official window for a model count.
-type OllamaCloudUsageModelWindow string
-
-const (
-	OllamaCloudUsageModelWindowFiveHour OllamaCloudUsageModelWindow = "five_hour"
-	OllamaCloudUsageModelWindowSevenDay OllamaCloudUsageModelWindow = "seven_day"
-	OllamaCloudUsageModelWindowMonthly  OllamaCloudUsageModelWindow = "monthly"
-)
-
-// OllamaCloudUsageModel is the window-scoped model/request pair exposed by Ollama's usage DOM.
-type OllamaCloudUsageModel struct {
-	Model    string                      `json:"model"`
-	Window   OllamaCloudUsageModelWindow `json:"window"`
-	Requests int64                       `json:"requests"`
+// OllamaCloudUsageMetrics preserves unavailable legacy cost and token statistics.
+type OllamaCloudUsageMetrics struct {
+	RequestCount      int64    `json:"request_count"`
+	UsageUSD          *float64 `json:"usage_usd,omitempty"`
+	InputTokens       *int64   `json:"input_tokens,omitempty"`
+	CachedInputTokens *int64   `json:"cached_input_tokens,omitempty"`
+	OutputTokens      *int64   `json:"output_tokens,omitempty"`
 }
 
-// OllamaCloudUsageData intentionally excludes raw HTML and browser-session data.
+type OllamaCloudUsageGroup struct {
+	Model string `json:"model"`
+	OllamaCloudUsageMetrics
+}
+
+type OllamaCloudUsageTotals struct {
+	OllamaCloudUsageMetrics
+	Groups    []OllamaCloudUsageGroup  `json:"groups,omitempty"`
+	Remainder *OllamaCloudUsageMetrics `json:"remainder,omitempty"`
+}
+
+// OllamaCloudUsageHistory is the official seven-day self-usage range.
+type OllamaCloudUsageHistory struct {
+	Range  string                 `json:"range"`
+	Scope  string                 `json:"scope"`
+	From   time.Time              `json:"from"`
+	Until  time.Time              `json:"until"`
+	Totals OllamaCloudUsageTotals `json:"totals"`
+}
+
 type OllamaCloudUsageData struct {
-	Email    string                  `json:"email,omitempty"`
-	Plan     string                  `json:"plan,omitempty"`
-	FiveHour *OllamaCloudUsageWindow `json:"five_hour,omitempty"`
-	SevenDay *OllamaCloudUsageWindow `json:"seven_day,omitempty"`
-	Monthly  *OllamaCloudUsageWindow `json:"monthly,omitempty"`
-	Balance  string                  `json:"balance,omitempty"`
-	Models   []OllamaCloudUsageModel `json:"models,omitempty"`
+	Email    string                   `json:"email,omitempty"`
+	FiveHour *OllamaCloudUsageWindow  `json:"five_hour,omitempty"`
+	SevenDay *OllamaCloudUsageWindow  `json:"seven_day,omitempty"`
+	Monthly  *OllamaCloudUsageWindow  `json:"monthly,omitempty"`
+	Balance  string                   `json:"balance,omitempty"`
+	Usage    *OllamaCloudUsageHistory `json:"usage,omitempty"`
 }
 
 // OllamaCloudUsageSnapshot is the only usage observation persisted in account extra.
@@ -154,18 +159,15 @@ type OllamaCloudUsageSnapshot struct {
 
 // OllamaCloudUsageState is the dedicated DTO exposed to administrators.
 type OllamaCloudUsageState struct {
-	AccountID               int64                     `json:"account_id"`
-	Eligible                bool                      `json:"eligible"`
-	Configured              bool                      `json:"configured"`
-	AutoRefreshEnabled      bool                      `json:"auto_refresh_enabled"`
-	EncryptionKeyConfigured bool                      `json:"encryption_key_configured"`
-	Snapshot                *OllamaCloudUsageSnapshot `json:"snapshot,omitempty"`
+	AccountID          int64                     `json:"account_id"`
+	Eligible           bool                      `json:"eligible"`
+	Configured         bool                      `json:"configured"`
+	AutoRefreshEnabled bool                      `json:"auto_refresh_enabled"`
+	Snapshot           *OllamaCloudUsageSnapshot `json:"snapshot,omitempty"`
 }
 
 type ollamaCloudUsageRepository interface {
 	ListOllamaCloudUsageGroupAccounts(context.Context, []*Account) ([]Account, error)
-	SaveOllamaCloudUsageSession(context.Context, *Account, string, bool) error
-	DeleteOllamaCloudUsageSession(context.Context, *Account) error
 	SetOllamaCloudUsageAutoRefresh(context.Context, *Account, bool) error
 	UpdateOllamaCloudUsageSnapshot(context.Context, *Account, *OllamaCloudUsageSnapshot) error
 	DisableOllamaCloudUsageAutoRefresh(context.Context, *Account) error
@@ -378,13 +380,11 @@ func scheduleOllamaCloudUsageActivity(deferred *DeferredService, account *Accoun
 	deferred.ScheduleLastUsedUpdate(account.ID)
 }
 
-// OllamaCloudUsageService refreshes the official settings HTML without affecting routing state.
+// OllamaCloudUsageService refreshes official cloud APIs without affecting routing state.
 type OllamaCloudUsageService struct {
-	accountRepo             AccountRepository
-	httpUpstream            HTTPUpstream
-	settingService          *SettingService
-	encryptor               SecretEncryptor
-	encryptionKeyConfigured bool
+	accountRepo    AccountRepository
+	httpUpstream   HTTPUpstream
+	settingService *SettingService
 
 	parentCtx    context.Context
 	parentCancel context.CancelFunc
@@ -415,23 +415,19 @@ func NewOllamaCloudUsageService(
 	accountRepo AccountRepository,
 	httpUpstream HTTPUpstream,
 	settingService *SettingService,
-	encryptor SecretEncryptor,
-	encryptionKeyConfigured bool,
 ) *OllamaCloudUsageService {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &OllamaCloudUsageService{
-		accountRepo:             accountRepo,
-		httpUpstream:            httpUpstream,
-		settingService:          settingService,
-		encryptor:               encryptor,
-		encryptionKeyConfigured: encryptionKeyConfigured,
-		parentCtx:               ctx,
-		parentCancel:            cancel,
-		refreshSlots:            make(chan struct{}, ollamaCloudUsageConcurrency),
-		now:                     time.Now,
-		instanceID:              uuid.NewString(),
-		probeWake:               make(chan struct{}, 1),
-		probeGroups:             make(map[string]ollamaCloudUsageProbeGroupEntry),
+		accountRepo:    accountRepo,
+		httpUpstream:   httpUpstream,
+		settingService: settingService,
+		parentCtx:      ctx,
+		parentCancel:   cancel,
+		refreshSlots:   make(chan struct{}, ollamaCloudUsageConcurrency),
+		now:            time.Now,
+		instanceID:     uuid.NewString(),
+		probeWake:      make(chan struct{}, 1),
+		probeGroups:    make(map[string]ollamaCloudUsageProbeGroupEntry),
 	}
 }
 
@@ -439,13 +435,10 @@ func ProvideOllamaCloudUsageService(
 	accountRepo AccountRepository,
 	httpUpstream HTTPUpstream,
 	settingService *SettingService,
-	encryptor SecretEncryptor,
-	cfg *config.Config,
 	lockCache LeaderLockCache,
 	db *sql.DB,
 ) *OllamaCloudUsageService {
-	keyConfigured := cfg != nil && cfg.Totp.EncryptionKeyConfigured
-	svc := NewOllamaCloudUsageService(accountRepo, httpUpstream, settingService, encryptor, keyConfigured)
+	svc := NewOllamaCloudUsageService(accountRepo, httpUpstream, settingService)
 	svc.lockCache = lockCache
 	svc.db = db
 	svc.Start()
@@ -525,9 +518,7 @@ func (s *OllamaCloudUsageService) GetState(ctx context.Context, accountID int64)
 	if err := s.ResolveAccounts(ctx, []*Account{account}); err != nil {
 		return nil, err
 	}
-	state := OllamaCloudUsageStateFromAccount(account)
-	s.EnrichState(state)
-	return state, nil
+	return OllamaCloudUsageStateFromAccount(account), nil
 }
 
 // ResolveAccounts overlays group-owned managed state onto the supplied account
@@ -562,8 +553,17 @@ func (s *OllamaCloudUsageService) ResolveAccounts(ctx context.Context, accounts 
 			continue
 		}
 		current := sources[fingerprint]
-		if current == nil || candidate.UpdatedAt.After(current.UpdatedAt) ||
-			(candidate.UpdatedAt.Equal(current.UpdatedAt) && candidate.ID < current.ID) {
+		if current == nil {
+			sources[fingerprint] = candidate
+			continue
+		}
+		// New members inherit an established group's explicit refresh preference.
+		_, candidateHasPreference := candidate.Extra[OllamaCloudUsageAutoRefreshExtraKey].(bool)
+		_, currentHasPreference := current.Extra[OllamaCloudUsageAutoRefreshExtraKey].(bool)
+		if (candidateHasPreference && !currentHasPreference) ||
+			(candidateHasPreference == currentHasPreference &&
+				(candidate.UpdatedAt.After(current.UpdatedAt) ||
+					(candidate.UpdatedAt.Equal(current.UpdatedAt) && candidate.ID < current.ID))) {
 			sources[fingerprint] = candidate
 		}
 	}
@@ -578,7 +578,7 @@ func (s *OllamaCloudUsageService) ResolveAccounts(ctx context.Context, accounts 
 		candidate := &siblings[index]
 		fingerprint, valid := ollamaCloudUsageGroupFingerprint(candidate)
 		source := resolvedSources[fingerprint]
-		if !valid || source == nil || !sameOllamaCloudUsageSession(source, candidate) {
+		if !valid || source == nil {
 			continue
 		}
 		candidateSnapshot := decodeOllamaCloudUsageSnapshot(candidate.Extra)
@@ -594,15 +594,6 @@ func (s *OllamaCloudUsageService) ResolveAccounts(ctx context.Context, accounts 
 	return nil
 }
 
-func sameOllamaCloudUsageSession(left, right *Account) bool {
-	if left == nil || right == nil || left.Extra == nil || right.Extra == nil {
-		return false
-	}
-	leftSession, leftOK := left.Extra[OllamaCloudUsageSessionExtraKey].(string)
-	rightSession, rightOK := right.Extra[OllamaCloudUsageSessionExtraKey].(string)
-	return leftOK && rightOK && leftSession != "" && leftSession == rightSession
-}
-
 func applyOllamaCloudUsageManagedExtra(target, source *Account) {
 	if target == nil {
 		return
@@ -610,8 +601,9 @@ func applyOllamaCloudUsageManagedExtra(target, source *Account) {
 	if target.Extra == nil {
 		target.Extra = make(map[string]any)
 	}
+	delete(target.Extra, OllamaCloudUsageSessionExtraKey)
+	delete(target.Extra, "ollama_cloud_usage_snapshot")
 	for _, key := range []string{
-		OllamaCloudUsageSessionExtraKey,
 		OllamaCloudUsageAutoRefreshExtraKey,
 		OllamaCloudUsageSnapshotExtraKey,
 	} {
@@ -622,66 +614,6 @@ func applyOllamaCloudUsageManagedExtra(target, source *Account) {
 			}
 		}
 	}
-}
-
-func (s *OllamaCloudUsageService) SaveSession(ctx context.Context, accountID int64, session string) (*OllamaCloudUsageState, error) {
-	if s == nil || s.accountRepo == nil || s.encryptor == nil {
-		return nil, ErrOllamaCloudUsageUnavailable
-	}
-	if !s.encryptionKeyConfigured {
-		return nil, ErrOllamaCloudUsageEncryptionKey
-	}
-	normalized, err := normalizeOllamaCloudUsageCookie(session)
-	if err != nil {
-		return nil, infraerrors.BadRequest("INVALID_OLLAMA_CLOUD_USAGE_SESSION", err.Error())
-	}
-	account, err := s.accountRepo.GetByID(ctx, accountID)
-	if err != nil {
-		return nil, err
-	}
-	if !IsOllamaCloudUsageAccount(account) {
-		return nil, ErrOllamaCloudUsageAccountInvalid
-	}
-	if err := s.ResolveAccounts(ctx, []*Account{account}); err != nil {
-		return nil, err
-	}
-	ciphertext, err := s.encryptor.Encrypt(normalized)
-	if err != nil {
-		return nil, fmt.Errorf("encrypt Ollama web session: %w", err)
-	}
-	writer, ok := s.accountRepo.(ollamaCloudUsageRepository)
-	if !ok {
-		return nil, ErrOllamaCloudUsageUnavailable
-	}
-	preserveAutoRefresh := ollamaCloudUsageConfigured(account) && ollamaCloudUsageAutoRefreshEnabled(account)
-	if err := writer.SaveOllamaCloudUsageSession(ctx, account, ciphertext, preserveAutoRefresh); err != nil {
-		return nil, err
-	}
-	return s.GetState(ctx, accountID)
-}
-
-func (s *OllamaCloudUsageService) DeleteSession(ctx context.Context, accountID int64) (*OllamaCloudUsageState, error) {
-	if s == nil || s.accountRepo == nil {
-		return nil, ErrOllamaCloudUsageUnavailable
-	}
-	account, err := s.accountRepo.GetByID(ctx, accountID)
-	if err != nil {
-		return nil, err
-	}
-	if !IsOllamaCloudUsageAccount(account) {
-		return nil, ErrOllamaCloudUsageAccountInvalid
-	}
-	if err := s.ResolveAccounts(ctx, []*Account{account}); err != nil {
-		return nil, err
-	}
-	writer, ok := s.accountRepo.(ollamaCloudUsageRepository)
-	if !ok {
-		return nil, ErrOllamaCloudUsageUnavailable
-	}
-	if err := writer.DeleteOllamaCloudUsageSession(ctx, account); err != nil {
-		return nil, err
-	}
-	return s.GetState(ctx, accountID)
 }
 
 func (s *OllamaCloudUsageService) SetAutoRefresh(ctx context.Context, accountID int64, enabled bool) (*OllamaCloudUsageState, error) {
@@ -699,7 +631,7 @@ func (s *OllamaCloudUsageService) SetAutoRefresh(ctx context.Context, accountID 
 		return nil, err
 	}
 	if enabled && !ollamaCloudUsageConfigured(account) {
-		return nil, ErrOllamaCloudUsageSessionRequired
+		return nil, ErrOllamaCloudUsageAPIKeyRequired
 	}
 	writer, ok := s.accountRepo.(ollamaCloudUsageRepository)
 	if !ok {
@@ -825,11 +757,14 @@ func (s *OllamaCloudUsageService) refreshAccount(ctx context.Context, accountID 
 			return nil, err
 		}
 		if !ollamaCloudUsageConfigured(account) {
-			return nil, ErrOllamaCloudUsageSessionRequired
+			return nil, ErrOllamaCloudUsageAPIKeyRequired
 		}
 		if !requireEnabled {
 			if snapshot := decodeOllamaCloudUsageSnapshot(account.Extra); snapshot != nil && !snapshot.LastAttemptAt.IsZero() {
 				retryAt := snapshot.LastAttemptAt.Add(ollamaCloudUsageManualRefreshInterval)
+				if snapshot.HTTPStatus == http.StatusTooManyRequests && snapshot.NextRefreshAt.After(retryAt) {
+					retryAt = snapshot.NextRefreshAt
+				}
 				if now := s.currentTime(); now.Before(retryAt) {
 					remaining := retryAt.Sub(now)
 					seconds := int((remaining + time.Second - 1) / time.Second)
@@ -875,20 +810,8 @@ func (s *OllamaCloudUsageService) refreshAccount(ctx context.Context, accountID 
 
 func (s *OllamaCloudUsageService) refreshLoadedAccount(ctx context.Context, account *Account, intervalMinutes int) (*OllamaCloudUsageSnapshot, error) {
 	now := s.currentTime().UTC()
-	ciphertext, _ := account.Extra[OllamaCloudUsageSessionExtraKey].(string)
-	if ciphertext == "" {
-		return nil, ErrOllamaCloudUsageSessionRequired
-	}
-	if !s.encryptionKeyConfigured || s.encryptor == nil {
-		return nil, ErrOllamaCloudUsageEncryptionKey
-	}
-	cookie, err := s.encryptor.Decrypt(ciphertext)
-	if err != nil {
-		return nil, infraerrors.ServiceUnavailable("OLLAMA_CLOUD_USAGE_SESSION_DECRYPT_FAILED", "stored Ollama web session cannot be decrypted")
-	}
-	cookie, err = normalizeOllamaCloudUsageCookie(cookie)
-	if err != nil {
-		return nil, infraerrors.ServiceUnavailable("OLLAMA_CLOUD_USAGE_SESSION_INVALID", "stored Ollama web session is invalid")
+	if !ollamaCloudUsageConfigured(account) {
+		return nil, ErrOllamaCloudUsageAPIKeyRequired
 	}
 	if s.httpUpstream == nil {
 		return nil, ErrOllamaCloudUsageUnavailable
@@ -900,54 +823,21 @@ func (s *OllamaCloudUsageService) refreshLoadedAccount(ctx context.Context, acco
 		}
 		proxyURL = account.Proxy.URL()
 	}
-	requestCtx, cancel := context.WithTimeout(WithHTTPUpstreamRedirectsDisabled(ctx), ollamaCloudUsageRequestTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, ollamaCloudUsageSettingsURL, nil)
-	if err != nil || !isExactOllamaCloudSettingsURL(req.URL) {
-		return nil, ErrOllamaCloudUsageUnavailable
+	balanceBody, failure := s.fetchOllamaCloudAPI(ctx, account, proxyURL, ollamaCloudUsageBalanceURL, now)
+	if failure != nil {
+		return s.persistFailure(ctx, account, intervalMinutes, now, failure.status, failure.reason, failure.retryAfter, failure.status == http.StatusUnauthorized)
 	}
-	req.Header.Set("Accept", "text/html,application/xhtml+xml")
-	req.Header.Set("Cookie", cookie)
-	req.Header.Set("User-Agent", "sub2api-ollama-usage/1")
-	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
+	data, err := parseOllamaCloudBalance(balanceBody)
 	if err != nil {
-		return s.persistFailure(ctx, account, intervalMinutes, now, 0, "request_failed", 0, false)
+		return s.persistFailure(ctx, account, intervalMinutes, now, http.StatusOK, err.Error(), 0, false)
 	}
-	if resp == nil || resp.Body == nil {
-		return s.persistFailure(ctx, account, intervalMinutes, now, 0, "empty_response", 0, false)
+	usageBody, failure := s.fetchOllamaCloudAPI(ctx, account, proxyURL, ollamaCloudUsageHistoryURL, now)
+	if failure != nil {
+		return s.persistFailure(ctx, account, intervalMinutes, now, failure.status, failure.reason, failure.retryAfter, failure.status == http.StatusUnauthorized)
 	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.Request != nil && !isExactOllamaCloudSettingsURL(resp.Request.URL) {
-		return s.persistFailure(ctx, account, intervalMinutes, now, resp.StatusCode, "response_host_mismatch", 0, false)
-	}
-	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-		return s.persistFailure(ctx, account, intervalMinutes, now, resp.StatusCode, "redirect_blocked", retryAfter(resp.Header, now), false)
-	}
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return s.persistFailure(ctx, account, intervalMinutes, now, resp.StatusCode, "unauthorized", retryAfter(resp.Header, now), true)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return s.persistFailure(ctx, account, intervalMinutes, now, resp.StatusCode, "http_error", retryAfter(resp.Header, now), false)
-	}
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, ollamaCloudUsageMaxBodyBytes+1))
-	_ = resp.Body.Close()
-	if readErr != nil {
-		return s.persistFailure(ctx, account, intervalMinutes, now, resp.StatusCode, "response_read_failed", 0, false)
-	}
-	if len(body) > ollamaCloudUsageMaxBodyBytes {
-		return s.persistFailure(ctx, account, intervalMinutes, now, resp.StatusCode, "response_too_large", 0, false)
-	}
-	data, parseErr := parseOllamaCloudUsageHTML(body)
-	if errors.Is(parseErr, errOllamaCloudUsageUnauthorizedHTML) {
-		return s.persistFailure(ctx, account, intervalMinutes, now, resp.StatusCode, "unauthorized", 0, true)
-	}
-	if parseErr != nil {
-		return s.persistFailure(ctx, account, intervalMinutes, now, resp.StatusCode, "invalid_html", 0, false)
-	}
-	// A balance or plan alone does not prove a successful usage refresh. Keep
-	// the previous data and fetched_at when upstream markup becomes incompatible.
-	if data.FiveHour == nil && data.SevenDay == nil && data.Monthly == nil {
-		return s.persistFailure(ctx, account, intervalMinutes, now, resp.StatusCode, "incomplete_usage", 0, false)
+	data.Usage, err = parseOllamaCloudUsage(usageBody)
+	if err != nil {
+		return s.persistFailure(ctx, account, intervalMinutes, now, http.StatusOK, err.Error(), 0, false)
 	}
 	data.Email = s.fetchOllamaCloudAccountEmail(ctx, account, proxyURL)
 	snapshot := &OllamaCloudUsageSnapshot{
@@ -956,12 +846,60 @@ func (s *OllamaCloudUsageService) refreshLoadedAccount(ctx context.Context, acco
 		FetchedAt:     &now,
 		LastAttemptAt: now,
 		NextRefreshAt: now.Add(nextOllamaCloudUsageDelay(intervalMinutes, 0, 0)),
-		HTTPStatus:    resp.StatusCode,
+		HTTPStatus:    http.StatusOK,
 	}
 	if err := s.updateSnapshot(ctx, account, snapshot); err != nil {
 		return nil, err
 	}
 	return snapshot, nil
+}
+
+type ollamaCloudAPIFailure struct {
+	status     int
+	reason     string
+	retryAfter time.Duration
+}
+
+func (s *OllamaCloudUsageService) fetchOllamaCloudAPI(ctx context.Context, account *Account, proxyURL, endpoint string, now time.Time) ([]byte, *ollamaCloudAPIFailure) {
+	requestCtx, cancel := context.WithTimeout(WithHTTPUpstreamRedirectsDisabled(ctx), ollamaCloudUsageRequestTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, &ollamaCloudAPIFailure{reason: "request_failed"}
+	}
+	apiKey, _ := account.Credentials["api_key"].(string)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("User-Agent", "sub2api-ollama-usage/1")
+	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
+	if err != nil {
+		return nil, &ollamaCloudAPIFailure{reason: "request_failed"}
+	}
+	if resp == nil || resp.Body == nil {
+		return nil, &ollamaCloudAPIFailure{reason: "empty_response"}
+	}
+	defer func() { _ = resp.Body.Close() }()
+	failure := &ollamaCloudAPIFailure{status: resp.StatusCode, retryAfter: retryAfter(resp.Header, now)}
+	switch {
+	case resp.Request != nil && !isExactOllamaCloudAPIURL(resp.Request.URL, endpoint):
+		failure.reason = "response_host_mismatch"
+	case resp.StatusCode >= 300 && resp.StatusCode < 400:
+		failure.reason = "redirect_blocked"
+	case resp.StatusCode == http.StatusUnauthorized:
+		failure.reason = "unauthorized"
+	case resp.StatusCode < 200 || resp.StatusCode >= 300:
+		failure.reason = "http_error"
+	default:
+		body, err := io.ReadAll(io.LimitReader(resp.Body, ollamaCloudUsageMaxBodyBytes+1))
+		if err != nil {
+			failure.reason = "response_read_failed"
+		} else if len(body) > ollamaCloudUsageMaxBodyBytes {
+			failure.reason = "response_too_large"
+		} else {
+			return body, nil
+		}
+	}
+	return nil, failure
 }
 
 func (s *OllamaCloudUsageService) persistFailure(
@@ -1009,14 +947,6 @@ func (s *OllamaCloudUsageService) updateSnapshot(ctx context.Context, account *A
 	return writer.UpdateOllamaCloudUsageSnapshot(ctx, account, snapshot)
 }
 
-// EnrichState adds service-owned runtime configuration to an account-derived state.
-func (s *OllamaCloudUsageService) EnrichState(state *OllamaCloudUsageState) {
-	if state == nil {
-		return
-	}
-	state.EncryptionKeyConfigured = s != nil && s.encryptionKeyConfigured
-}
-
 func OllamaCloudUsageStateFromAccount(account *Account) *OllamaCloudUsageState {
 	state := &OllamaCloudUsageState{}
 	if account == nil {
@@ -1038,22 +968,18 @@ func IsOllamaCloudUsageAccount(account *Account) bool {
 }
 
 func ollamaCloudUsageIdentity(account *Account) map[string]any {
-	if !IsOllamaCloudUsageAccount(account) {
+	if !ollamaCloudUsageConfigured(account) {
 		return nil
 	}
-	apiKey, ok := account.Credentials["api_key"].(string)
-	if !ok || apiKey == "" {
-		return nil
-	}
+	apiKey, _ := account.Credentials["api_key"].(string)
 	return map[string]any{"host": "ollama.com", "api_key": apiKey}
 }
 
 func ollamaCloudUsageGroupFingerprint(account *Account) (string, bool) {
-	identity := ollamaCloudUsageIdentity(account)
-	if identity == nil {
+	if !ollamaCloudUsageConfigured(account) {
 		return "", false
 	}
-	apiKey, _ := identity["api_key"].(string)
+	apiKey, _ := account.Credentials["api_key"].(string)
 	sum := sha256.Sum256([]byte("ollama.com\x00" + apiKey))
 	return hex.EncodeToString(sum[:]), true
 }
@@ -1097,9 +1023,8 @@ func (s *OllamaCloudUsageService) fetchOllamaCloudAccountEmail(ctx context.Conte
 	return email
 }
 
-func isExactOllamaCloudSettingsURL(parsed *url.URL) bool {
-	return parsed != nil && parsed.Scheme == "https" && parsed.Host == "ollama.com" && parsed.Path == "/settings" &&
-		parsed.User == nil && parsed.RawQuery == "" && parsed.Fragment == "" && parsed.RawPath == ""
+func isExactOllamaCloudAPIURL(parsed *url.URL, endpoint string) bool {
+	return parsed != nil && parsed.String() == endpoint && parsed.User == nil
 }
 
 func isExactOllamaCloudProfileURL(parsed *url.URL) bool {
@@ -1107,91 +1032,12 @@ func isExactOllamaCloudProfileURL(parsed *url.URL) bool {
 		parsed.User == nil && parsed.RawQuery == "" && parsed.Fragment == "" && parsed.RawPath == ""
 }
 
-func normalizeOllamaCloudUsageCookie(raw string) (string, error) {
-	if len(raw) > ollamaCloudUsageMaxSessionBytes {
-		return "", errors.New("session is too large")
-	}
-	raw = strings.TrimSpace(raw)
-	if strings.ContainsAny(raw, "\r\n") {
-		return "", errors.New("session contains invalid header characters")
-	}
-	if raw == "" {
-		return "", errors.New("session cannot be empty")
-	}
-	if !httpguts.ValidHeaderFieldValue(raw) {
-		return "", errors.New("session contains invalid header characters")
-	}
-	blockedAttributes := map[string]struct{}{
-		"domain": {}, "path": {}, "expires": {}, "max-age": {}, "samesite": {}, "secure": {}, "httponly": {}, "partitioned": {},
-	}
-	parts := strings.Split(raw, ";")
-	normalized := make([]string, 0, len(parts))
-	seen := make(map[string]struct{}, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		name, value, ok := strings.Cut(part, "=")
-		name = strings.TrimSpace(name)
-		value = strings.TrimSpace(value)
-		if !ok || name == "" || value == "" || !httpguts.ValidHeaderFieldName(name) || strings.HasPrefix(name, "$") {
-			return "", errors.New("session must be a Cookie header containing name=value pairs")
-		}
-		lowerName := strings.ToLower(name)
-		if _, blocked := blockedAttributes[lowerName]; blocked {
-			return "", errors.New("paste a Cookie header, not a Set-Cookie value with attributes")
-		}
-		if _, duplicate := seen[lowerName]; duplicate {
-			return "", errors.New("session contains duplicate cookie names")
-		}
-		if strings.ContainsAny(value, ";\r\n") {
-			return "", errors.New("session contains an invalid cookie value")
-		}
-		seen[lowerName] = struct{}{}
-		if isAllowedOllamaCloudSessionCookie(name) {
-			normalized = append(normalized, name+"="+value)
-		}
-	}
-	if len(normalized) == 0 {
-		return "", errors.New("session does not contain an allowed Ollama session cookie")
-	}
-	return strings.Join(normalized, "; "), nil
-}
-
-func isAllowedOllamaCloudSessionCookie(name string) bool {
-	switch name {
-	case "wos-session", "__Secure-session", "session", "ollama_session", "__Host-ollama_session":
-		return true
-	}
-	for _, base := range []string{
-		"next-auth.session-token",
-		"__Secure-next-auth.session-token",
-		"authjs.session-token",
-		"__Secure-authjs.session-token",
-	} {
-		if name == base {
-			return true
-		}
-		if suffix, ok := strings.CutPrefix(name, base+"."); ok && suffix != "" {
-			validShard := true
-			for _, char := range suffix {
-				if char < '0' || char > '9' {
-					validShard = false
-					break
-				}
-			}
-			if validShard {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func ollamaCloudUsageConfigured(account *Account) bool {
-	if account == nil || account.Extra == nil {
+	if !IsOllamaCloudUsageAccount(account) {
 		return false
 	}
-	value, ok := account.Extra[OllamaCloudUsageSessionExtraKey].(string)
-	return ok && strings.TrimSpace(value) != ""
+	apiKey, ok := account.Credentials["api_key"].(string)
+	return ok && strings.TrimSpace(apiKey) != "" && httpguts.ValidHeaderFieldValue(apiKey)
 }
 
 func ollamaCloudUsageAutoRefreshEnabled(account *Account) bool {

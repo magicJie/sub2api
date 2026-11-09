@@ -511,9 +511,9 @@ export default {
       },
       ollamaCloudUsage: {
         title: 'Ollama Cloud 用量刷新',
-        description: '在模型请求驱动下刷新账号在 Ollama 官方设置页展示的用量；默认关闭。无新请求时不会自动抓取。',
+        description: '在模型请求驱动下通过 Ollama 官方 API 刷新账号余额与 7 天用量统计；默认关闭。无新请求时不会自动抓取。',
         enabled: '启用全局自动刷新',
-        enabledHint: '仅刷新已保存浏览器会话且账号自身也开启自动刷新的账号；需有后续模型请求才会触发。手动刷新不受影响。',
+        enabledHint: '仅刷新已配置有效 API Key 且账号自身也开启自动刷新的账号；需有后续模型请求才会触发。手动刷新不受影响。',
         intervalMinutes: '持续请求最长等待（分钟）',
         intervalHint: '范围 15–1440 分钟。请求持续不断导致 debounce 一直后移时，最晚在此时间强制刷新。',
         debounceMinutes: '请求安静等待（分钟）',

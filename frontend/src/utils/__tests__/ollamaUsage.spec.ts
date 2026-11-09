@@ -1,20 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatOllamaResetText, isOllamaCloudAccount, isValidOllamaBaseUrl } from '../ollamaUsage'
-
-describe('Ollama reset hints', () => {
-  const zh = (_: string, params: Record<string, string>) => `约${params.time}`
-  const en = (_: string, params: Record<string, string>) => `${params.time} (approx.)`
-  it('localizes an upstream week hint without converting it to an absolute date', () => {
-    expect(formatOllamaResetText('Refills in 1 week', 'zh', zh)).toBe('约1周后')
-    expect(formatOllamaResetText('Refills in 2 days.', 'zh', zh)).toBe('约2天后')
-    expect(formatOllamaResetText('Refills in 1 week', 'en', en)).toBe('in 1 week (approx.)')
-  })
-  it('preserves unknown text and does not invent missing data', () => {
-    expect(formatOllamaResetText(undefined, 'en', en)).toBeUndefined()
-    expect(formatOllamaResetText('Next billing date unknown', 'en', en)).toBe('Next billing date unknown')
-  })
-})
-
+import { formatOllamaSnapshotError, isOllamaCloudAccount, isValidOllamaBaseUrl } from '../ollamaUsage'
 describe('isOllamaCloudAccount', () => {
   it('matches only ollama apikey accounts', () => {
     expect(isOllamaCloudAccount({ platform: 'ollama', type: 'apikey' })).toBe(true)
@@ -44,5 +29,32 @@ describe('isValidOllamaBaseUrl', () => {
     'https://ollama.com#x'
   ])('rejects invalid or non-official endpoint %s', (url) => {
     expect(isValidOllamaBaseUrl(url)).toBe(false)
+  })
+})
+
+describe('formatOllamaSnapshotError', () => {
+  const t = (key: string) => key
+
+  it('returns empty string for healthy snapshots', () => {
+    expect(formatOllamaSnapshotError({ status: 'ok' }, t)).toBe('')
+  })
+
+  it('distinguishes HTTP 403 suspended accounts from HTTP 401 invalid API keys and invalid JSON', () => {
+    expect(formatOllamaSnapshotError({
+      status: 'failed',
+      last_error: 'http_error',
+      http_status: 403
+    }, t)).toBe('admin.accounts.ollamaCloud.errors.account_suspended (HTTP 403)')
+
+    expect(formatOllamaSnapshotError({
+      status: 'unauthorized',
+      last_error: 'unauthorized',
+      http_status: 401
+    }, t)).toBe('admin.accounts.ollamaCloud.errors.unauthorized (HTTP 401)')
+
+    expect(formatOllamaSnapshotError({
+      status: 'failed',
+      last_error: 'invalid_json'
+    }, t)).toBe('admin.accounts.ollamaCloud.errors.invalid_json')
   })
 })

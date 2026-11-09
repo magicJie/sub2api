@@ -3,11 +3,9 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -18,16 +16,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/stretchr/testify/require"
 )
-
-type ollamaUsageTestEncryptor struct{}
-
-func (ollamaUsageTestEncryptor) Encrypt(value string) (string, error) { return "cipher:" + value, nil }
-func (ollamaUsageTestEncryptor) Decrypt(value string) (string, error) {
-	if !strings.HasPrefix(value, "cipher:") {
-		return "", errors.New("authentication failed")
-	}
-	return strings.TrimPrefix(value, "cipher:"), nil
-}
 
 type ollamaUsageTestRepo struct {
 	*upstreamBillingProbeAccountRepo
@@ -75,41 +63,11 @@ func cloneOllamaUsageTestAccount(account Account) Account {
 	return account
 }
 
-func (r *ollamaUsageTestRepo) SaveOllamaCloudUsageSession(_ context.Context, expected *Account, ciphertext string, autoRefresh bool) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	members, err := r.ollamaGroupMembersLocked(expected)
-	if err != nil {
-		return err
-	}
-	for _, account := range members {
-		account.Extra[OllamaCloudUsageSessionExtraKey] = ciphertext
-		account.Extra[OllamaCloudUsageAutoRefreshExtraKey] = autoRefresh
-		delete(account.Extra, OllamaCloudUsageSnapshotExtraKey)
-	}
-	return nil
-}
-
-func (r *ollamaUsageTestRepo) DeleteOllamaCloudUsageSession(_ context.Context, expected *Account) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	members, err := r.ollamaGroupMembersLocked(expected)
-	if err != nil {
-		return err
-	}
-	for _, account := range members {
-		delete(account.Extra, OllamaCloudUsageSessionExtraKey)
-		delete(account.Extra, OllamaCloudUsageAutoRefreshExtraKey)
-		delete(account.Extra, OllamaCloudUsageSnapshotExtraKey)
-	}
-	return nil
-}
-
 func (r *ollamaUsageTestRepo) SetOllamaCloudUsageAutoRefresh(_ context.Context, expected *Account, enabled bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	members, err := r.ollamaGroupMembersLocked(expected)
-	if err != nil || !r.ollamaExpectedSessionExistsLocked(members, expected) {
+	if err != nil || !r.ollamaExpectedStateExistsLocked(members, expected) {
 		return ErrOllamaCloudUsageIdentityChanged
 	}
 	for _, account := range members {
@@ -126,7 +84,7 @@ func (r *ollamaUsageTestRepo) UpdateOllamaCloudUsageSnapshot(_ context.Context, 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	members, err := r.ollamaGroupMembersLocked(expected)
-	if err != nil || !r.ollamaExpectedSessionExistsLocked(members, expected) {
+	if err != nil || !r.ollamaExpectedStateExistsLocked(members, expected) {
 		return ErrOllamaCloudUsageIdentityChanged
 	}
 	for _, account := range members {
@@ -141,7 +99,7 @@ func (r *ollamaUsageTestRepo) DisableOllamaCloudUsageAutoRefresh(_ context.Conte
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	members, err := r.ollamaGroupMembersLocked(expected)
-	if err != nil || !r.ollamaExpectedSessionExistsLocked(members, expected) {
+	if err != nil || !r.ollamaExpectedStateExistsLocked(members, expected) {
 		return ErrOllamaCloudUsageIdentityChanged
 	}
 	for _, account := range members {
@@ -175,9 +133,10 @@ func (r *ollamaUsageTestRepo) ollamaGroupMembersLocked(expected *Account) ([]*Ac
 	return members, nil
 }
 
-func (r *ollamaUsageTestRepo) ollamaExpectedSessionExistsLocked(members []*Account, expected *Account) bool {
+func (r *ollamaUsageTestRepo) ollamaExpectedStateExistsLocked(members []*Account, expected *Account) bool {
 	for _, member := range members {
-		if member.Extra[OllamaCloudUsageSessionExtraKey] == expected.Extra[OllamaCloudUsageSessionExtraKey] {
+		if reflect.DeepEqual(member.Extra[OllamaCloudUsageAutoRefreshExtraKey], expected.Extra[OllamaCloudUsageAutoRefreshExtraKey]) &&
+			reflect.DeepEqual(member.Extra[OllamaCloudUsageSnapshotExtraKey], expected.Extra[OllamaCloudUsageSnapshotExtraKey]) {
 			return true
 		}
 	}
@@ -185,7 +144,9 @@ func (r *ollamaUsageTestRepo) ollamaExpectedSessionExistsLocked(members []*Accou
 }
 
 func applyOllamaUsageTestManagedExtra(account, source *Account) {
-	for _, key := range []string{OllamaCloudUsageSessionExtraKey, OllamaCloudUsageAutoRefreshExtraKey, OllamaCloudUsageSnapshotExtraKey} {
+	delete(account.Extra, OllamaCloudUsageSessionExtraKey)
+	delete(account.Extra, "ollama_cloud_usage_snapshot")
+	for _, key := range []string{OllamaCloudUsageAutoRefreshExtraKey, OllamaCloudUsageSnapshotExtraKey} {
 		delete(account.Extra, key)
 		if value, ok := source.Extra[key]; ok {
 			account.Extra[key] = value
@@ -248,23 +209,31 @@ func sameOllamaUsageTestIdentity(left, right *Account) bool {
 }
 
 type ollamaUsageHTTPStub struct {
-	status         int
-	body           []byte
-	header         http.Header
-	profileStatus  int
-	profileBody    []byte
-	profileCalls   atomic.Int64
-	profileRequest *http.Request
-	calls          atomic.Int64
-	active         atomic.Int64
-	maxActive      atomic.Int64
-	beforeResponse func(*http.Request)
-	lastRequest    *http.Request
-	lastProxyURL   string
-	mu             sync.Mutex
+	status           int
+	body             []byte
+	usageBody        []byte
+	responseOverride func(*http.Request) (*http.Response, error)
+	usageStatus      int
+	usageCalls       atomic.Int64
+	usageRequest     *http.Request
+	header           http.Header
+	profileStatus    int
+	profileBody      []byte
+	profileCalls     atomic.Int64
+	profileRequest   *http.Request
+	calls            atomic.Int64
+	active           atomic.Int64
+	maxActive        atomic.Int64
+	beforeResponse   func(*http.Request)
+	lastRequest      *http.Request
+	lastProxyURL     string
+	mu               sync.Mutex
 }
 
 func (s *ollamaUsageHTTPStub) Do(req *http.Request, proxyURL string, _ int64, _ int) (*http.Response, error) {
+	if s.responseOverride != nil {
+		return s.responseOverride(req)
+	}
 	if req.URL.Path == "/api/me" {
 		s.profileCalls.Add(1)
 		s.mu.Lock()
@@ -275,6 +244,21 @@ func (s *ollamaUsageHTTPStub) Do(req *http.Request, proxyURL string, _ int64, _ 
 			status = http.StatusUnauthorized
 		}
 		return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(string(s.profileBody))), Request: req}, nil
+	}
+	if req.URL.Path == "/api/usage" {
+		s.usageCalls.Add(1)
+		s.mu.Lock()
+		s.usageRequest = req
+		s.mu.Unlock()
+		body := s.usageBody
+		if body == nil {
+			body = []byte(`{"range":"7d","scope":"self","from":"2026-09-24T00:00:00Z","until":"2026-10-01T02:30:00Z","totals":{"request_count":0}}`)
+		}
+		status := s.usageStatus
+		if status == 0 {
+			status = http.StatusOK
+		}
+		return &http.Response{StatusCode: status, Header: s.header, Body: io.NopCloser(strings.NewReader(string(body))), Request: req}, nil
 	}
 	s.calls.Add(1)
 	active := s.active.Add(1)
@@ -298,7 +282,7 @@ func (s *ollamaUsageHTTPStub) Do(req *http.Request, proxyURL string, _ int64, _ 
 	}
 	header := s.header
 	if header == nil {
-		header = http.Header{"Content-Type": []string{"text/html; charset=utf-8"}}
+		header = http.Header{"Content-Type": []string{"application/json"}}
 	}
 	return &http.Response{StatusCode: status, Header: header, Body: io.NopCloser(strings.NewReader(string(s.body))), Request: req}, nil
 }
@@ -315,18 +299,16 @@ func ollamaUsageAccount(id int64) *Account {
 	}
 }
 
-func newOllamaUsageTestService(t *testing.T, repo *ollamaUsageTestRepo, upstream HTTPUpstream, settingsRepo SettingRepository, fixedKey bool) *OllamaCloudUsageService {
+func newOllamaUsageTestService(t *testing.T, repo *ollamaUsageTestRepo, upstream HTTPUpstream, settingsRepo SettingRepository) *OllamaCloudUsageService {
 	t.Helper()
-	svc := NewOllamaCloudUsageService(repo, upstream, NewSettingService(settingsRepo, nil), ollamaUsageTestEncryptor{}, fixedKey)
+	svc := NewOllamaCloudUsageService(repo, upstream, NewSettingService(settingsRepo, nil))
 	t.Cleanup(svc.Stop)
 	return svc
 }
 
 func ollamaUsageFixture(t *testing.T) []byte {
 	t.Helper()
-	body, err := os.ReadFile("testdata/ollama_settings_usage.html")
-	require.NoError(t, err)
-	return body
+	return []byte(`{"included":{"balance_usd":50,"allowance_usd":100,"period":{"from":"2026-09-01T00:00:00Z","until":"2026-10-01T00:00:00Z"}},"purchased":{"balance_usd":25}}`)
 }
 
 func TestOllamaCloudUsageSettingsDefaultOffAndValidation(t *testing.T) {
@@ -497,170 +479,12 @@ func TestIsOllamaCloudUsageAccountRejectsOAuthType(t *testing.T) {
 	}
 }
 
-func TestNormalizeOllamaCloudUsageCookieAllowlist(t *testing.T) {
-	normalized, err := normalizeOllamaCloudUsageCookie(" tracking=discard ; wos-session=secret ; __Secure-authjs.session-token.0=part-a ; device=discard ")
-	require.NoError(t, err)
-	require.Equal(t, "wos-session=secret; __Secure-authjs.session-token.0=part-a", normalized)
-
-	normalized, err = normalizeOllamaCloudUsageCookie(" \t\r\nwos-session=secret; tracking=discard\r\n\t ")
-	require.NoError(t, err)
-	require.Equal(t, "wos-session=secret", normalized)
-
-	_, err = normalizeOllamaCloudUsageCookie("wos-session=secret\r\nHost: evil.test")
-	require.ErrorContains(t, err, "invalid header")
-
-	for _, allowed := range []string{
-		"wos-session", "__Secure-session", "session", "ollama_session", "__Host-ollama_session",
-		"next-auth.session-token", "next-auth.session-token.0", "__Secure-next-auth.session-token.12",
-		"authjs.session-token", "__Secure-authjs.session-token.1",
-	} {
-		normalized, err := normalizeOllamaCloudUsageCookie(allowed + "=value")
-		require.NoError(t, err, allowed)
-		require.Equal(t, allowed+"=value", normalized)
-	}
-
-	for _, invalid := range []string{
-		"", "Domain=ollama.com; wos-session=x", "wos-session=x; Path=/",
-		"wos-session=x; wos-session=y", "Secure", "tracking=only", "__session=arbitrary",
-		"authjs.session-token.bad=not-a-shard", "Authjs.session-token=wrong-case",
-	} {
-		_, err := normalizeOllamaCloudUsageCookie(invalid)
-		require.Error(t, err, invalid)
-	}
-	_, err = normalizeOllamaCloudUsageCookie("wos-session=" + strings.Repeat("x", ollamaCloudUsageMaxSessionBytes))
-	require.ErrorContains(t, err, "too large")
-}
-
-func TestParseOllamaCloudUsageHTMLFixture(t *testing.T) {
-	data, err := parseOllamaCloudUsageHTML(ollamaUsageFixture(t))
-	require.NoError(t, err)
-	require.Equal(t, "max", data.Plan)
-	require.NotNil(t, data.FiveHour)
-	require.Equal(t, 5.6, data.FiveHour.UsedPercent)
-	require.NotNil(t, data.FiveHour.ResetAt)
-	require.Equal(t, time.Date(2026, time.July, 23, 3, 0, 0, 0, time.UTC), *data.FiveHour.ResetAt)
-	require.NotNil(t, data.SevenDay)
-	require.Equal(t, 14.2, data.SevenDay.UsedPercent)
-	require.NotNil(t, data.SevenDay.ResetAt)
-	require.Equal(t, time.Date(2026, time.July, 29, 0, 0, 0, 0, time.UTC), *data.SevenDay.ResetAt)
-	require.Equal(t, "$0", data.Balance)
-	require.Equal(t, []OllamaCloudUsageModel{
-		{Model: "gpt-oss:120b-cloud", Window: OllamaCloudUsageModelWindowFiveHour, Requests: 2},
-		{Model: "qwen3-coder:480b-cloud", Window: OllamaCloudUsageModelWindowFiveHour, Requests: 3},
-		{Model: "gpt-oss:120b-cloud", Window: OllamaCloudUsageModelWindowSevenDay, Requests: 12},
-		{Model: "qwen3-coder:480b-cloud", Window: OllamaCloudUsageModelWindowSevenDay, Requests: 13},
-	}, data.Models)
-
-	_, err = parseOllamaCloudUsageHTML([]byte(`<html><body><main>Sign in to Ollama</main></body></html>`))
-	require.ErrorIs(t, err, errOllamaCloudUsageUnauthorizedHTML)
-	_, err = parseOllamaCloudUsageHTML([]byte(`<html><body><p>5 hour usage 42% used</p><form>Sign in to Ollama</form></body></html>`))
-	require.ErrorIs(t, err, errOllamaCloudUsageUnauthorizedHTML)
-	_, err = parseOllamaCloudUsageHTML([]byte(`<html><body><main>unrelated settings</main></body></html>`))
-	require.Error(t, err)
-}
-
-func TestParseOllamaCloudUsageHTMLMissingOptionalFieldsAndCSSWidthFallback(t *testing.T) {
-	data, err := parseOllamaCloudUsageHTML([]byte(`
-		<section>
-			<p>5 hour usage</p>
-			<div data-usage-track>
-				<div data-usage-segment style="width: 23.5%"><span data-model="model-a" data-requests="1,234"></span></div>
-				<div data-usage-segment data-model="model-a" data-requests="9,999" style="width: 0%"></div>
-			</div>
-		</section>`))
-	require.NoError(t, err)
-	require.Equal(t, 23.5, data.FiveHour.UsedPercent)
-	require.Nil(t, data.FiveHour.ResetAt)
-	require.Empty(t, data.Plan)
-	require.Nil(t, data.SevenDay)
-	require.Empty(t, data.Balance)
-	require.Equal(t, []OllamaCloudUsageModel{{
-		Model: "model-a", Window: OllamaCloudUsageModelWindowFiveHour, Requests: 1234,
-	}}, data.Models)
-}
-
-func TestParseOllamaCloudUsageHTMLMonthlyLayout(t *testing.T) {
-	data, err := parseOllamaCloudUsageHTML([]byte(`
-		<section>
-			<h2><span>Included usage</span><span>pro</span></h2>
-			<div>
-				<div><span>Monthly usage</span><span>$5.03 of $60 used</span></div>
-				<div data-time="2026-10-18T02:05:47Z">Resets in 4 weeks.</div>
-				<div data-usage-track aria-label="Monthly usage $5.03 of $60 used">
-					<button data-usage-segment style="width: 99%" aria-label="deepseek-v4.1-flash: 749 requests"></button>
-					<button data-usage-segment style="width: 1%" aria-label="deepseek-v4-flash:0731: 3 requests"></button>
-				</div>
-			</div>
-			<div><div><div>$0</div><div>Current balance</div></div></div>
-		</section>`))
-	require.NoError(t, err)
-	require.Equal(t, "pro", data.Plan)
-	require.Nil(t, data.FiveHour)
-	require.Nil(t, data.SevenDay)
-	require.NotNil(t, data.Monthly)
-	require.InDelta(t, 8.3833333333, data.Monthly.UsedPercent, 0.0000001)
-	require.NotNil(t, data.Monthly.ResetAt)
-	require.Equal(t, "2026-10-18T02:05:47Z", data.Monthly.ResetAt.Format(time.RFC3339))
-	require.Equal(t, "$0", data.Balance)
-	require.Equal(t, []OllamaCloudUsageModel{
-		{Model: "deepseek-v4-flash:0731", Window: OllamaCloudUsageModelWindowMonthly, Requests: 3},
-		{Model: "deepseek-v4.1-flash", Window: OllamaCloudUsageModelWindowMonthly, Requests: 749},
-	}, data.Models)
-}
-
-func TestParseOllamaCloudUsageHTMLMonthlyARIAWinsOverDistributionWidth(t *testing.T) {
-	data, err := parseOllamaCloudUsageHTML([]byte(`
-		<section>
-			<span>Monthly usage</span>
-			<div data-usage-track aria-label="Monthly usage $15 of $60 used">
-				<button data-usage-segment style="width: 100%" aria-label="deepseek-v4.1-flash: 100 requests"></button>
-			</div>
-		</section>`))
-	require.NoError(t, err)
-	require.NotNil(t, data.Monthly)
-	require.Equal(t, 25.0, data.Monthly.UsedPercent)
-}
-
-func TestParseOllamaCloudUsageHTMLResetElementVariants(t *testing.T) {
-	const want = "2026-07-23T03:00:00Z"
-	for name, element := range map[string]string{
-		"time datetime":  `<time datetime="` + want + `">2 hours.</time>`,
-		"custom element": `<local-time data-time="` + want + `">2 hours.</local-time>`,
-		"class token":    `<span class="text-xs local-time tabular-nums" data-time="` + want + `">2 hours.</span>`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			data, err := parseOllamaCloudUsageHTML([]byte(
-				`<div><div><span>Session usage</span><span>1% used</span></div><div>Resets in ` + element + `</div></div>`,
-			))
-			require.NoError(t, err)
-			require.NotNil(t, data.FiveHour)
-			require.NotNil(t, data.FiveHour.ResetAt)
-			require.Equal(t, want, data.FiveHour.ResetAt.Format(time.RFC3339))
-		})
-	}
-}
-
-func TestParseOllamaCloudUsageHTMLPlanAndBalanceFallbacks(t *testing.T) {
-	data, err := parseOllamaCloudUsageHTML([]byte(`
-		<section>
-			<h2><span>Cloud usage</span><span>max</span></h2>
-			<div><span>Plan</span><span>Pro</span></div>
-			<p>Credits currently available: USD $9.50</p>
-		</section>`))
-	require.NoError(t, err)
-	require.Equal(t, "max", data.Plan)
-	require.Equal(t, "USD$9.50", data.Balance)
-
-	data, err = parseOllamaCloudUsageHTML([]byte(`<div><span>Subscription</span><span>Pro</span></div>`))
-	require.NoError(t, err)
-	require.Equal(t, "Pro", data.Plan)
-}
-
 func TestOllamaCloudUsageManagedExtraCannotBeImported(t *testing.T) {
 	remoteExtra := map[string]any{
 		OllamaCloudUsageSessionExtraKey:     "remote-ciphertext",
 		OllamaCloudUsageAutoRefreshExtraKey: true,
 		OllamaCloudUsageSnapshotExtraKey:    map[string]any{"status": "forged"},
+		"ollama_cloud_usage_snapshot":       map[string]any{"status": "ok"},
 	}
 	created, err := buildAccountForCreate(&CreateAccountInput{
 		Name: "ollama", Platform: PlatformOllama, Type: AccountTypeAPIKey,
@@ -671,6 +495,7 @@ func TestOllamaCloudUsageManagedExtraCannotBeImported(t *testing.T) {
 	require.NotContains(t, created.Extra, OllamaCloudUsageSessionExtraKey)
 	require.NotContains(t, created.Extra, OllamaCloudUsageAutoRefreshExtraKey)
 	require.NotContains(t, created.Extra, OllamaCloudUsageSnapshotExtraKey)
+	require.NotContains(t, created.Extra, "ollama_cloud_usage_snapshot")
 
 	existing := ollamaUsageAccount(6)
 	existing.Extra = map[string]any{
@@ -680,7 +505,8 @@ func TestOllamaCloudUsageManagedExtraCannotBeImported(t *testing.T) {
 	}
 	targetExtra := mergeMap(existing.Extra, remoteExtra)
 	reconcileCRSUpstreamBillingProbeExtra(existing, existing.Platform, existing.Type, mergeMap(existing.Credentials, nil), targetExtra)
-	require.Equal(t, "local-ciphertext", targetExtra[OllamaCloudUsageSessionExtraKey])
+	require.NotContains(t, targetExtra, OllamaCloudUsageSessionExtraKey)
+	require.NotContains(t, targetExtra, "ollama_cloud_usage_snapshot")
 	require.Equal(t, false, targetExtra[OllamaCloudUsageAutoRefreshExtraKey])
 	require.Equal(t, map[string]any{"status": OllamaCloudUsageStatusOK}, targetExtra[OllamaCloudUsageSnapshotExtraKey])
 
@@ -718,86 +544,69 @@ func TestAccountServiceUpdateStripsOllamaManagedExtra(t *testing.T) {
 	require.Contains(t, requestedExtra, OllamaCloudUsageSessionExtraKey)
 }
 
-func TestOllamaCloudUsageSessionEncryptionFailClosedAndWriteOnlyState(t *testing.T) {
-	account := ollamaUsageAccount(7)
-	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{7: account}}}
-	settings := &upstreamBillingProbeSettingRepo{}
-
-	ephemeral := newOllamaUsageTestService(t, repo, &ollamaUsageHTTPStub{}, settings, false)
-	_, err := ephemeral.SaveSession(context.Background(), 7, "wos-session=plaintext-secret")
-	require.ErrorIs(t, err, ErrOllamaCloudUsageEncryptionKey)
-	require.NotContains(t, account.Extra, OllamaCloudUsageSessionExtraKey)
-
-	svc := newOllamaUsageTestService(t, repo, &ollamaUsageHTTPStub{}, settings, true)
-	_, err = svc.SaveSession(context.Background(), 7, "tracking=arbitrary-only")
-	require.Error(t, err)
-	require.NotContains(t, account.Extra, OllamaCloudUsageSessionExtraKey)
-
-	state, err := svc.SaveSession(context.Background(), 7, "tracking=must-not-persist; wos-session=plaintext-secret")
-	require.NoError(t, err)
-	require.True(t, state.Configured)
-	stored, ok := account.Extra[OllamaCloudUsageSessionExtraKey].(string)
-	require.True(t, ok)
-	require.Equal(t, "cipher:wos-session=plaintext-secret", stored)
-	require.NotContains(t, stored, "tracking")
-	raw, err := json.Marshal(state)
-	require.NoError(t, err)
-	require.NotContains(t, string(raw), "plaintext-secret")
-	require.NotContains(t, string(raw), "cipher:")
-
-	account.Extra[OllamaCloudUsageSessionExtraKey] = "plaintext-secret"
-	_, err = svc.Refresh(context.Background(), 7)
-	require.ErrorContains(t, err, "cannot be decrypted")
-}
-
-func TestOllamaCloudUsageGroupSharesAcrossPlatformsURLVariantsAndDynamicSiblings(t *testing.T) {
+func TestOllamaCloudUsageGroupSharesAcrossURLVariantsAndNewSiblings(t *testing.T) {
+	now := time.Date(2026, time.November, 9, 3, 0, 0, 0, time.UTC)
 	source := ollamaUsageAccount(71)
 	source.Credentials["api_key"] = "shared-key"
-	source.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=shared"
+
 	source.Extra[OllamaCloudUsageAutoRefreshExtraKey] = true
 	source.Extra[OllamaCloudUsageSnapshotExtraKey] = &OllamaCloudUsageSnapshot{
-		Status: OllamaCloudUsageStatusOK,
-		Data:   &OllamaCloudUsageData{Plan: "pro"},
+		Status:        OllamaCloudUsageStatusOK,
+		Data:          &OllamaCloudUsageData{Balance: "$25"},
+		LastAttemptAt: now.Add(-time.Hour),
 	}
-	source.UpdatedAt = time.Now().Add(-time.Minute)
+	source.UpdatedAt = now.Add(-time.Minute)
 	sibling := ollamaUsageAccount(72)
 	sibling.Credentials = map[string]any{"base_url": "https://ollama.com/v1", "api_key": "shared-key"}
-	sibling.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=shared"
+
 	sibling.Extra[OllamaCloudUsageAutoRefreshExtraKey] = true
-	sibling.UpdatedAt = time.Now()
+	sibling.UpdatedAt = now
 	different := ollamaUsageAccount(73)
 	different.Credentials["api_key"] = "different-key"
 	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
 		source.ID: source, sibling.ID: sibling, different.ID: different,
 	}}}
-	svc := newOllamaUsageTestService(t, repo, &ollamaUsageHTTPStub{}, &upstreamBillingProbeSettingRepo{}, true)
+	svc := newOllamaUsageTestService(t, repo, &ollamaUsageHTTPStub{body: ollamaUsageFixture(t)}, &upstreamBillingProbeSettingRepo{})
+	svc.now = func() time.Time { return now }
 
 	state, err := svc.GetState(context.Background(), sibling.ID)
 	require.NoError(t, err)
 	require.True(t, state.Configured)
 	require.True(t, state.AutoRefreshEnabled)
-	require.Equal(t, "pro", state.Snapshot.Data.Plan)
+	require.Equal(t, "$25", state.Snapshot.Data.Balance)
 
 	differentState, err := svc.GetState(context.Background(), different.ID)
 	require.NoError(t, err)
-	require.False(t, differentState.Configured)
+	require.True(t, differentState.Configured)
 
 	newSibling := ollamaUsageAccount(74)
 	newSibling.Credentials = map[string]any{"base_url": "https://ollama.com:443", "api_key": "shared-key"}
+	newSibling.UpdatedAt = now.Add(time.Minute)
 	repo.mu.Lock()
 	repo.accounts[newSibling.ID] = newSibling
 	repo.mu.Unlock()
 	newState, err := svc.GetState(context.Background(), newSibling.ID)
 	require.NoError(t, err)
 	require.True(t, newState.Configured)
+	require.True(t, newState.AutoRefreshEnabled)
 	require.Equal(t, state.Snapshot, newState.Snapshot)
+
+	state, err = svc.SetAutoRefresh(context.Background(), newSibling.ID, false)
+	require.NoError(t, err)
+	require.False(t, state.AutoRefreshEnabled)
+	for _, account := range []*Account{source, sibling, newSibling} {
+		require.Equal(t, false, account.Extra[OllamaCloudUsageAutoRefreshExtraKey])
+	}
+	state, err = svc.Refresh(context.Background(), newSibling.ID)
+	require.NoError(t, err)
+	require.Equal(t, OllamaCloudUsageStatusOK, state.Snapshot.Status)
 
 	before := repo.groupResolveCalls.Load()
 	require.NoError(t, svc.ResolveAccounts(context.Background(), []*Account{source, sibling, different, newSibling}))
 	require.Equal(t, before+1, repo.groupResolveCalls.Load(), "one list batch must issue one group lookup")
 }
 
-func TestOllamaCloudUsageSaveAutoRefreshAndDeleteAreGroupScoped(t *testing.T) {
+func TestOllamaCloudUsageAutoRefreshIsGroupScoped(t *testing.T) {
 	first := ollamaUsageAccount(81)
 	first.Credentials["api_key"] = "shared-key"
 	second := ollamaUsageAccount(82)
@@ -807,39 +616,31 @@ func TestOllamaCloudUsageSaveAutoRefreshAndDeleteAreGroupScoped(t *testing.T) {
 	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
 		first.ID: first, second.ID: second, different.ID: different,
 	}}}
-	svc := newOllamaUsageTestService(t, repo, &ollamaUsageHTTPStub{}, &upstreamBillingProbeSettingRepo{}, true)
+	svc := newOllamaUsageTestService(t, repo, &ollamaUsageHTTPStub{}, &upstreamBillingProbeSettingRepo{})
 
-	state, err := svc.SaveSession(context.Background(), second.ID, "wos-session=shared-browser")
-	require.NoError(t, err)
-	require.True(t, state.Configured)
-	require.Equal(t, "cipher:wos-session=shared-browser", first.Extra[OllamaCloudUsageSessionExtraKey])
-	require.Equal(t, first.Extra[OllamaCloudUsageSessionExtraKey], second.Extra[OllamaCloudUsageSessionExtraKey])
-	require.NotContains(t, different.Extra, OllamaCloudUsageSessionExtraKey)
-
-	state, err = svc.SetAutoRefresh(context.Background(), first.ID, true)
+	state, err := svc.SetAutoRefresh(context.Background(), first.ID, true)
 	require.NoError(t, err)
 	require.True(t, state.AutoRefreshEnabled)
 	require.Equal(t, true, first.Extra[OllamaCloudUsageAutoRefreshExtraKey])
 	require.Equal(t, true, second.Extra[OllamaCloudUsageAutoRefreshExtraKey])
 
-	state, err = svc.DeleteSession(context.Background(), second.ID)
+	state, err = svc.SetAutoRefresh(context.Background(), second.ID, false)
 	require.NoError(t, err)
-	require.False(t, state.Configured)
-	for _, member := range []*Account{first, second} {
-		require.NotContains(t, member.Extra, OllamaCloudUsageSessionExtraKey)
-		require.NotContains(t, member.Extra, OllamaCloudUsageAutoRefreshExtraKey)
-		require.NotContains(t, member.Extra, OllamaCloudUsageSnapshotExtraKey)
-	}
+	require.True(t, state.Configured)
+	require.False(t, state.AutoRefreshEnabled)
+	require.Equal(t, false, first.Extra[OllamaCloudUsageAutoRefreshExtraKey])
+	require.Equal(t, false, second.Extra[OllamaCloudUsageAutoRefreshExtraKey])
+	require.NotContains(t, different.Extra, OllamaCloudUsageAutoRefreshExtraKey)
 }
 
 func TestOllamaCloudUsageRefreshSingleflightAndRunnerDeduplicateSharedGroup(t *testing.T) {
 	first := ollamaUsageAccount(91)
 	first.Credentials["api_key"] = "shared-key"
-	first.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=shared"
+
 	first.Extra[OllamaCloudUsageAutoRefreshExtraKey] = true
 	second := ollamaUsageAccount(92)
 	second.Credentials = map[string]any{"base_url": "https://ollama.com:443/v1", "api_key": "shared-key"}
-	second.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=shared"
+
 	second.Extra[OllamaCloudUsageAutoRefreshExtraKey] = true
 	repo := &ollamaUsageTestRepo{
 		upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{first.ID: first, second.ID: second}},
@@ -855,7 +656,7 @@ func TestOllamaCloudUsageRefreshSingleflightAndRunnerDeduplicateSharedGroup(t *t
 		once.Do(func() { close(started) })
 		<-release
 	}}
-	svc := newOllamaUsageTestService(t, repo, upstream, settingsRepo, true)
+	svc := newOllamaUsageTestService(t, repo, upstream, settingsRepo)
 
 	errs := make(chan error, 2)
 	go func() { _, err := svc.Refresh(context.Background(), first.ID); errs <- err }()
@@ -889,11 +690,11 @@ func TestOllamaCloudUsageRefreshSingleflightAndRunnerDeduplicateSharedGroup(t *t
 
 func TestOllamaCloudUsageRefreshRejectsGroupChangeBeforeUpstreamRequest(t *testing.T) {
 	account := ollamaUsageAccount(94)
-	account.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=secret"
+
 	base := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}}
 	repo := &ollamaRefreshPreflightIdentityChangeRepo{ollamaUsageTestRepo: base}
 	upstream := &ollamaUsageHTTPStub{body: ollamaUsageFixture(t)}
-	svc := NewOllamaCloudUsageService(repo, upstream, NewSettingService(&upstreamBillingProbeSettingRepo{}, nil), ollamaUsageTestEncryptor{}, true)
+	svc := NewOllamaCloudUsageService(repo, upstream, NewSettingService(&upstreamBillingProbeSettingRepo{}, nil))
 	t.Cleanup(svc.Stop)
 
 	_, err := svc.Refresh(context.Background(), account.ID)
@@ -903,36 +704,42 @@ func TestOllamaCloudUsageRefreshRejectsGroupChangeBeforeUpstreamRequest(t *testi
 	require.NotContains(t, account.Extra, OllamaCloudUsageSnapshotExtraKey)
 }
 
-func TestOllamaCloudUsageRefreshUsesFixedURLCookieAndNoRedirects(t *testing.T) {
+func TestOllamaCloudUsageRefreshUsesFixedURLsBearerAndNoRedirects(t *testing.T) {
 	account := ollamaUsageAccount(8)
-	account.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=browser-secret; tracking=must-not-send"
+
+	account.Extra[OllamaCloudUsageSessionExtraKey] = "legacy-cookie-must-not-be-sent"
 	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{8: account}}}
 	upstream := &ollamaUsageHTTPStub{body: ollamaUsageFixture(t)}
-	svc := newOllamaUsageTestService(t, repo, upstream, &upstreamBillingProbeSettingRepo{}, true)
+	svc := newOllamaUsageTestService(t, repo, upstream, &upstreamBillingProbeSettingRepo{})
 	fixedNow := time.Date(2026, time.July, 22, 15, 0, 0, 0, time.UTC)
 	svc.now = func() time.Time { return fixedNow }
 
 	state, err := svc.Refresh(context.Background(), 8)
 	require.NoError(t, err)
 	require.Equal(t, OllamaCloudUsageStatusOK, state.Snapshot.Status)
-	require.Equal(t, "https://ollama.com/settings", upstream.lastRequest.URL.String())
+	require.Equal(t, ollamaCloudUsageBalanceURL, upstream.lastRequest.URL.String())
 	require.Equal(t, "ollama.com", upstream.lastRequest.Host)
-	require.Equal(t, "wos-session=browser-secret", upstream.lastRequest.Header.Get("Cookie"))
-	require.NotContains(t, upstream.lastRequest.Header.Get("Cookie"), "tracking")
-	require.Empty(t, upstream.lastRequest.Header.Get("Authorization"))
+	require.Empty(t, upstream.lastRequest.Header.Get("Cookie"))
+	require.Equal(t, "Bearer key-8", upstream.lastRequest.Header.Get("Authorization"))
+	require.Equal(t, ollamaCloudUsageHistoryURL, upstream.usageRequest.URL.String())
+	require.Equal(t, http.MethodGet, upstream.lastRequest.Method)
+	require.Equal(t, http.MethodGet, upstream.usageRequest.Method)
+	require.Equal(t, "Bearer key-8", upstream.usageRequest.Header.Get("Authorization"))
+	require.Empty(t, upstream.usageRequest.Header.Get("Cookie"))
+	require.True(t, HTTPUpstreamRedirectsDisabled(upstream.usageRequest.Context()))
 	require.True(t, HTTPUpstreamRedirectsDisabled(upstream.lastRequest.Context()))
 }
 
 func TestOllamaCloudUsageRefreshFetchesEmailForAPIKey(t *testing.T) {
 	account := ollamaUsageAccount(88)
-	account.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=browser-secret"
+
 	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{88: account}}}
 	upstream := &ollamaUsageHTTPStub{
 		body:          ollamaUsageFixture(t),
 		profileStatus: http.StatusOK,
 		profileBody:   []byte(`{"email":"key-owner@example.com","name":"Owner"}`),
 	}
-	svc := newOllamaUsageTestService(t, repo, upstream, &upstreamBillingProbeSettingRepo{}, true)
+	svc := newOllamaUsageTestService(t, repo, upstream, &upstreamBillingProbeSettingRepo{})
 
 	state, err := svc.Refresh(context.Background(), 88)
 	require.NoError(t, err)
@@ -946,10 +753,10 @@ func TestOllamaCloudUsageRefreshFetchesEmailForAPIKey(t *testing.T) {
 
 	// An unavailable profile endpoint must not invalidate a successful usage fetch.
 	other := ollamaUsageAccount(89)
-	other.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=other"
+
 	otherRepo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{89: other}}}
 	otherUpstream := &ollamaUsageHTTPStub{body: ollamaUsageFixture(t)}
-	otherSvc := newOllamaUsageTestService(t, otherRepo, otherUpstream, &upstreamBillingProbeSettingRepo{}, true)
+	otherSvc := newOllamaUsageTestService(t, otherRepo, otherUpstream, &upstreamBillingProbeSettingRepo{})
 	state, err = otherSvc.Refresh(context.Background(), 89)
 	require.NoError(t, err)
 	require.Empty(t, state.Snapshot.Data.Email)
@@ -957,10 +764,10 @@ func TestOllamaCloudUsageRefreshFetchesEmailForAPIKey(t *testing.T) {
 
 func TestOllamaCloudUsageManualRefreshUsesShortIndependentInterval(t *testing.T) {
 	account := ollamaUsageAccount(12)
-	account.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=initial"
+
 	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{12: account}}}
 	upstream := &ollamaUsageHTTPStub{body: ollamaUsageFixture(t)}
-	svc := newOllamaUsageTestService(t, repo, upstream, &upstreamBillingProbeSettingRepo{}, true)
+	svc := newOllamaUsageTestService(t, repo, upstream, &upstreamBillingProbeSettingRepo{})
 	fixedNow := time.Date(2026, time.July, 22, 15, 0, 0, 0, time.UTC)
 	svc.now = func() time.Time { return fixedNow }
 
@@ -970,10 +777,7 @@ func TestOllamaCloudUsageManualRefreshUsesShortIndependentInterval(t *testing.T)
 	require.ErrorIs(t, err, ErrOllamaCloudUsageRefreshRateLimited)
 	require.Equal(t, int64(1), upstream.calls.Load())
 
-	// Saving a repaired session clears the prior snapshot, so the global 60-minute
-	// next_refresh_at does not block immediate administrator verification.
-	_, err = svc.SaveSession(context.Background(), 12, "wos-session=repaired")
-	require.NoError(t, err)
+	fixedNow = fixedNow.Add(ollamaCloudUsageManualRefreshInterval)
 	_, err = svc.Refresh(context.Background(), 12)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), upstream.calls.Load())
@@ -981,7 +785,7 @@ func TestOllamaCloudUsageManualRefreshUsesShortIndependentInterval(t *testing.T)
 
 func TestOllamaCloudUsageRefreshUsesHydratedProxyIdentity(t *testing.T) {
 	account := ollamaUsageAccount(13)
-	account.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=secret"
+
 	proxyID := int64(4)
 	account.ProxyID = &proxyID
 	account.Proxy = &Proxy{
@@ -990,7 +794,7 @@ func TestOllamaCloudUsageRefreshUsesHydratedProxyIdentity(t *testing.T) {
 	}
 	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{13: account}}}
 	upstream := &ollamaUsageHTTPStub{body: ollamaUsageFixture(t)}
-	svc := newOllamaUsageTestService(t, repo, upstream, &upstreamBillingProbeSettingRepo{}, true)
+	svc := newOllamaUsageTestService(t, repo, upstream, &upstreamBillingProbeSettingRepo{})
 
 	_, err := svc.Refresh(context.Background(), 13)
 	require.NoError(t, err)
@@ -1009,9 +813,9 @@ func TestOllamaCloudUsageRedirectAndBodyLimitArePersistedSafely(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			account := ollamaUsageAccount(9)
-			account.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=secret"
+
 			repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{9: account}}}
-			svc := newOllamaUsageTestService(t, repo, &ollamaUsageHTTPStub{status: test.status, body: test.body}, &upstreamBillingProbeSettingRepo{}, true)
+			svc := newOllamaUsageTestService(t, repo, &ollamaUsageHTTPStub{status: test.status, body: test.body}, &upstreamBillingProbeSettingRepo{})
 			state, err := svc.Refresh(context.Background(), 9)
 			require.NoError(t, err)
 			require.Equal(t, OllamaCloudUsageStatusFailed, state.Snapshot.Status)
@@ -1022,10 +826,10 @@ func TestOllamaCloudUsageRedirectAndBodyLimitArePersistedSafely(t *testing.T) {
 
 func TestOllamaCloudUsageRefreshRejectsIdentityChange(t *testing.T) {
 	account := ollamaUsageAccount(10)
-	account.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=secret"
+
 	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{10: account}}}
 	repo.beforeSnapshot = func() { account.Credentials["api_key"] = "rotated" }
-	svc := newOllamaUsageTestService(t, repo, &ollamaUsageHTTPStub{body: ollamaUsageFixture(t)}, &upstreamBillingProbeSettingRepo{}, true)
+	svc := newOllamaUsageTestService(t, repo, &ollamaUsageHTTPStub{body: ollamaUsageFixture(t)}, &upstreamBillingProbeSettingRepo{})
 	_, err := svc.Refresh(context.Background(), 10)
 	require.ErrorIs(t, err, ErrOllamaCloudUsageIdentityChanged)
 	require.NotContains(t, account.Extra, OllamaCloudUsageSnapshotExtraKey)
@@ -1033,7 +837,7 @@ func TestOllamaCloudUsageRefreshRejectsIdentityChange(t *testing.T) {
 
 func TestOllamaCloudUsageRunnerHonorsLeaderLockAndBackoff(t *testing.T) {
 	account := ollamaUsageAccount(11)
-	account.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=secret"
+
 	account.Extra[OllamaCloudUsageAutoRefreshExtraKey] = true
 	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{11: account}}}
 	upstream := &ollamaUsageHTTPStub{body: ollamaUsageFixture(t)}
@@ -1043,7 +847,7 @@ func TestOllamaCloudUsageRunnerHonorsLeaderLockAndBackoff(t *testing.T) {
 	cache := &fakeLeaderLockCache{}
 	_, acquired := tryAcquireSingletonLeaderLock(context.Background(), cache, nil, ollamaCloudUsageLeaderLockKey, "peer", time.Minute)
 	require.True(t, acquired)
-	svc := newOllamaUsageTestService(t, repo, upstream, settingsRepo, true)
+	svc := newOllamaUsageTestService(t, repo, upstream, settingsRepo)
 	svc.lockCache = cache
 	require.NoError(t, svc.RunDue(context.Background()))
 	require.Zero(t, upstream.calls.Load())
@@ -1060,7 +864,7 @@ func TestOllamaCloudUsageRunnerHonorsLeaderLockAndBackoff(t *testing.T) {
 
 func TestOllamaCloudUsageRunnerDisablesAutoRefreshAfterUnpersistableIdentityError(t *testing.T) {
 	account := ollamaUsageAccount(14)
-	account.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=secret"
+
 	account.Extra[OllamaCloudUsageAutoRefreshExtraKey] = true
 	missingProxyID := int64(99)
 	account.ProxyID = &missingProxyID
@@ -1070,7 +874,7 @@ func TestOllamaCloudUsageRunnerDisablesAutoRefreshAfterUnpersistableIdentityErro
 		SettingKeyOllamaCloudUsageSettings: `{"enabled":true,"interval_minutes":60}`,
 	}}
 	upstream := &ollamaUsageHTTPStub{body: ollamaUsageFixture(t)}
-	svc := newOllamaUsageTestService(t, repo, upstream, settingsRepo, true)
+	svc := newOllamaUsageTestService(t, repo, upstream, settingsRepo)
 
 	require.NoError(t, svc.RunDue(context.Background()))
 	require.Equal(t, int64(1), repo.disableAutoCalls.Load())
@@ -1085,11 +889,11 @@ func TestOllamaCloudUsageRunnerDisablesAutoRefreshAfterUnpersistableIdentityErro
 func TestOllamaCloudUsageRunnerIdentityChangePreservesOldGroupAndDoesNotLoop(t *testing.T) {
 	anchor := ollamaUsageAccount(15)
 	anchor.Credentials["api_key"] = "shared-before-rotation"
-	anchor.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=secret"
+
 	anchor.Extra[OllamaCloudUsageAutoRefreshExtraKey] = true
 	sibling := ollamaUsageAccount(16)
 	sibling.Credentials = map[string]any{"api_key": "shared-before-rotation", "base_url": "https://ollama.com:443/v1"}
-	sibling.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=secret"
+
 	sibling.Extra[OllamaCloudUsageAutoRefreshExtraKey] = true
 	dueAnchor := *anchor
 	dueAnchor.Credentials = mergeMap(nil, anchor.Credentials)
@@ -1115,7 +919,7 @@ func TestOllamaCloudUsageRunnerIdentityChangePreservesOldGroupAndDoesNotLoop(t *
 		SettingKeyOllamaCloudUsageSettings: `{"enabled":true,"interval_minutes":60}`,
 	}}
 	upstream := &ollamaUsageHTTPStub{body: ollamaUsageFixture(t)}
-	svc := newOllamaUsageTestService(t, repo, upstream, settingsRepo, true)
+	svc := newOllamaUsageTestService(t, repo, upstream, settingsRepo)
 
 	require.NoError(t, svc.RunDue(context.Background()))
 	require.Equal(t, int64(1), repo.disableAutoAttempts.Load())
@@ -1135,7 +939,7 @@ func TestOllamaCloudUsageSingleflightConcurrencyAndRunnerSwitches(t *testing.T) 
 	accounts := make(map[int64]*Account)
 	for id := int64(1); id <= 7; id++ {
 		account := ollamaUsageAccount(id)
-		account.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=secret"
+
 		account.Extra[OllamaCloudUsageAutoRefreshExtraKey] = true
 		accounts[id] = account
 	}
@@ -1147,7 +951,7 @@ func TestOllamaCloudUsageSingleflightConcurrencyAndRunnerSwitches(t *testing.T) 
 		<-unblock
 	}}
 	settingsRepo := &upstreamBillingProbeSettingRepo{values: map[string]string{}}
-	svc := newOllamaUsageTestService(t, repo, upstream, settingsRepo, true)
+	svc := newOllamaUsageTestService(t, repo, upstream, settingsRepo)
 
 	// Global automatic refresh is fail-safe off by default.
 	require.NoError(t, svc.RunDue(context.Background()))
@@ -1185,62 +989,16 @@ func TestOllamaCloudUsageSingleflightConcurrencyAndRunnerSwitches(t *testing.T) 
 	require.Equal(t, int64(8), upstream.calls.Load())
 }
 
-func TestParseOllamaCloudUsageHTMLMonthlyCreditsLongModelList(t *testing.T) {
-	body, err := os.ReadFile("testdata/ollama_settings_monthly_credits.html")
-	require.NoError(t, err)
-	data, err := parseOllamaCloudUsageHTML(body)
-	require.NoError(t, err)
-	require.NotNil(t, data.Monthly)
-	require.Equal(t, 50.0, data.Monthly.UsedPercent)
-	require.Nil(t, data.FiveHour)
-	require.Nil(t, data.SevenDay)
-	require.Nil(t, data.Monthly.ResetAt, "do not invent a precise reset from a rounded refill hint")
-	require.Equal(t, "Refills in 1 week", data.Monthly.ResetText)
-	require.Equal(t, "$40", data.Balance)
-	require.Len(t, data.Models, 24)
-	require.Equal(t, OllamaCloudUsageModelWindowMonthly, data.Models[0].Window)
-}
-
-func TestParseOllamaCloudUsageHTMLMonthlyCreditsRatios(t *testing.T) {
-	for _, tt := range []struct {
-		label string
-		want  float64
-		valid bool
-	}{
-		{"Monthly credits used: $0 of $300", 0, true},
-		{"Monthly credits used: $300 of $300", 100, true},
-		{"Monthly credits used: $1,500.25 of $3,000.50", 50, true},
-		{"Monthly credits used: $0 of $0", 0, false},
-		{"Monthly credits used: $-1 of $300", 0, false},
-		{"Monthly credits used: $301 of $300", 0, false},
-		{"Monthly credits used: $150 of $300 remaining", 0, false},
-	} {
-		t.Run(tt.label, func(t *testing.T) {
-			got, ok := ollamaUsagePercentFromRatio(tt.label)
-			require.Equal(t, tt.valid, ok)
-			if ok {
-				require.InDelta(t, tt.want, got, 0.00001)
-			}
-		})
-	}
-	// The monthly model distribution always sums to 100%; it is not quota usage.
-	data, err := parseOllamaCloudUsageHTML([]byte(`<div><span>Balance remaining</span><span>$40</span></div><section><span>Monthly credits used</span><div data-usage-track aria-label="Monthly credits used: unavailable"><button data-usage-segment style="width:100%" aria-label="example: 3 requests"></button></div></section>`))
-	require.NoError(t, err)
-	require.Nil(t, data.Monthly)
-}
-
 func TestOllamaCloudUsageIncompleteRefreshPreservesPreviousData(t *testing.T) {
 	for _, scheduled := range []bool{false, true} {
 		t.Run(fmt.Sprintf("scheduled=%v", scheduled), func(t *testing.T) {
 			account := ollamaUsageAccount(701)
-			account.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=test"
+
 			account.Extra[OllamaCloudUsageAutoRefreshExtraKey] = true
 			repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}}
-			body, err := os.ReadFile("testdata/ollama_settings_monthly_credits.html")
-			require.NoError(t, err)
-			upstream := &ollamaUsageHTTPStub{body: body}
+			upstream := &ollamaUsageHTTPStub{body: ollamaUsageFixture(t)}
 			settingsRepo := &upstreamBillingProbeSettingRepo{values: map[string]string{SettingKeyOllamaCloudUsageSettings: `{"enabled":true,"interval_minutes":60,"debounce_minutes":1}`}}
-			svc := newOllamaUsageTestService(t, repo, upstream, settingsRepo, true)
+			svc := newOllamaUsageTestService(t, repo, upstream, settingsRepo)
 			now := time.Date(2026, time.October, 8, 8, 0, 0, 0, time.UTC)
 			svc.now = func() time.Time { return now }
 			refresh := func() {
@@ -1259,7 +1017,7 @@ func TestOllamaCloudUsageIncompleteRefreshPreservesPreviousData(t *testing.T) {
 			now = now.Add(2 * time.Hour)
 			activity := now.Add(-5 * time.Minute)
 			account.LastUsedAt = &activity
-			upstream.body = []byte(`<div><span>Balance remaining</span><span>$39</span></div>`)
+			upstream.body = []byte(`{"included":{},"purchased":{"balance_usd":39}}`)
 			refresh()
 			after := decodeOllamaCloudUsageSnapshot(account.Extra)
 			require.Equal(t, OllamaCloudUsageStatusFailed, after.Status)
@@ -1274,53 +1032,224 @@ func TestOllamaCloudUsageIncompleteRefreshPreservesPreviousData(t *testing.T) {
 	}
 }
 
-// 2026-10 真实页面：刷新日期只在余额卡片 tooltip 的 "Refills to $300 on November 18, 2026"。
-func TestParseOllamaCloudUsageHTMLCredits202610(t *testing.T) {
-	body, err := os.ReadFile("testdata/ollama_settings_credits_202610.html")
-	require.NoError(t, err)
-	data, err := parseOllamaCloudUsageHTML(body)
-	require.NoError(t, err)
-	require.NotNil(t, data.Monthly)
-	require.InDelta(t, 61.77, data.Monthly.UsedPercent, 0.01)
-	require.NotNil(t, data.Monthly.ResetAt)
-	require.Equal(t, "2026-11-18T00:00:00Z", data.Monthly.ResetAt.Format(time.RFC3339))
-	require.Equal(t, "Refills in 2 weeks", data.Monthly.ResetText)
-	require.Equal(t, "$114.68", data.Balance)
-	require.Nil(t, data.FiveHour)
-	require.Nil(t, data.SevenDay)
-
-	// 同一页面若月度额度用满且余额为 0：429 后限流到刷新日期。
-	data.Monthly.UsedPercent, data.Balance = 100, "$0"
-	now := time.Date(2026, 10, 29, 17, 0, 0, 0, time.UTC)
-	reset, ok := ollamaCloudUsageExhaustionResetAt(&OllamaCloudUsageSnapshot{Status: OllamaCloudUsageStatusOK, Data: data, FetchedAt: &now}, now, now.Add(-time.Minute))
-	require.True(t, ok)
-	require.Equal(t, "2026-11-18T00:00:00Z", reset.Format(time.RFC3339))
-}
-
-func TestParseOllamaCloudUsageHTMLCreditRefillHintScope(t *testing.T) {
-	monthly := `<section><span>Monthly credits used</span><div data-usage-track aria-label="Monthly credits used: $30 of $300"></div></section>`
-	for _, tt := range []struct{ name, html, want string }{
-		{"separate balance card", `<p>Refills to $300 in 1 week.</p>` + monthly, "Refills in 1 week"},
-		{"nested text and whitespace", `<p>Refills to <span>$300</span> in <span>2 days</span>.</p>` + monthly, "Refills in 2 days"},
-		{"same hint duplicated", `<p>Refills to $300 in 1 week.</p><p>Refills to $300 in 1 week.</p>` + monthly, "Refills in 1 week"},
-		{"ambiguous balances", `<p>Refills to $300 in 1 week.</p><p>Refills to $60 in 2 weeks.</p>` + monthly, ""},
-		{"auto reload is not refill date", `<p>Automatically add $300 when credits are low.</p>` + monthly, ""},
-		{"balance card relative wording", `<p>Monthly credits refill in 2 weeks</p>` + monthly, "Refills in 2 weeks"},
+func TestOllamaCloudBalanceAPI(t *testing.T) {
+	for _, test := range []struct {
+		name, body, balance string
+		monthly             *float64
+	}{
+		{"monthly", `{"included":{"balance_usd":72.5,"allowance_usd":100,"period":{"from":"2026-09-15T09:30:00Z","until":"2026-10-15T09:30:00Z"}},"purchased":{"balance_usd":25}}`, "$97.5", func() *float64 { v := 27.5; return &v }()},
+		{"fractional sum", `{"included":{"balance_usd":0.1,"allowance_usd":1,"period":{"from":"2026-09-15T09:30:00Z","until":"2026-10-15T09:30:00Z"}},"purchased":{"balance_usd":0.2}}`, "$0.3", func() *float64 { v := 90.0; return &v }()},
+		{"zero allowance", `{"included":{"balance_usd":0,"allowance_usd":0,"period":{"from":"2026-09-15T09:30:00Z","until":"2026-10-15T09:30:00Z"}},"purchased":{"balance_usd":0}}`, "$0", nil},
+		{"tiny purchased credits", `{"included":{"balance_usd":0,"allowance_usd":100,"period":{"from":"2026-09-15T09:30:00Z","until":"2026-10-15T09:30:00Z"}},"purchased":{"balance_usd":0.00000001}}`, "$0.00000001", func() *float64 { v := 100.0; return &v }()},
 	} {
-		t.Run(tt.name, func(t *testing.T) {
-			d, e := parseOllamaCloudUsageHTML([]byte(tt.html))
-			require.NoError(t, e)
-			require.Equal(t, tt.want, d.Monthly.ResetText)
-			require.Nil(t, d.Monthly.ResetAt)
+		t.Run(test.name, func(t *testing.T) {
+			data, err := parseOllamaCloudBalance([]byte(test.body))
+			require.NoError(t, err)
+			require.Equal(t, test.balance, data.Balance)
+			require.Nil(t, data.FiveHour)
+			require.Nil(t, data.SevenDay)
+			if test.monthly == nil {
+				require.Nil(t, data.Monthly)
+			} else {
+				require.InDelta(t, *test.monthly, data.Monthly.UsedPercent, 1e-9)
+				require.Equal(t, "2026-10-15T09:30:00Z", data.Monthly.ResetAt.Format(time.RFC3339))
+			}
 		})
 	}
-	d, e := parseOllamaCloudUsageHTML([]byte(`<p>Refills to $300 in 1 week.</p><section><p>Session usage 10% used</p></section>`))
-	require.NoError(t, e)
-	require.Empty(t, d.FiveHour.ResetText)
-	require.Nil(t, d.Monthly)
-	d, e = parseOllamaCloudUsageHTML([]byte(`<p>Refills to $300 in 1 week.</p><section><span>Monthly usage</span><span>10% used</span><time datetime="2026-10-18T02:05:47Z">Resets in 10 days</time></section>`))
-	require.NoError(t, e)
-	require.NotNil(t, d.Monthly.ResetAt)
-	require.Equal(t, "2026-10-18T02:05:47Z", d.Monthly.ResetAt.Format(time.RFC3339))
-	require.NotEqual(t, "Refills in 1 week", d.Monthly.ResetText)
+	legacy, err := parseOllamaCloudBalance([]byte(`{"included":{"session":{"remaining_percent":75,"resets_at":"2026-10-01T07:00:00Z"},"weekly":{"remaining_percent":40,"resets_at":"2026-10-05T00:00:00Z"}},"purchased":{"balance_usd":25}}`))
+	require.NoError(t, err)
+	require.Equal(t, "$25", legacy.Balance)
+	require.Equal(t, 25.0, legacy.FiveHour.UsedPercent)
+	require.Equal(t, 60.0, legacy.SevenDay.UsedPercent)
+	require.Equal(t, "2026-10-01T07:00:00Z", legacy.FiveHour.ResetAt.Format(time.RFC3339))
+	require.Equal(t, "2026-10-05T00:00:00Z", legacy.SevenDay.ResetAt.Format(time.RFC3339))
+	require.Nil(t, legacy.Monthly)
+}
+
+func TestOllamaCloudBalanceRequiresCompleteVariant(t *testing.T) {
+	for _, body := range []string{
+		`null`, `{}`, `{"included":{},"purchased":{"balance_usd":0}}`,
+		`{"included":{"balance_usd":0,"allowance_usd":100},"purchased":{"balance_usd":0}}`,
+		`{"included":{"session":{"remaining_percent":0,"resets_at":"2026-10-01T07:00:00Z"}},"purchased":{"balance_usd":0}}`,
+		`{"included":{"session":{"remaining_percent":101,"resets_at":"2026-10-01T07:00:00Z"},"weekly":{"remaining_percent":0,"resets_at":"2026-10-05T00:00:00Z"}},"purchased":{"balance_usd":0}}`,
+		`{"included":{"balance_usd":0,"allowance_usd":100,"period":{"from":"2026-09-15T00:00:00Z","until":"2026-10-15T00:00:00Z"}},"purchased":{}}`,
+	} {
+		_, err := parseOllamaCloudBalance([]byte(body))
+		require.ErrorIs(t, err, errOllamaCloudIncompleteUsage, body)
+	}
+	_, err := parseOllamaCloudBalance([]byte(`{"included":`))
+	require.ErrorIs(t, err, errOllamaCloudInvalidJSON)
+}
+
+func TestOllamaCloudUsageHistoryPreservesOptionalMetrics(t *testing.T) {
+	body := []byte(`{"range":"7d","scope":"self","from":"2026-09-24T00:00:00Z","until":"2026-10-01T02:30:00Z","totals":{"request_count":16,"usage_usd":0.0268,"input_tokens":116000,"cached_input_tokens":60000,"output_tokens":15000,"groups":[{"model":"glm-5.3","request_count":12,"usage_usd":0,"input_tokens":96000,"cached_input_tokens":0,"output_tokens":12000}],"remainder":{"request_count":4,"usage_usd":0.01}},"buckets":[{"unused":"discard"}]}`)
+	history, err := parseOllamaCloudUsage(body)
+	require.NoError(t, err)
+	require.Equal(t, int64(16), history.Totals.RequestCount)
+	require.Equal(t, 0.0268, *history.Totals.UsageUSD)
+	require.Equal(t, int64(116000), *history.Totals.InputTokens)
+	require.Equal(t, int64(60000), *history.Totals.CachedInputTokens)
+	require.Equal(t, int64(15000), *history.Totals.OutputTokens)
+	require.Equal(t, "2026-09-24T00:00:00Z", history.From.Format(time.RFC3339))
+	require.Equal(t, "2026-10-01T02:30:00Z", history.Until.Format(time.RFC3339))
+	require.Len(t, history.Totals.Groups, 1)
+	require.Equal(t, "glm-5.3", history.Totals.Groups[0].Model)
+	require.Zero(t, *history.Totals.Groups[0].UsageUSD)
+	require.Zero(t, *history.Totals.Groups[0].CachedInputTokens)
+	require.Equal(t, int64(4), history.Totals.Remainder.RequestCount)
+	raw, err := json.Marshal(history)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "buckets")
+
+	legacy, err := parseOllamaCloudUsage([]byte(`{"range":"7d","scope":"self","from":"2026-09-24T00:00:00Z","until":"2026-10-01T02:30:00Z","totals":{"request_count":0,"groups":[{"model":"old-model","request_count":0}],"remainder":{"request_count":0}}}`))
+	require.NoError(t, err)
+	raw, err = json.Marshal(legacy)
+	require.NoError(t, err)
+	for _, name := range []string{"usage_usd", "input_tokens", "cached_input_tokens", "output_tokens"} {
+		require.NotContains(t, string(raw), name)
+	}
+	require.Contains(t, string(raw), `"request_count":0`)
+}
+
+func TestOllamaCloudUsageHistoryRequiresCompleteFields(t *testing.T) {
+	for _, body := range []string{
+		`null`, `{}`,
+		`{"range":"7d","scope":"self","from":"2026-09-24T00:00:00Z","until":"2026-10-01T02:30:00Z","totals":{}}`,
+		`{"range":"30d","scope":"self","from":"2026-09-24T00:00:00Z","until":"2026-10-01T02:30:00Z","totals":{"request_count":0}}`,
+		`{"range":"7d","scope":"team","from":"2026-09-24T00:00:00Z","until":"2026-10-01T02:30:00Z","totals":{"request_count":0}}`,
+		`{"range":"7d","scope":"self","from":"2026-09-24T00:00:00Z","until":"2026-10-01T02:30:00Z","totals":{"request_count":0,"groups":[{"model":"model"}]}}`,
+		`{"range":"7d","scope":"self","from":"2026-09-24T00:00:00Z","until":"2026-10-01T02:30:00Z","totals":{"request_count":0,"remainder":{}}}`,
+	} {
+		_, err := parseOllamaCloudUsage([]byte(body))
+		require.ErrorIs(t, err, errOllamaCloudIncompleteUsage, body)
+	}
+}
+
+func TestOllamaCloudAPIFailuresPreserveSnapshot(t *testing.T) {
+	for _, endpoint := range []string{"balance", "usage"} {
+		for _, test := range []struct {
+			name           string
+			status         int
+			body           []byte
+			reason         string
+			snapshotStatus string
+		}{
+			{"invalid credentials", 401, []byte(`{"error":"secret"}`), "unauthorized", OllamaCloudUsageStatusUnauthorized},
+			{"suspended", 403, []byte(`{"error":"secret"}`), "http_error", OllamaCloudUsageStatusFailed},
+			{"rate limited", 429, []byte(`{"error":"secret"}`), "http_error", OllamaCloudUsageStatusFailed},
+			{"redirect", 302, nil, "redirect_blocked", OllamaCloudUsageStatusFailed},
+			{"invalid JSON", 200, []byte(`{"secret":`), "invalid_json", OllamaCloudUsageStatusFailed},
+			{"missing fields", 200, []byte(`{}`), "incomplete_usage", OllamaCloudUsageStatusFailed},
+			{"body limit", 200, make([]byte, ollamaCloudUsageMaxBodyBytes+1), "response_too_large", OllamaCloudUsageStatusFailed},
+		} {
+			t.Run(endpoint+"/"+test.name, func(t *testing.T) {
+				account := ollamaUsageAccount(801)
+				repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}}
+				upstream := &ollamaUsageHTTPStub{body: ollamaUsageFixture(t)}
+				svc := newOllamaUsageTestService(t, repo, upstream, &upstreamBillingProbeSettingRepo{})
+				now := time.Date(2026, 10, 1, 2, 30, 0, 0, time.UTC)
+				svc.now = func() time.Time { return now }
+				before, err := svc.Refresh(context.Background(), account.ID)
+				require.NoError(t, err)
+				now = now.Add(time.Minute)
+				upstream.header = http.Header{"Retry-After": []string{"7200"}}
+				if endpoint == "balance" {
+					upstream.status, upstream.body = test.status, test.body
+				} else {
+					upstream.usageStatus, upstream.usageBody = test.status, test.body
+				}
+				after, err := svc.Refresh(context.Background(), account.ID)
+				require.NoError(t, err)
+				require.Equal(t, test.snapshotStatus, after.Snapshot.Status)
+				require.Equal(t, test.reason, after.Snapshot.LastError)
+				require.Equal(t, before.Snapshot.Data, after.Snapshot.Data)
+				require.Equal(t, before.Snapshot.FetchedAt, after.Snapshot.FetchedAt)
+				require.Equal(t, 1, after.Snapshot.FailureCount)
+				require.NotContains(t, after.Snapshot.LastError, "secret")
+				if test.status == 429 {
+					require.False(t, after.Snapshot.NextRefreshAt.Before(now.Add(2*time.Hour)))
+					now = now.Add(ollamaCloudUsageManualRefreshInterval)
+					_, err = svc.Refresh(context.Background(), account.ID)
+					require.ErrorIs(t, err, ErrOllamaCloudUsageRefreshRateLimited)
+					now = after.Snapshot.NextRefreshAt
+					upstream.status, upstream.usageStatus = http.StatusOK, http.StatusOK
+					upstream.body, upstream.usageBody, upstream.header = ollamaUsageFixture(t), nil, nil
+					recovered, err := svc.Refresh(context.Background(), account.ID)
+					require.NoError(t, err)
+					require.Equal(t, OllamaCloudUsageStatusOK, recovered.Snapshot.Status)
+				}
+			})
+		}
+	}
+}
+
+func TestOllamaCloudAPIKeyReadinessAndOldSnapshotCutover(t *testing.T) {
+	account := ollamaUsageAccount(802)
+	account.Extra["ollama_cloud_usage_snapshot"] = map[string]any{"status": "unauthorized", "next_refresh_at": "2099-01-01T00:00:00Z"}
+	account.Extra[OllamaCloudUsageSessionExtraKey] = "unused legacy session"
+	state := OllamaCloudUsageStateFromAccount(account)
+	require.True(t, state.Configured)
+	require.Nil(t, state.Snapshot)
+	account.Credentials["api_key"] = "invalid\r\nheader"
+	require.False(t, OllamaCloudUsageStateFromAccount(account).Configured)
+	account.Credentials["api_key"] = ""
+	require.False(t, OllamaCloudUsageStateFromAccount(account).Configured)
+	account.Credentials["api_key"] = "working-key"
+	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}}
+	upstream := &ollamaUsageHTTPStub{body: []byte(`{"included":{"balance_usd":0,"allowance_usd":0,"period":{"from":"2026-09-01T00:00:00Z","until":"2026-10-01T00:00:00Z"}},"purchased":{"balance_usd":0}}`)}
+	svc := newOllamaUsageTestService(t, repo, upstream, &upstreamBillingProbeSettingRepo{})
+	state, err := svc.Refresh(context.Background(), account.ID)
+	require.NoError(t, err)
+	require.Equal(t, OllamaCloudUsageStatusOK, state.Snapshot.Status)
+	require.Nil(t, state.Snapshot.Data.Monthly)
+	require.Equal(t, int64(0), state.Snapshot.Data.Usage.Totals.RequestCount)
+	require.NotContains(t, account.Extra, "ollama_cloud_usage_snapshot")
+	require.NotContains(t, account.Extra, OllamaCloudUsageSessionExtraKey)
+}
+
+type ollamaUsageReadError struct{}
+
+func (ollamaUsageReadError) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
+
+func TestOllamaCloudAPITransportFailuresPreserveSnapshot(t *testing.T) {
+	for _, endpoint := range []string{"/api/balance", "/api/usage"} {
+		for _, reason := range []string{"request_failed", "empty_response", "response_read_failed", "response_host_mismatch"} {
+			t.Run(endpoint+"/"+reason, func(t *testing.T) {
+				account := ollamaUsageAccount(803)
+				repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}}
+				upstream := &ollamaUsageHTTPStub{body: ollamaUsageFixture(t)}
+				svc := newOllamaUsageTestService(t, repo, upstream, &upstreamBillingProbeSettingRepo{})
+				now := time.Date(2026, 10, 1, 2, 30, 0, 0, time.UTC)
+				svc.now = func() time.Time { return now }
+				before, err := svc.Refresh(context.Background(), account.ID)
+				require.NoError(t, err)
+				now = now.Add(time.Minute)
+				upstream.responseOverride = func(req *http.Request) (*http.Response, error) {
+					if req.URL.Path != endpoint {
+						return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(ollamaUsageFixture(t)))), Request: req}, nil
+					}
+					switch reason {
+					case "request_failed":
+						return nil, io.ErrUnexpectedEOF
+					case "empty_response":
+						return nil, nil
+					case "response_read_failed":
+						return &http.Response{StatusCode: 200, Body: io.NopCloser(ollamaUsageReadError{}), Request: req}, nil
+					default:
+						foreign := req.Clone(req.Context())
+						urlCopy := *foreign.URL
+						urlCopy.Host = "example.com"
+						foreign.URL = &urlCopy
+						return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("{}")), Request: foreign}, nil
+					}
+				}
+				after, err := svc.Refresh(context.Background(), account.ID)
+				require.NoError(t, err)
+				require.Equal(t, reason, after.Snapshot.LastError)
+				require.Equal(t, OllamaCloudUsageStatusFailed, after.Snapshot.Status)
+				require.Equal(t, before.Snapshot.Data, after.Snapshot.Data)
+				require.Equal(t, before.Snapshot.FetchedAt, after.Snapshot.FetchedAt)
+			})
+		}
+	}
 }

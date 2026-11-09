@@ -654,9 +654,8 @@ func lockAndMergeAccountProbeExtra(
 			extra -> 'upstream_billing_probe_enabled',
 			extra -> 'upstream_billing_rate_sync_enabled',
 			extra -> 'upstream_billing_probe',
-			extra -> 'ollama_cloud_usage_session',
 			extra -> 'ollama_cloud_usage_auto_refresh',
-			extra -> 'ollama_cloud_usage_snapshot',
+			extra -> 'ollama_cloud_usage_api_snapshot',
 			COALESCE(
 				(
 					-- opencode_go 平台分支：新旧都是 opencode_go Go 订阅（account_mode
@@ -704,7 +703,6 @@ func lockAndMergeAccountProbeExtra(
 		currentEnabled                 []byte
 		currentRateSyncEnabled         []byte
 		currentSnapshot                []byte
-		currentOllamaSession           []byte
 		currentOllamaAutoRefresh       []byte
 		currentOllamaSnapshot          []byte
 		currentOpenCodeAutoRefresh     []byte
@@ -719,7 +717,6 @@ func lockAndMergeAccountProbeExtra(
 		&currentEnabled,
 		&currentRateSyncEnabled,
 		&currentSnapshot,
-		&currentOllamaSession,
 		&currentOllamaAutoRefresh,
 		&currentOllamaSnapshot,
 		&opencodeGroupIdentityUnchanged,
@@ -740,6 +737,7 @@ func lockAndMergeAccountProbeExtra(
 		service.UpstreamBillingRateSyncEnabledExtraKey,
 		service.UpstreamBillingProbeExtraKey,
 		service.OllamaCloudUsageSessionExtraKey,
+		"ollama_cloud_usage_snapshot",
 		service.OllamaCloudUsageAutoRefreshExtraKey,
 		service.OllamaCloudUsageSnapshotExtraKey,
 		service.OpenCodeGoUsageAutoRefreshExtraKey,
@@ -804,7 +802,6 @@ func lockAndMergeAccountProbeExtra(
 
 	if service.IsOllamaCloudUsageAccount(account) && ollamaGroupIdentityUnchanged {
 		for key, raw := range map[string][]byte{
-			service.OllamaCloudUsageSessionExtraKey:     currentOllamaSession,
 			service.OllamaCloudUsageAutoRefreshExtraKey: currentOllamaAutoRefresh,
 		} {
 			if value, ok, err := decodeAccountExtraJSON(raw); err != nil {
@@ -925,6 +922,7 @@ func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, cre
 					- 'ollama_cloud_usage_session'
 					- 'ollama_cloud_usage_auto_refresh'
 					- 'ollama_cloud_usage_snapshot'
+					- 'ollama_cloud_usage_api_snapshot'
 				-- 凭证整体未变化 ⇒ Ollama 组身份必然未变化；顶层 DISTINCT 守卫防止
 				-- 非 Ollama 账号的无变化持久化误清探测快照或重写 NULL extra。
 				WHEN platform IN (`+ollamaCloudUsagePlatformsSQL+`)
@@ -936,13 +934,14 @@ func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, cre
 					- 'ollama_cloud_usage_session'
 					- 'ollama_cloud_usage_auto_refresh'
 					- 'ollama_cloud_usage_snapshot'
+					- 'ollama_cloud_usage_api_snapshot'
 				-- 上游倍率探测已放宽到全部 API-key 平台：凭证变化即视为探测
 				-- 身份变化，丢弃 stale 快照。
 				WHEN type = 'apikey'
 					AND credentials IS DISTINCT FROM $1::jsonb
 				THEN COALESCE(extra, '{}'::jsonb) - 'upstream_billing_probe'
 				ELSE extra
-			END,
+			END - 'ollama_cloud_usage_session' - 'ollama_cloud_usage_snapshot',
 			updated_at = NOW()
 		WHERE id = $2 AND deleted_at IS NULL
 	`, string(payload), id)
@@ -2803,7 +2802,7 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 			client = tx.Client()
 		}
 	}
-	extraExpression := "COALESCE(extra, '{}'::jsonb) || $1::jsonb"
+	extraExpression := "(COALESCE(extra, '{}'::jsonb) || $1::jsonb) - 'ollama_cloud_usage_session' - 'ollama_cloud_usage_snapshot'"
 	if clearProbeSnapshot {
 		extraExpression = "(" + extraExpression + ") - 'upstream_billing_probe'"
 	}
@@ -3166,7 +3165,7 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 				" AND COALESCE(btrim("+credentialPlaceholder+"::jsonb ->> 'account_mode') <> 'zen', true) IS NOT TRUE")
 	}
 
-	if len(updates.Extra) > 0 || len(ollamaGroupIdentityChanges) > 0 || len(opencodeGroupIdentityChanges) > 0 || ollamaProxyIdentityChanged != "" || updates.EnsureCodexFingerprintSeed {
+	if len(setClauses) > 0 || len(updates.Extra) > 0 || len(ollamaGroupIdentityChanges) > 0 || len(opencodeGroupIdentityChanges) > 0 || ollamaProxyIdentityChanged != "" || updates.EnsureCodexFingerprintSeed {
 		extraExpression := "COALESCE(extra, '{}'::jsonb)"
 		if len(updates.Extra) > 0 {
 			payload, err := json.Marshal(updates.Extra)
@@ -3180,7 +3179,7 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 				extraExpression = "(" + extraExpression + ") - 'upstream_billing_probe'"
 			}
 			if ollamaCloudUsageSnapshotClearRequested(updates.Extra) {
-				extraExpression = "(" + extraExpression + ") - 'ollama_cloud_usage_snapshot'"
+				extraExpression = "(" + extraExpression + ") - 'ollama_cloud_usage_api_snapshot'"
 			}
 		}
 		eligibleAccount := "platform IN (" + ollamaCloudUsagePlatformsSQL + ") AND type = 'apikey'"
@@ -3197,21 +3196,9 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 				snapshotIdentityChanged = "(" + snapshotIdentityChanged + " OR " + proxyChanged + ")"
 			}
 		}
-		// 代理不属于 OpenCode 组身份，但 snapshot 外呼与 CAS 经代理：
-		// 组身份变化清除开关+快照，仅代理变化清除快照而保留开关。
-		// eligible 判定必须包含旧行 OpenCode 身份（opencode_go Go 订阅，或挂载
-		// 白名单平台 + opencode 基址）：否则白名单平台的 Ollama 行在代理变化时会
-		// 先命中 OpenCode 分支（CASE 按序求值）而遮蔽 Ollama 分支的快照清理。
-		// 注意 OpenCode 与 Ollama 两套分支的 WHEN 并不互斥：eligibleAccount 只看
-		// platform 白名单 + type='apikey'，根本不含 base_url，且与 OpenCode 挂载
-		// 白名单完全相同，因此挂载行（白名单平台 + 官方 OpenCode Go 基址）会同时
-		// 满足两套分支的 WHEN；互斥的只是两侧身份谓词（opencode.ai 基址正则 vs
-		// ollama.com 基址正则，host 不同）。因此下方 caseBranches 必须先拼 OpenCode
-		// 分支再拼 Ollama 分支——这是正确性要求而非防御：若 Ollama 分支在前，
-		// 挂载行的 api_key 变化会先命中 Ollama 分支，opencode_go_usage_snapshot /
-		// opencode_go_usage_auto_refresh 残留，陈旧快照跟着新 api_key 走，跨 key
-		// 组污染。反方向安全：Ollama 行（ollama.com 基址）不满足 OpenCode 身份
-		// 谓词；opencode_go 平台行不在 Ollama 白名单内，与 Ollama 分支真互斥。
+		// Proxy changes invalidate observations while preserving refresh opt-ins.
+		// OpenCode's mounted-platform identity and Ollama's platform identity
+		// have distinct predicates.
 		opencodeEligibleAccount := "type = 'apikey' AND " + opencodeOldUsageIdentity
 		opencodeGroupIdentityChanged := ""
 		if len(opencodeGroupIdentityChanges) > 0 {
@@ -3237,15 +3224,16 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		}
 		if groupIdentityChanged != "" {
 			caseBranches = append(caseBranches,
-				" WHEN "+groupIdentityChanged+" THEN ("+extraExpression+") - 'ollama_cloud_usage_session' - 'ollama_cloud_usage_auto_refresh' - 'ollama_cloud_usage_snapshot'")
+				" WHEN "+groupIdentityChanged+" THEN ("+extraExpression+") - 'ollama_cloud_usage_auto_refresh' - 'ollama_cloud_usage_api_snapshot'")
 		}
 		if snapshotIdentityChanged != "" {
 			caseBranches = append(caseBranches,
-				" WHEN "+snapshotIdentityChanged+" THEN ("+extraExpression+") - 'ollama_cloud_usage_snapshot'")
+				" WHEN "+snapshotIdentityChanged+" THEN ("+extraExpression+") - 'ollama_cloud_usage_api_snapshot'")
 		}
 		if len(caseBranches) > 0 {
 			extraExpression = "CASE" + strings.Join(caseBranches, "") + " ELSE " + extraExpression + " END"
 		}
+		extraExpression = "(" + extraExpression + ") - 'ollama_cloud_usage_session' - 'ollama_cloud_usage_snapshot'"
 		if updates.EnsureCodexFingerprintSeed {
 			extraExpression = ensureCodexFingerprintSeedSQL(extraExpression)
 		}

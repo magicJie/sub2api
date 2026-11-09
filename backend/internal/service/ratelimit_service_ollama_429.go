@@ -22,8 +22,8 @@ import (
 
 const ollamaCloudUsageProbeWritebackTimeout = 10 * time.Second
 
-// 连续 429 退避：上一轮冷却刚结束又撞 429（probe 没学到真实重置时间，如无 web session、
-// 页面缺重置时间、月度额度耗尽），冷却按上一轮时长翻倍，避免每隔几秒重新调度再被拒。
+// 连续 429 退避：上一轮冷却刚结束又撞 429（probe 未取得真实重置时间），
+// 冷却按上一轮时长翻倍，避免每隔几秒重新调度再被拒。
 const (
 	ollama429EscalationCap      = 30 * time.Minute
 	ollama429EscalationMinGrace = 2 * time.Minute

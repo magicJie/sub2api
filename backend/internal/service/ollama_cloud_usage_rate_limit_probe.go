@@ -11,14 +11,14 @@ import (
 // learn the recovery horizon when the account's usage is actually exhausted.
 //
 // The probe reuses refreshAccount wholesale (singleflight, bounded concurrency
-// slot, group resolution, settings-HTML fetch); no HTTP/parsing is duplicated.
+// slot, group resolution, official API fetches); no HTTP/parsing is duplicated.
 // Work runs on a single background coordinator owned by Start/Stop with a
 // detached, timeout-bounded context, so a model request never blocks on a probe
 // and no unbounded goroutines are introduced.
 
 const (
 	// ollamaCloudUsageProbeTimeout bounds one detached probe task. It must exceed
-	// the underlying settings-HTML request timeout.
+	// the two API request timeouts plus the optional profile lookup.
 	ollamaCloudUsageProbeTimeout = 45 * time.Second
 
 	// ollamaCloudUsageProbeMaxQueue bounds queued (not yet serviced) probe
@@ -33,9 +33,9 @@ const (
 
 // OllamaCloudUsageRateLimitProbeCallback is invoked (on the coordinator goroutine)
 // when an account's Ollama Cloud usage is confirmed exhausted from a fresh
-// successful snapshot; resetAt is the earliest wall-clock rollover of the
+// successful snapshot; resetAt is the latest known wall-clock rollover of the
 // exhausted window(s). It is never invoked for accounts that are not configured
-// Ollama usage accounts, lack a web session, are in failure backoff, or whose most
+// Ollama usage accounts, lack a valid API key, are in failure backoff, or whose most
 // recent snapshot is not exhausted.
 //
 // The callback runs on the single coordinator, so it must not block indefinitely:
@@ -185,13 +185,13 @@ func (s *OllamaCloudUsageService) storeProbeGroupResult(key string, entry ollama
 
 // runOllamaCloudUsageProbe resolves the account and, when appropriate, performs a
 // controlled group refresh and reports exhaustion. All decisions are best-effort;
-// ineligible/missing-session accounts, transient failures, backoff and
+// ineligible/missing-key accounts, transient failures, backoff and
 // non-exhaustion are skipped silently.
 //
 // This is a 429-event recovery query: it deliberately runs regardless of the
 // periodic auto_refresh switch (a model was just refused, so a one-off read is
 // warranted even when auto-refresh is off). It still respects the presence of a
-// configured session/cookie and any scrape-429 failure backoff.
+// configured API key and any usage-API failure backoff.
 func (s *OllamaCloudUsageService) runOllamaCloudUsageProbe(
 	ctx context.Context,
 	accountID int64,
@@ -207,7 +207,7 @@ func (s *OllamaCloudUsageService) runOllamaCloudUsageProbe(
 	if !IsOllamaCloudUsageAccount(account) {
 		return
 	}
-	// Resolve the api_key group so the account sees the group's managed session
+	// Resolve the api_key group so the account sees the group's refresh setting
 	// and most recent snapshot even when it is not the row that last refreshed.
 	if err := s.ResolveAccounts(ctx, []*Account{account}); err != nil {
 		return

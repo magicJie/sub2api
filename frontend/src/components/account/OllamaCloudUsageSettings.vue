@@ -6,7 +6,7 @@
           {{ t('admin.accounts.ollamaCloud.title') }}
         </h3>
         <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-          {{ t('admin.accounts.ollamaCloud.sessionSecurityHint') }}
+          {{ t('admin.accounts.ollamaCloud.apiUsageHint') }}
         </p>
       </div>
       <span
@@ -23,18 +23,12 @@
       <Icon name="refresh" size="sm" class="animate-spin" />
     </div>
     <template v-else>
-      <div v-if="!state.encryption_key_configured" class="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800/50 dark:bg-amber-900/20 dark:text-amber-200">
-        {{ t('admin.accounts.ollamaCloud.encryptionKeyRequired') }}
-      </div>
-
       <div
         v-if="snapshot"
         class="border-y border-gray-100 py-3 dark:border-dark-700"
         data-testid="ollama-cloud-usage-details"
       >
         <div class="grid grid-cols-[minmax(4rem,auto)_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-xs">
-          <span class="text-gray-500 dark:text-gray-400">{{ t('admin.accounts.ollamaCloud.plan') }}</span>
-          <span class="break-words text-gray-900 dark:text-white">{{ snapshot.data?.plan || '-' }}</span>
           <template v-if="snapshot.data?.five_hour">
             <span class="text-gray-500 dark:text-gray-400">{{ t('admin.accounts.ollamaCloud.fiveHour') }}</span>
             <span class="break-words text-gray-900 dark:text-white">{{ windowSummary(snapshot.data.five_hour) }}</span>
@@ -49,58 +43,39 @@
           </template>
           <span class="text-gray-500 dark:text-gray-400">{{ t('admin.accounts.ollamaCloud.balance') }}</span>
           <span class="break-words text-gray-900 dark:text-white">{{ snapshot.data?.balance || '-' }}</span>
+          <template v-if="snapshot.data?.usage">
+            <span class="text-gray-500 dark:text-gray-400">{{ t('admin.accounts.ollamaCloud.usageRange') }}</span>
+            <span class="break-words text-gray-900 dark:text-white" data-testid="ollama-cloud-usage-range">{{ usageRangeSummary }}</span>
+            <span class="text-gray-500 dark:text-gray-400">{{ t('admin.accounts.ollamaCloud.usageTotals') }}</span>
+            <span class="break-words text-gray-900 dark:text-white" data-testid="ollama-cloud-usage-totals">{{ usageTotalsSummary }}</span>
+          </template>
           <span class="text-gray-500 dark:text-gray-400">{{ t('admin.accounts.ollamaCloud.models') }}</span>
-          <span class="break-words text-gray-900 dark:text-white">{{ modelSummary }}</span>
+          <span class="break-words text-gray-900 dark:text-white" data-testid="ollama-cloud-usage-models">{{ modelSummary }}</span>
           <span class="text-gray-500 dark:text-gray-400">{{ t('admin.accounts.ollamaCloud.status') }}</span>
           <span class="break-words font-medium text-gray-900 dark:text-white">{{ statusLabel }}</span>
           <span class="text-gray-500 dark:text-gray-400">{{ t('admin.accounts.ollamaCloud.updatedAt') }}</span>
           <span class="break-words text-gray-900 dark:text-white">{{ formatDate(snapshot.fetched_at || snapshot.last_attempt_at) }}</span>
         </div>
-        <p v-if="snapshot.last_error" class="mt-2 break-words border-t border-gray-100 pt-2 text-xs text-amber-700 dark:border-dark-700 dark:text-amber-300">
-          {{ t(`admin.accounts.ollamaCloud.errors.${snapshot.last_error}`, snapshot.last_error) }}
+        <p
+          v-if="snapshotError"
+          class="mt-2 break-words border-t border-gray-100 pt-2 text-xs text-amber-700 dark:border-dark-700 dark:text-amber-300"
+          data-testid="ollama-cloud-usage-error"
+        >
+          {{ snapshotError }}
+          <span v-if="hasUsageData">{{ t('admin.accounts.ollamaCloud.staleData') }}</span>
         </p>
       </div>
 
-      <div>
-        <label class="input-label" for="ollama-cloud-session">{{ t('admin.accounts.ollamaCloud.sessionLabel') }}</label>
-        <textarea
-          id="ollama-cloud-session"
-          v-model="session"
-          rows="3"
-          class="input font-mono text-xs"
-          autocomplete="new-password"
-          data-1p-ignore
-          data-lpignore="true"
-          data-bwignore="true"
-          :placeholder="t('admin.accounts.ollamaCloud.sessionPlaceholder')"
-        />
-        <p class="input-hint">{{ t('admin.accounts.ollamaCloud.writeOnlyHint') }}</p>
-      </div>
+      <p
+        v-if="!state.configured"
+        class="text-xs text-gray-500 dark:text-gray-400"
+        data-testid="ollama-cloud-usage-not-configured"
+      >
+        {{ t('admin.accounts.ollamaCloud.cellNotConfigured') }}
+      </p>
 
-      <div class="flex flex-wrap items-center gap-2">
+      <div v-if="state.configured" class="flex flex-wrap items-center gap-2">
         <button
-          type="button"
-          class="btn btn-primary btn-sm"
-          :disabled="saving || !session.trim() || !state.encryption_key_configured"
-          data-testid="ollama-cloud-session-save"
-          @click="saveSession"
-        >
-          <Icon name="check" size="xs" class="mr-1.5" />
-          {{ t('common.save') }}
-        </button>
-        <button
-          v-if="state.configured"
-          type="button"
-          class="btn btn-secondary btn-sm text-red-600 dark:text-red-400"
-          :disabled="saving"
-          data-testid="ollama-cloud-session-delete"
-          @click="showDeleteConfirm = true"
-        >
-          <Icon name="trash" size="xs" class="mr-1.5" />
-          {{ t('admin.accounts.ollamaCloud.deleteSession') }}
-        </button>
-        <button
-          v-if="state.configured"
           type="button"
           class="btn btn-secondary btn-sm"
           :disabled="refreshing"
@@ -129,17 +104,6 @@
         />
       </div>
     </template>
-
-    <ConfirmDialog
-      :show="showDeleteConfirm"
-      :title="t('admin.accounts.ollamaCloud.deleteSession')"
-      :message="t('admin.accounts.ollamaCloud.deleteConfirm')"
-      :confirm-text="t('common.delete')"
-      :cancel-text="t('common.cancel')"
-      :danger="true"
-      @confirm="deleteSession"
-      @cancel="showDeleteConfirm = false"
-    />
   </section>
 </template>
 
@@ -149,37 +113,93 @@ import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage, extractI18nErrorMessage } from '@/utils/apiError'
-import type { Account, OllamaCloudUsageState, OllamaCloudUsageWindow } from '@/types'
-import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import type { Account, OllamaCloudUsageMetrics, OllamaCloudUsageState, OllamaCloudUsageWindow } from '@/types'
 import Toggle from '@/components/common/Toggle.vue'
 import Icon from '@/components/icons/Icon.vue'
-import { formatOllamaResetText } from '@/utils/ollamaUsage'
+import { formatOllamaSnapshotError } from '@/utils/ollamaUsage'
 
 const props = defineProps<{ account: Account }>()
 const emit = defineEmits<{ updated: [state: OllamaCloudUsageState] }>()
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const appStore = useAppStore()
 const state = ref<OllamaCloudUsageState | null>(props.account.ollama_cloud_usage ?? null)
-const session = ref('')
 const loading = ref(false)
 const saving = ref(false)
 const refreshing = ref(false)
-const showDeleteConfirm = ref(false)
 const snapshot = computed(() => state.value?.snapshot)
+const hasUsageData = computed(() => !!(
+  snapshot.value?.data?.five_hour ||
+  snapshot.value?.data?.seven_day ||
+  snapshot.value?.data?.monthly ||
+  snapshot.value?.data?.balance ||
+  snapshot.value?.data?.usage
+))
+const snapshotError = computed(() => formatOllamaSnapshotError(snapshot.value, t))
 const statusLabel = computed(() => {
   if (!snapshot.value) return t('admin.accounts.ollamaCloud.notRefreshed')
   if (snapshot.value.status === 'unauthorized') return t('admin.accounts.ollamaCloud.unauthorized')
-  if (snapshot.value.status === 'failed') return t('admin.accounts.ollamaCloud.failed')
+  if (snapshot.value.status === 'failed') {
+    return snapshot.value.http_status
+      ? `${t('admin.accounts.ollamaCloud.failed')} (HTTP ${snapshot.value.http_status})`
+      : t('admin.accounts.ollamaCloud.failed')
+  }
   return t('admin.accounts.ollamaCloud.ok')
 })
-const modelSummary = computed(() => snapshot.value?.data?.models?.map(model => {
-  const window = model.window === 'five_hour'
-    ? t('admin.accounts.ollamaCloud.fiveHourShort')
-    : model.window === 'seven_day'
-      ? t('admin.accounts.ollamaCloud.sevenDayShort')
-      : t('admin.accounts.ollamaCloud.monthlyShort')
-  return `${window} ${model.model}: ${model.requests}`
-}).join(', ') || '-')
+
+const formatUsd = (value: number) => {
+  const fixed = value.toFixed(4).replace(/\.?0+$/, '')
+  return `$${fixed || '0'}`
+}
+const formatMetrics = (metrics?: OllamaCloudUsageMetrics) => {
+  if (!metrics) return '-'
+  const parts = [`${metrics.request_count} ${t('admin.accounts.ollamaCloud.requests')}`]
+  if (typeof metrics.usage_usd === 'number' && Number.isFinite(metrics.usage_usd)) {
+    parts.push(formatUsd(metrics.usage_usd))
+  }
+  const tokenParts: string[] = []
+  if (typeof metrics.input_tokens === 'number') {
+    tokenParts.push(`${t('admin.accounts.ollamaCloud.inputTokens')} ${metrics.input_tokens}`)
+  }
+  if (typeof metrics.cached_input_tokens === 'number') {
+    tokenParts.push(`${t('admin.accounts.ollamaCloud.cachedInputTokens')} ${metrics.cached_input_tokens}`)
+  }
+  if (typeof metrics.output_tokens === 'number') {
+    tokenParts.push(`${t('admin.accounts.ollamaCloud.outputTokens')} ${metrics.output_tokens}`)
+  }
+  if (tokenParts.length > 0) {
+    parts.push(tokenParts.join(' / '))
+  }
+  return parts.join(' · ')
+}
+
+const formatUtcRangeDate = (value?: string) => {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC')
+}
+
+const usageRangeSummary = computed(() => {
+  const usage = snapshot.value?.data?.usage
+  if (!usage) return '-'
+  const rangeLabel = usage.range
+  return `${rangeLabel} (${formatUtcRangeDate(usage.from)} – ${formatUtcRangeDate(usage.until)})`
+})
+
+const usageTotalsSummary = computed(() => formatMetrics(snapshot.value?.data?.usage?.totals))
+
+const modelSummary = computed(() => {
+  const usage = snapshot.value?.data?.usage
+  if (!usage) return '-'
+  const rangeLabel = usage.range
+  const items = (usage.totals?.groups ?? []).map(
+    group => `${rangeLabel} ${group.model}: ${formatMetrics(group)}`
+  )
+  if (usage.totals?.remainder) {
+    items.push(`${rangeLabel} ${t('admin.accounts.ollamaCloud.otherModels')}: ${formatMetrics(usage.totals.remainder)}`)
+  }
+  return items.join(', ') || '-'
+})
 
 const formatPercent = (value?: number) => typeof value === 'number' && Number.isFinite(value)
   ? `${value.toFixed(value % 1 ? 1 : 0)}%`
@@ -191,7 +211,7 @@ const formatDate = (value?: string) => {
 }
 const windowSummary = (window?: OllamaCloudUsageWindow) => {
   if (!window) return '-'
-  const reset = window.reset_at ? formatDate(window.reset_at) : formatOllamaResetText(window.reset_text, locale?.value || 'en', t)
+  const reset = window.reset_at ? formatDate(window.reset_at) : ''
   return reset
     ? t('admin.accounts.ollamaCloud.windowWithReset', { percent: formatPercent(window.used_percent), reset })
     : formatPercent(window.used_percent)
@@ -210,34 +230,6 @@ const load = async () => {
     appStore.showError(extractApiErrorMessage(error, t('admin.accounts.ollamaCloud.loadFailed')))
   } finally {
     loading.value = false
-  }
-}
-
-const saveSession = async () => {
-  if (!session.value.trim()) return
-  saving.value = true
-  try {
-    applyState(await adminAPI.accounts.saveOllamaCloudUsageSession(props.account.id, session.value))
-    session.value = ''
-    appStore.showSuccess(t('admin.accounts.ollamaCloud.sessionSaved'))
-  } catch (error) {
-    appStore.showError(extractApiErrorMessage(error, t('admin.accounts.ollamaCloud.sessionSaveFailed')))
-  } finally {
-    saving.value = false
-  }
-}
-
-const deleteSession = async () => {
-  saving.value = true
-  showDeleteConfirm.value = false
-  try {
-    applyState(await adminAPI.accounts.deleteOllamaCloudUsageSession(props.account.id))
-    session.value = ''
-    appStore.showSuccess(t('admin.accounts.ollamaCloud.sessionDeleted'))
-  } catch (error) {
-    appStore.showError(extractApiErrorMessage(error, t('admin.accounts.ollamaCloud.sessionDeleteFailed')))
-  } finally {
-    saving.value = false
   }
 }
 
@@ -260,9 +252,8 @@ const refreshUsage = async () => {
     if (next.snapshot?.status === 'ok') {
       appStore.showSuccess(t('admin.accounts.ollamaCloud.refreshSuccess'))
     } else {
-      appStore.showError(next.snapshot?.last_error === 'incomplete_usage'
-        ? t('admin.accounts.ollamaCloud.errors.incomplete_usage')
-        : t('admin.accounts.ollamaCloud.refreshFailed'))
+      const message = formatOllamaSnapshotError(next.snapshot, t)
+      appStore.showError(message || t('admin.accounts.ollamaCloud.refreshFailed'))
     }
   } catch (error) {
     appStore.showError(extractI18nErrorMessage(
@@ -278,7 +269,6 @@ const refreshUsage = async () => {
 
 watch(() => props.account.id, () => {
   state.value = props.account.ollama_cloud_usage ?? null
-  session.value = ''
   if (!state.value) void load()
 })
 

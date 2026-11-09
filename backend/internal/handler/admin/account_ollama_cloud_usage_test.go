@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"testing"
 	"time"
 
@@ -46,12 +45,6 @@ func (r *ollamaCloudUsageHandlerTestRepo) ListOllamaCloudUsageGroupAccounts(_ co
 	return result, nil
 }
 
-func (r *ollamaCloudUsageHandlerTestRepo) SaveOllamaCloudUsageSession(context.Context, *service.Account, string, bool) error {
-	return nil
-}
-func (r *ollamaCloudUsageHandlerTestRepo) DeleteOllamaCloudUsageSession(context.Context, *service.Account) error {
-	return nil
-}
 func (r *ollamaCloudUsageHandlerTestRepo) SetOllamaCloudUsageAutoRefresh(context.Context, *service.Account, bool) error {
 	return nil
 }
@@ -67,7 +60,7 @@ func (r *ollamaCloudUsageHandlerTestRepo) ListDueOllamaCloudUsageAccounts(contex
 
 func newOllamaCloudUsageHandlerTestService(t *testing.T) *service.OllamaCloudUsageService {
 	t.Helper()
-	svc := service.NewOllamaCloudUsageService(nil, nil, nil, nil, false)
+	svc := service.NewOllamaCloudUsageService(nil, nil, nil)
 	t.Cleanup(svc.Stop)
 	return svc
 }
@@ -94,12 +87,6 @@ func TestOllamaCloudUsageHandlersValidateRequestsAndDependencies(t *testing.T) {
 		require.Equal(t, http.StatusBadRequest, recorder.Code)
 	})
 
-	t.Run("empty session", func(t *testing.T) {
-		ctx, recorder := newOllamaCloudUsageHandlerContext(http.MethodPut, "/admin/accounts/7/ollama-cloud-usage/session", `{"session":""}`, "7")
-		(&AccountHandler{ollamaCloudUsage: svc}).SaveOllamaCloudUsageSession(ctx)
-		require.Equal(t, http.StatusBadRequest, recorder.Code)
-	})
-
 	t.Run("missing enabled", func(t *testing.T) {
 		ctx, recorder := newOllamaCloudUsageHandlerContext(http.MethodPut, "/admin/accounts/7/ollama-cloud-usage/auto-refresh", `{}`, "7")
 		(&AccountHandler{ollamaCloudUsage: svc}).SetOllamaCloudUsageAutoRefresh(ctx)
@@ -114,17 +101,17 @@ func TestOllamaCloudUsageHandlersValidateRequestsAndDependencies(t *testing.T) {
 	})
 }
 
-func TestOllamaCloudUsageEncryptionKeyStateConsistentAcrossAccountResponses(t *testing.T) {
+func TestOllamaCloudUsageKeyReadinessConsistentAcrossAccountResponses(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	for _, configured := range []bool{false, true} {
-		t.Run("configured="+strconv.FormatBool(configured), func(t *testing.T) {
+	for _, apiKey := range []string{"", "test-key"} {
+		t.Run("key="+apiKey, func(t *testing.T) {
 			account := &service.Account{
 				ID:          7,
 				Name:        "ollama",
 				Platform:    service.PlatformOllama,
 				Type:        service.AccountTypeAPIKey,
-				Credentials: map[string]any{"base_url": "https://ollama.com", "api_key": "test-key"},
+				Credentials: map[string]any{"base_url": "https://ollama.com", "api_key": apiKey},
 				Extra:       map[string]any{},
 				Status:      service.StatusActive,
 			}
@@ -132,7 +119,7 @@ func TestOllamaCloudUsageEncryptionKeyStateConsistentAcrossAccountResponses(t *t
 			adminService.accounts = []service.Account{*account}
 			adminService.getAccountResult = account
 			usageService := service.NewOllamaCloudUsageService(
-				&ollamaCloudUsageHandlerTestRepo{account: account}, nil, nil, nil, configured,
+				&ollamaCloudUsageHandlerTestRepo{account: account}, nil, nil,
 			)
 			t.Cleanup(usageService.Stop)
 
@@ -176,11 +163,13 @@ func TestOllamaCloudUsageEncryptionKeyStateConsistentAcrossAccountResponses(t *t
 			}
 			require.NoError(t, json.Unmarshal(stateRecorder.Body.Bytes(), &statePayload))
 
-			listConfigured := listPayload.Data.Items[0].OllamaCloudUsage.EncryptionKeyConfigured
-			detailConfigured := detailPayload.Data.OllamaCloudUsage.EncryptionKeyConfigured
-			require.Equal(t, configured, listConfigured)
-			require.Equal(t, statePayload.Data.EncryptionKeyConfigured, listConfigured)
-			require.Equal(t, statePayload.Data.EncryptionKeyConfigured, detailConfigured)
+			configured := apiKey != ""
+			require.Equal(t, configured, listPayload.Data.Items[0].OllamaCloudUsage.Configured)
+			require.Equal(t, configured, detailPayload.Data.OllamaCloudUsage.Configured)
+			require.Equal(t, configured, statePayload.Data.Configured)
+			for _, body := range []string{listRecorder.Body.String(), detailRecorder.Body.String(), stateRecorder.Body.String()} {
+				require.NotContains(t, body, "encryption_key_configured")
+			}
 		})
 	}
 }
@@ -195,11 +184,12 @@ func TestOllamaCloudUsageSharedStateMatchesListDetailAndSpecialEndpointWithoutLi
 			service.OllamaCloudUsageSessionExtraKey:     "ciphertext-secret",
 			service.OllamaCloudUsageAutoRefreshExtraKey: true,
 			service.OllamaCloudUsageSnapshotExtraKey: &service.OllamaCloudUsageSnapshot{
-				Status: service.OllamaCloudUsageStatusOK, Data: &service.OllamaCloudUsageData{Plan: "pro"},
+				Status: service.OllamaCloudUsageStatusOK, Data: &service.OllamaCloudUsageData{Balance: "12.50"},
 				LastAttemptAt: now, NextRefreshAt: now.Add(time.Hour),
 			},
 		},
-		Status: service.StatusActive,
+		Status:    service.StatusActive,
+		UpdatedAt: now,
 	}
 	sibling := &service.Account{
 		ID: 8, Name: "sibling", Platform: service.PlatformOllama, Type: service.AccountTypeAPIKey,
@@ -210,7 +200,7 @@ func TestOllamaCloudUsageSharedStateMatchesListDetailAndSpecialEndpointWithoutLi
 	adminService := newStubAdminService()
 	adminService.accounts = []service.Account{*source, *sibling}
 	adminService.getAccountResult = sibling
-	usageService := service.NewOllamaCloudUsageService(repo, nil, nil, nil, true)
+	usageService := service.NewOllamaCloudUsageService(repo, nil, nil)
 	t.Cleanup(usageService.Stop)
 	handler := NewAccountHandler(adminService, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	handler.SetOllamaCloudUsageService(usageService)
@@ -235,7 +225,7 @@ func TestOllamaCloudUsageSharedStateMatchesListDetailAndSpecialEndpointWithoutLi
 	require.Len(t, listPayload.Data.Items, 2)
 	for _, item := range listPayload.Data.Items {
 		require.True(t, item.OllamaCloudUsage.Configured)
-		require.Equal(t, "pro", item.OllamaCloudUsage.Snapshot.Data.Plan)
+		require.Equal(t, "12.50", item.OllamaCloudUsage.Snapshot.Data.Balance)
 	}
 
 	detailRecorder := httptest.NewRecorder()

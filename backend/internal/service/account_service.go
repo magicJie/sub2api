@@ -248,6 +248,10 @@ func (s *AccountService) Create(ctx context.Context, req CreateAccountRequest) (
 		Status:      StatusActive,
 		ExpiresAt:   req.ExpiresAt,
 	}
+	delete(account.Extra, OllamaCloudUsageSessionExtraKey)
+	delete(account.Extra, "ollama_cloud_usage_snapshot")
+	delete(account.Extra, OllamaCloudUsageAutoRefreshExtraKey)
+	delete(account.Extra, OllamaCloudUsageSnapshotExtraKey)
 	if err := normalizeOllamaAccount(account); err != nil {
 		return nil, err
 	}
@@ -349,6 +353,7 @@ func (s *AccountService) Update(ctx context.Context, id int64, req UpdateAccount
 			extra[key] = value
 		}
 		delete(extra, OllamaCloudUsageSessionExtraKey)
+		delete(extra, "ollama_cloud_usage_snapshot")
 		delete(extra, OllamaCloudUsageAutoRefreshExtraKey)
 		delete(extra, OllamaCloudUsageSnapshotExtraKey)
 		delete(extra, KiroUsageSnapshotExtraKey) // Kiro（fork）：系统托管，沿用库里的值
@@ -360,6 +365,8 @@ func (s *AccountService) Update(ctx context.Context, id int64, req UpdateAccount
 	} else {
 		account.Extra = prepareCodexFingerprintExtraForUpdate(account, account.Extra)
 	}
+	delete(account.Extra, OllamaCloudUsageSessionExtraKey)
+	delete(account.Extra, "ollama_cloud_usage_snapshot")
 
 	if req.ProxyID != nil {
 		account.ProxyID = req.ProxyID

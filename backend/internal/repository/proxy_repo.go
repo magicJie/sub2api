@@ -254,6 +254,8 @@ func invalidateProxyProbeSnapshots(ctx context.Context, exec sqlExecutor, proxyI
 		SET extra = COALESCE(extra, '{}'::jsonb)
 				- 'upstream_billing_probe'
 				- 'ollama_cloud_usage_snapshot'
+				- 'ollama_cloud_usage_session'
+				- 'ollama_cloud_usage_api_snapshot'
 				- 'opencode_go_usage_snapshot',
 			updated_at = NOW()
 		WHERE proxy_id = $1
@@ -262,8 +264,9 @@ func invalidateProxyProbeSnapshots(ctx context.Context, exec sqlExecutor, proxyI
 				(extra ? 'upstream_billing_probe'
 					AND extra -> 'upstream_billing_probe' <> 'null'::jsonb)
 				OR (platform IN (`+ollamaCloudUsagePlatformsSQL+`)
-					AND extra ? 'ollama_cloud_usage_snapshot'
-					AND extra -> 'ollama_cloud_usage_snapshot' <> 'null'::jsonb)
+					AND (extra ? 'ollama_cloud_usage_api_snapshot'
+						OR extra ? 'ollama_cloud_usage_snapshot'
+						OR extra ? 'ollama_cloud_usage_session'))
 				-- OpenCode 快照可能挂在 opencode_go 平台账号或挂载白名单平台账号上。
 				OR ((platform = 'opencode_go' OR platform IN (`+opencodeGoUsageMountPlatformsSQL+`))
 					AND extra ? 'opencode_go_usage_snapshot'

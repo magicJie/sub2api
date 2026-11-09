@@ -28,10 +28,8 @@ func openCodeGoManagedExtra(now time.Time) map[string]any {
 	}
 }
 
-// F1：混合 OpenCode + openai Ollama + anthropic Ollama 行的批量代理变化与
-// 代理+key 变化，验证 OpenCode/Ollama CASE 分支互斥、各自只清自己该清的键。
-// 回归点：OpenCode eligible 判定若不含旧行 opencode base URL，OpenAI+Ollama 行
-// 在代理变化时会先命中 OpenCode 分支而遮蔽 Ollama 快照清理。
+// Bulk proxy and key changes keep each provider's managed-state cleanup scoped
+// to that provider's account identity.
 func TestBulkUpdateOpenCodeGoMixedPlatformIdentityCleanup(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)
@@ -61,8 +59,8 @@ func TestBulkUpdateOpenCodeGoMixedPlatformIdentityCleanup(t *testing.T) {
 			"status": service.OpenCodeGoUsageStatusOK, "last_attempt_at": now, "next_refresh_at": now.Add(time.Hour),
 		},
 	})
-	openaiOllama := create("mixed-openai-ollama", service.PlatformOpenAI, "https://ollama.com", ollamaExtra())
-	anthropicOllama := create("mixed-anthropic-ollama", service.PlatformAnthropic, "https://ollama.com", ollamaExtra())
+	openaiOllama := create("mixed-ollama-first", service.PlatformOllama, "https://ollama.com", ollamaExtra())
+	anthropicOllama := create("mixed-ollama-second", service.PlatformOllama, "https://ollama.com", ollamaExtra())
 	proxy := mustCreateProxy(t, tx.Client(), &service.Proxy{
 		Name: "mixed-proxy", Protocol: "http", Host: "127.0.0.1", Port: 3128,
 		Username: "user", Password: "pass", Status: service.StatusActive,
@@ -72,7 +70,7 @@ func TestBulkUpdateOpenCodeGoMixedPlatformIdentityCleanup(t *testing.T) {
 		Username: "user", Password: "pass", Status: service.StatusActive,
 	})
 
-	// 只改 proxy：OpenCode 行清快照留开关；Ollama 行清快照留 session/开关。
+	// Proxy changes clear snapshots and preserve automatic refresh opt-ins.
 	rows, err := repo.BulkUpdate(ctx, []int64{opencode.ID, openaiOllama.ID, anthropicOllama.ID}, service.AccountBulkUpdate{
 		ProxyID: &proxy.ID,
 	})
@@ -87,13 +85,13 @@ func TestBulkUpdateOpenCodeGoMixedPlatformIdentityCleanup(t *testing.T) {
 	for _, id := range []int64{openaiOllama.ID, anthropicOllama.ID} {
 		loaded, err := repo.GetByID(ctx, id)
 		require.NoError(t, err)
-		require.Equal(t, "cipher:wos-session=fixture", loaded.Extra[service.OllamaCloudUsageSessionExtraKey])
+		require.NotContains(t, loaded.Extra, service.OllamaCloudUsageSessionExtraKey)
 		require.Equal(t, true, loaded.Extra[service.OllamaCloudUsageAutoRefreshExtraKey])
 		require.NotContains(t, loaded.Extra, service.OllamaCloudUsageSnapshotExtraKey,
-			"OpenAI+Ollama 行的快照必须由 Ollama 分支清理，不能被 OpenCode 分支遮蔽")
+			"Ollama snapshots must be invalidated independently of OpenCode state")
 	}
 
-	// 同时改 proxy + api_key：OpenCode 行清开关+快照；Ollama 行清 session/开关/快照。
+	// A simultaneous proxy and API key change also clears each refresh opt-in.
 	rows, err = repo.BulkUpdate(ctx, []int64{opencode.ID, openaiOllama.ID, anthropicOllama.ID}, service.AccountBulkUpdate{
 		ProxyID:     &proxy2.ID,
 		Credentials: map[string]any{"api_key": "rotated-key"},

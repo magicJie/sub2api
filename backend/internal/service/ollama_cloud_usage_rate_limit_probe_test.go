@@ -12,28 +12,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ollamaCloudProbeUsageBody renders a minimal settings page exposing only the
-// five-hour usage window at the given percent and an absolute reset time.
+// ollamaCloudProbeUsageBody supplies exact legacy API quota and reset values.
 func ollamaCloudProbeUsageBody(percent int, resetRFC3339 string) []byte {
-	return []byte(fmt.Sprintf(`
-		<section>
-			<div><span>5 hour usage</span><span>%d%% used</span></div>
-			<time datetime="%s"></time>
-		</section>`, percent, resetRFC3339))
+	return []byte(fmt.Sprintf(`{"included":{"session":{"remaining_percent":%d,"resets_at":%q},"weekly":{"remaining_percent":100,"resets_at":%q}},"purchased":{"balance_usd":0}}`, 100-percent, resetRFC3339, resetRFC3339))
 }
 
-// TestOllamaCloudProbeUsageBodiesParse pins the crafted HTML fixtures used by the
-// probe tests: 100% usage is exhausted and must carry the future reset.
+// Both legacy API windows preserve exact used percentages and reset times.
 func TestOllamaCloudProbeUsageBodiesParse(t *testing.T) {
 	reset := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
-	exhausted, err := parseOllamaCloudUsageHTML(ollamaCloudProbeUsageBody(100, reset.Format(time.RFC3339)))
+	exhausted, err := parseOllamaCloudBalance(ollamaCloudProbeUsageBody(100, reset.Format(time.RFC3339)))
 	require.NoError(t, err)
 	require.NotNil(t, exhausted.FiveHour)
 	require.Equal(t, float64(100), exhausted.FiveHour.UsedPercent)
 	require.NotNil(t, exhausted.FiveHour.ResetAt)
 	require.True(t, exhausted.FiveHour.ResetAt.Equal(reset), "reset = %v", exhausted.FiveHour.ResetAt)
 
-	mild, err := parseOllamaCloudUsageHTML(ollamaCloudProbeUsageBody(5, reset.Format(time.RFC3339)))
+	mild, err := parseOllamaCloudBalance(ollamaCloudProbeUsageBody(5, reset.Format(time.RFC3339)))
 	require.NoError(t, err)
 	require.NotNil(t, mild.FiveHour)
 	require.Equal(t, float64(5), mild.FiveHour.UsedPercent)
@@ -43,7 +37,7 @@ func TestOllamaCloudProbeUsageBodiesParse(t *testing.T) {
 // and reset decisions are deterministic.
 func ollamaCloudProbeFixture(t *testing.T, repo AccountRepository, upstream HTTPUpstream, fixedNow time.Time) *OllamaCloudUsageService {
 	t.Helper()
-	svc := NewOllamaCloudUsageService(repo, upstream, NewSettingService(&upstreamBillingProbeSettingRepo{}, nil), ollamaUsageTestEncryptor{}, true)
+	svc := NewOllamaCloudUsageService(repo, upstream, NewSettingService(&upstreamBillingProbeSettingRepo{}, nil))
 	svc.now = func() time.Time { return fixedNow }
 	svc.Start()
 	t.Cleanup(svc.Stop)
@@ -60,7 +54,7 @@ func TestOllamaCloudUsageScheduleRateLimitProbeReturnsWhileProbeRuns(t *testing.
 	// on the probe's database/network work.
 	fixedNow := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
 	account := ollamaUsageAccount(1)
-	account.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=secret"
+
 	base := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{
 		accounts: map[int64]*Account{account.ID: account},
 	}}
@@ -106,7 +100,7 @@ func TestOllamaCloudUsageScheduleRateLimitProbeReturnsWhileProbeRuns(t *testing.
 func TestOllamaCloudUsageRateLimitProbeExhaustedReportsReset(t *testing.T) {
 	fixedNow := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
 	account := ollamaUsageAccount(11)
-	account.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=secret"
+
 	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{
 		accounts: map[int64]*Account{account.ID: account},
 	}}
@@ -131,7 +125,7 @@ func TestOllamaCloudUsageRateLimitProbeExhaustedReportsReset(t *testing.T) {
 func TestOllamaCloudUsageRateLimitProbeNotExhaustedNoCallback(t *testing.T) {
 	fixedNow := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
 	account := ollamaUsageAccount(12)
-	account.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=secret"
+
 	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{
 		accounts: map[int64]*Account{account.ID: account},
 	}}
@@ -154,10 +148,10 @@ func TestOllamaCloudUsageRateLimitProbeSameGroupCoalescesIntoOneFetchPerAccount(
 	fixedNow := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
 	first := ollamaUsageAccount(21)
 	first.Credentials["api_key"] = "shared-key"
-	first.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=shared"
+
 	second := ollamaUsageAccount(22)
 	second.Credentials = map[string]any{"base_url": "https://ollama.com/v1", "api_key": "shared-key"}
-	second.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=shared"
+
 	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{
 		accounts: map[int64]*Account{first.ID: first, second.ID: second},
 	}}
@@ -194,21 +188,21 @@ func TestOllamaCloudUsageRateLimitProbeSameGroupCoalescesIntoOneFetchPerAccount(
 	require.Equal(t, int64(1), upstream.calls.Load(), "one shared group must fetch at most once for the coalesced probes")
 }
 
-func TestOllamaCloudUsageRateLimitProbeSkipsMissingCookieAndNonOllamaAccount(t *testing.T) {
+func TestOllamaCloudUsageRateLimitProbeSkipsMissingKeyAndNonOllamaAccount(t *testing.T) {
 	fixedNow := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
-	noCookie := ollamaUsageAccount(31)
-	noCookie.Extra = map[string]any{} // no session
+	missingKey := ollamaUsageAccount(31)
+	delete(missingKey.Credentials, "api_key")
 	nonOllama := ollamaUsageAccount(32)
 	nonOllama.Platform = PlatformOpenAI
 	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{
-		accounts: map[int64]*Account{noCookie.ID: noCookie, nonOllama.ID: nonOllama},
+		accounts: map[int64]*Account{missingKey.ID: missingKey, nonOllama.ID: nonOllama},
 	}}
 	upstream := &ollamaUsageHTTPStub{body: ollamaCloudProbeUsageBody(100, ollamaCloudProbeReset(t, fixedNow).Format(time.RFC3339))}
 	svc := ollamaCloudProbeFixture(t, repo, upstream, fixedNow)
 
 	called := make(chan struct{}, 1)
 	cb := func(int64, time.Time) { called <- struct{}{} }
-	require.True(t, svc.ScheduleOllamaCloudUsageRateLimitProbe(noCookie.ID, cb))
+	require.True(t, svc.ScheduleOllamaCloudUsageRateLimitProbe(missingKey.ID, cb))
 	require.True(t, svc.ScheduleOllamaCloudUsageRateLimitProbe(nonOllama.ID, cb))
 
 	select {
@@ -222,7 +216,7 @@ func TestOllamaCloudUsageRateLimitProbeSkipsMissingCookieAndNonOllamaAccount(t *
 func TestOllamaCloudUsageRateLimitProbeRespectsFailureBackoff(t *testing.T) {
 	fixedNow := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
 	account := ollamaUsageAccount(41)
-	account.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=secret"
+
 	backoffUntil := fixedNow.Add(30 * time.Minute)
 	account.Extra[OllamaCloudUsageSnapshotExtraKey] = &OllamaCloudUsageSnapshot{
 		Status:        OllamaCloudUsageStatusFailed,
@@ -251,7 +245,7 @@ func TestOllamaCloudUsageRateLimitProbeRespectsFailureBackoff(t *testing.T) {
 func TestOllamaCloudUsageRateLimitProbeStopCancelsInFlightAndRejectsNew(t *testing.T) {
 	fixedNow := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
 	account := ollamaUsageAccount(51)
-	account.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=secret"
+
 	base := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{
 		accounts: map[int64]*Account{account.ID: account},
 	}}
@@ -323,7 +317,7 @@ func (r *ollamaCloudProbeGateRepo) GetByID(ctx context.Context, id int64) (*Acco
 func TestOllamaCloudUsageRateLimitProbeSlowFetchDoesNotReportExpiredReset(t *testing.T) {
 	base := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
 	account := ollamaUsageAccount(61)
-	account.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=secret"
+
 	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{
 		accounts: map[int64]*Account{account.ID: account},
 	}}
@@ -340,7 +334,7 @@ func TestOllamaCloudUsageRateLimitProbeSlowFetchDoesNotReportExpiredReset(t *tes
 			advanced = true
 		}
 	}}
-	svc := NewOllamaCloudUsageService(repo, upstream, NewSettingService(&upstreamBillingProbeSettingRepo{}, nil), ollamaUsageTestEncryptor{}, true)
+	svc := NewOllamaCloudUsageService(repo, upstream, NewSettingService(&upstreamBillingProbeSettingRepo{}, nil))
 	svc.now = func() time.Time { mu.Lock(); defer mu.Unlock(); return cur }
 	svc.Start()
 	t.Cleanup(svc.Stop)
@@ -379,7 +373,7 @@ func TestOllamaCloudUsageRateLimitProbeQueueFullStillMergesExistingAccount(t *te
 		upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{}},
 	}, entered: make(chan struct{}), release: make(chan struct{})}
 	repo.gating.Store(true)
-	svc := NewOllamaCloudUsageService(repo, &ollamaUsageHTTPStub{body: ollamaCloudProbeUsageBody(100, base.Add(time.Hour).Format(time.RFC3339))}, NewSettingService(&upstreamBillingProbeSettingRepo{}, nil), ollamaUsageTestEncryptor{}, true)
+	svc := NewOllamaCloudUsageService(repo, &ollamaUsageHTTPStub{body: ollamaCloudProbeUsageBody(100, base.Add(time.Hour).Format(time.RFC3339))}, NewSettingService(&upstreamBillingProbeSettingRepo{}, nil))
 	svc.now = func() time.Time { return base }
 	svc.Start()
 	t.Cleanup(svc.Stop)

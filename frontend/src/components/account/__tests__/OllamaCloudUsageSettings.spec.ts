@@ -5,8 +5,6 @@ import type { Account, OllamaCloudUsageState } from '@/types'
 
 const api = vi.hoisted(() => ({
   getOllamaCloudUsage: vi.fn(),
-  saveOllamaCloudUsageSession: vi.fn(),
-  deleteOllamaCloudUsageSession: vi.fn(),
   setOllamaCloudUsageAutoRefresh: vi.fn(),
   refreshOllamaCloudUsage: vi.fn()
 }))
@@ -23,9 +21,11 @@ vi.mock('vue-i18n', async () => {
         if (key === 'admin.accounts.ollamaCloud.errors.OLLAMA_CLOUD_USAGE_REFRESH_RATE_LIMITED') {
           return `retry in ${params?.retry_after_seconds} seconds`
         }
-        if (key === 'admin.accounts.ollamaCloud.fiveHourShort') return '5h'
-        if (key === 'admin.accounts.ollamaCloud.sevenDayShort') return '7d'
-        if (key === 'admin.accounts.ollamaCloud.monthlyShort') return 'mo'
+        if (key === 'admin.accounts.ollamaCloud.requests') return 'requests'
+        if (key === 'admin.accounts.ollamaCloud.inputTokens') return 'In'
+        if (key === 'admin.accounts.ollamaCloud.cachedInputTokens') return 'Cached'
+        if (key === 'admin.accounts.ollamaCloud.outputTokens') return 'Out'
+        if (key === 'admin.accounts.ollamaCloud.otherModels') return 'Others'
         return key
       }
     })
@@ -37,11 +37,10 @@ const state = (overrides: Partial<OllamaCloudUsageState> = {}): OllamaCloudUsage
   eligible: true,
   configured: false,
   auto_refresh_enabled: false,
-  encryption_key_configured: true,
   ...overrides
 })
 
-const detailedState = (plan = 'max'): OllamaCloudUsageState => state({
+const detailedState = (balance = '$0'): OllamaCloudUsageState => state({
   configured: true,
   snapshot: {
     status: 'ok',
@@ -49,14 +48,21 @@ const detailedState = (plan = 'max'): OllamaCloudUsageState => state({
     last_attempt_at: '2026-07-22T12:00:00Z',
     next_refresh_at: '2026-07-22T13:00:00Z',
     data: {
-      plan,
       five_hour: { used_percent: 5.6, reset_at: '2026-07-23T03:00:00Z' },
       seven_day: { used_percent: 14.2, reset_at: '2026-07-29T00:00:00Z' },
-      balance: '$0',
-      models: [
-        { model: 'gpt-oss:120b-cloud', window: 'five_hour', requests: 2 },
-        { model: 'gpt-oss:120b-cloud', window: 'seven_day', requests: 12 }
-      ]
+      balance,
+      usage: {
+        range: '7d',
+        scope: 'self',
+        from: '2026-07-15T00:00:00Z',
+        until: '2026-07-22T12:00:00Z',
+        totals: {
+          request_count: 14,
+          groups: [
+            { model: 'gpt-oss:120b-cloud', request_count: 14 }
+          ]
+        }
+      }
     }
   }
 })
@@ -95,33 +101,26 @@ describe('OllamaCloudUsageSettings', () => {
     notifications.showError.mockReset()
   })
 
-  it('uses the existing account state without an immediate duplicate GET', async () => {
-    api.saveOllamaCloudUsageSession.mockResolvedValueOnce(state({ configured: true }))
-    const wrapper = mount(OllamaCloudUsageSettings, { props: { account: account() } })
-    await flushPromises()
-
-    const input = wrapper.get('#ollama-cloud-session')
-    await input.setValue('wos-session=browser-secret')
-    await wrapper.get('[data-testid="ollama-cloud-session-save"]').trigger('click')
+  it('uses the existing account state without a duplicate GET and removes session controls', async () => {
+    const wrapper = mount(OllamaCloudUsageSettings, { props: { account: account(detailedState()) } })
     await flushPromises()
 
     expect(api.getOllamaCloudUsage).not.toHaveBeenCalled()
-    expect(api.saveOllamaCloudUsageSession).toHaveBeenCalledWith(7, 'wos-session=browser-secret')
-    expect((input.element as HTMLTextAreaElement).value).toBe('')
-    expect(wrapper.text()).not.toContain('browser-secret')
-    expect(wrapper.emitted('updated')?.at(-1)?.[0]).toMatchObject({ configured: true })
+    expect(wrapper.find('#ollama-cloud-session').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="ollama-cloud-session-save"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="ollama-cloud-session-delete"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('admin.accounts.ollamaCloud.encryptionKeyRequired')
   })
 
-  it('fails closed when the persistent encryption key is unavailable', async () => {
+  it('hides refresh and auto-refresh controls when no valid API key is configured', async () => {
     const wrapper = mount(OllamaCloudUsageSettings, {
-      props: { account: account(state({ encryption_key_configured: false })) }
+      props: { account: account(state({ configured: false })) }
     })
     await flushPromises()
-    await wrapper.get('#ollama-cloud-session').setValue('wos-session=secret')
 
-    expect(wrapper.get('[data-testid="ollama-cloud-session-save"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.text()).toContain('admin.accounts.ollamaCloud.encryptionKeyRequired')
-    expect(api.saveOllamaCloudUsageSession).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-testid="ollama-cloud-usage-not-configured"]').text()).toContain('admin.accounts.ollamaCloud.cellNotConfigured')
+    expect(wrapper.find('[data-testid="ollama-cloud-refresh"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="ollama-cloud-auto-refresh"]').exists()).toBe(false)
   })
 
   it('updates the account-level automatic refresh switch through its dedicated endpoint', async () => {
@@ -134,37 +133,67 @@ describe('OllamaCloudUsageSettings', () => {
     await wrapper.get('[data-testid="ollama-cloud-auto-refresh"]').trigger('click')
     await flushPromises()
     expect(api.setOllamaCloudUsageAutoRefresh).toHaveBeenCalledWith(7, true)
+    expect(wrapper.emitted('updated')?.at(-1)?.[0]).toMatchObject({ configured: true, auto_refresh_enabled: true })
   })
 
-  it('keeps plan, balance, model, status, and manual refresh details in the edit settings', async () => {
-    api.refreshOllamaCloudUsage.mockResolvedValueOnce(detailedState('pro'))
+  it('shows legacy quota windows and 7d usage without fabricating absent token/cost metrics, and refreshes on demand', async () => {
+    api.refreshOllamaCloudUsage.mockResolvedValueOnce(detailedState('$18.50'))
     const wrapper = mount(OllamaCloudUsageSettings, {
-      props: { account: account(detailedState()) }
+      props: { account: account(detailedState('$0')) }
     })
     await flushPromises()
 
     const details = wrapper.get('[data-testid="ollama-cloud-usage-details"]')
-    expect(details.text()).toContain('max')
+    expect(details.text()).not.toContain('admin.accounts.ollamaCloud.plan')
     expect(details.text()).toContain('$0')
-    expect(details.text()).toContain('5h gpt-oss:120b-cloud: 2')
-    expect(details.text()).toContain('7d gpt-oss:120b-cloud: 12')
+    expect(wrapper.get('[data-testid="ollama-cloud-usage-range"]').text()).toBe('7d (2026-07-15 00:00:00 UTC – 2026-07-22 12:00:00 UTC)')
+    expect(wrapper.get('[data-testid="ollama-cloud-usage-totals"]').text()).toBe('14 requests')
+    expect(wrapper.get('[data-testid="ollama-cloud-usage-models"]').text()).toBe('7d gpt-oss:120b-cloud: 14 requests')
     expect(details.text()).toContain('admin.accounts.ollamaCloud.ok')
 
     await wrapper.get('[data-testid="ollama-cloud-refresh"]').trigger('click')
     await flushPromises()
 
     expect(api.refreshOllamaCloudUsage).toHaveBeenCalledWith(7)
-    expect(wrapper.get('[data-testid="ollama-cloud-usage-details"]').text()).toContain('pro')
+    expect(wrapper.get('[data-testid="ollama-cloud-usage-details"]').text()).toContain('$18.50')
     expect(notifications.showSuccess).toHaveBeenCalled()
   })
 
-  it('renders the current monthly Ollama usage layout without legacy windows', () => {
-    const monthly = detailedState('pro')
+  it('renders monthly quota with fixed 7d usage totals, token/cost metrics, model groups, and remainder without mislabelling as monthly', () => {
+    const monthly = detailedState('$41.60')
     monthly.snapshot!.data = {
-      plan: 'pro',
       monthly: { used_percent: 8.4, reset_at: '2026-10-18T02:05:47Z' },
-      balance: '$0',
-      models: [{ model: 'deepseek-v4.1-flash', window: 'monthly', requests: 749 }]
+      balance: '$41.60',
+      usage: {
+        range: '7d',
+        scope: 'self',
+        from: '2026-10-11T00:00:00Z',
+        until: '2026-10-18T02:05:47Z',
+        totals: {
+          request_count: 761,
+          usage_usd: 1.25,
+          input_tokens: 12000,
+          cached_input_tokens: 3000,
+          output_tokens: 4500,
+          groups: [
+            {
+              model: 'deepseek-v4.1-flash',
+              request_count: 749,
+              usage_usd: 1.2,
+              input_tokens: 11000,
+              cached_input_tokens: 3000,
+              output_tokens: 4200
+            }
+          ],
+          remainder: {
+            request_count: 12,
+            usage_usd: 0.05,
+            input_tokens: 1000,
+            cached_input_tokens: 0,
+            output_tokens: 300
+          }
+        }
+      }
     }
 
     const wrapper = mount(OllamaCloudUsageSettings, { props: { account: account(monthly) } })
@@ -173,7 +202,12 @@ describe('OllamaCloudUsageSettings', () => {
     expect(details.text()).toContain('admin.accounts.ollamaCloud.monthly')
     expect(details.text()).not.toContain('admin.accounts.ollamaCloud.fiveHour')
     expect(details.text()).not.toContain('admin.accounts.ollamaCloud.sevenDay')
-    expect(details.text()).toContain('mo deepseek-v4.1-flash: 749')
+    expect(wrapper.get('[data-testid="ollama-cloud-usage-range"]').text()).toBe('7d (2026-10-11 00:00:00 UTC – 2026-10-18 02:05:47 UTC)')
+    expect(wrapper.get('[data-testid="ollama-cloud-usage-totals"]').text()).toBe('761 requests · $1.25 · In 12000 / Cached 3000 / Out 4500')
+    expect(wrapper.get('[data-testid="ollama-cloud-usage-models"]').text()).toBe(
+      '7d deepseek-v4.1-flash: 749 requests · $1.2 · In 11000 / Cached 3000 / Out 4200, 7d Others: 12 requests · $0.05 · In 1000 / Cached 0 / Out 300'
+    )
+    expect(wrapper.get('[data-testid="ollama-cloud-usage-models"]').text()).not.toContain('mo deepseek-v4.1-flash')
   })
 
   it('shows the structured manual refresh limit from the edit settings', async () => {
@@ -191,17 +225,23 @@ describe('OllamaCloudUsageSettings', () => {
 
     expect(notifications.showError).toHaveBeenCalledWith('retry in 18 seconds')
   })
-  it('reports an incomplete HTTP-success refresh as a failure and preserves details', async () => {
-    const incomplete = detailedState()
-    incomplete.snapshot!.status = 'failed'
-    incomplete.snapshot!.last_error = 'incomplete_usage'
-    api.refreshOllamaCloudUsage.mockResolvedValueOnce(incomplete)
-    const wrapper = mount(OllamaCloudUsageSettings, { props: { account: account(detailedState()) } })
+
+  it('reports 401/403/invalid_json/incomplete_usage refresh failures and marks preserved data stale', async () => {
+    const suspended = detailedState('$10')
+    suspended.snapshot!.status = 'failed'
+    suspended.snapshot!.last_error = 'http_error'
+    suspended.snapshot!.http_status = 403
+    api.refreshOllamaCloudUsage.mockResolvedValueOnce(suspended)
+
+    const wrapper = mount(OllamaCloudUsageSettings, { props: { account: account(detailedState('$10')) } })
     await wrapper.get('[data-testid="ollama-cloud-refresh"]').trigger('click')
     await flushPromises()
-    expect(notifications.showSuccess).not.toHaveBeenCalled()
-    expect(notifications.showError).toHaveBeenCalledWith('admin.accounts.ollamaCloud.errors.incomplete_usage')
-    expect(wrapper.get('[data-testid="ollama-cloud-usage-details"]').text()).toContain('5h')
-  })
 
+    expect(notifications.showSuccess).not.toHaveBeenCalled()
+    expect(notifications.showError).toHaveBeenCalledWith('admin.accounts.ollamaCloud.errors.account_suspended (HTTP 403)')
+    const errorBanner = wrapper.get('[data-testid="ollama-cloud-usage-error"]')
+    expect(errorBanner.text()).toContain('admin.accounts.ollamaCloud.errors.account_suspended (HTTP 403)')
+    expect(errorBanner.text()).toContain('admin.accounts.ollamaCloud.staleData')
+    expect(wrapper.get('[data-testid="ollama-cloud-usage-details"]').text()).toContain('$10')
+  })
 })

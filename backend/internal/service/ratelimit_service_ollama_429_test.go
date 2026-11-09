@@ -685,7 +685,7 @@ func (r *ollama429LinkRepo) casUpdatedCount() int {
 
 // TestOllama429RealProbeLinkage_SnapshotPersistThenWriteBack drives the full real
 // chain: handle429 schedules the async probe on a real started
-// OllamaCloudUsageService; the probe fetches an exhausted settings page, persists
+// OllamaCloudUsageService; the probe fetches exhausted official API quotas, persists
 // its snapshot (which advances UpdatedAt through the link repo, mirroring the
 // production TimeMixin bump), and the exhaustion callback then writes the reset
 // back through the generation CAS. The CAS must still succeed even though the
@@ -693,17 +693,13 @@ func (r *ollama429LinkRepo) casUpdatedCount() int {
 // callback time, not the scheduling-time version.
 func TestOllama429RealProbeLinkage_SnapshotPersistThenWriteBack(t *testing.T) {
 	account := ollamaUsageAccount(701)
-	account.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=secret"
+
 	// The probe is a 429-event recovery query and must run even when the periodic
-	// auto_refresh switch is off (it still needs the configured cookie/session).
+	// auto_refresh switch is off, using the configured API key.
 	account.Extra[OllamaCloudUsageAutoRefreshExtraKey] = false
 
 	reset := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339)
-	body := []byte(`
-		<section>
-			<div><span>5 hour usage</span><span>100% used</span></div>
-			<time datetime="` + reset + `"></time>
-		</section>`)
+	body := ollamaCloudProbeUsageBody(100, reset)
 
 	repo := &ollama429LinkRepo{ollamaUsageTestRepo: &ollamaUsageTestRepo{
 		upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{
@@ -712,7 +708,7 @@ func TestOllama429RealProbeLinkage_SnapshotPersistThenWriteBack(t *testing.T) {
 	}}
 	upstream := &ollamaUsageHTTPStub{body: body}
 
-	usageSvc := NewOllamaCloudUsageService(repo, upstream, NewSettingService(&upstreamBillingProbeSettingRepo{}, nil), ollamaUsageTestEncryptor{}, true)
+	usageSvc := NewOllamaCloudUsageService(repo, upstream, NewSettingService(&upstreamBillingProbeSettingRepo{}, nil))
 
 	// With auto_refresh off, a requireEnabled refresh is a (nil,nil) no-op. When
 	// the 429-event probe piggybacks such a timed-cycle no-op through the shared

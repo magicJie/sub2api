@@ -1078,18 +1078,6 @@ export async function getOllamaCloudUsage(id: number): Promise<OllamaCloudUsageS
   return data
 }
 
-export async function saveOllamaCloudUsageSession(id: number, session: string): Promise<OllamaCloudUsageState> {
-  const { data } = await apiClient.put<OllamaCloudUsageState>(`/admin/accounts/${id}/ollama-cloud-usage/session`, {
-    session
-  })
-  return data
-}
-
-export async function deleteOllamaCloudUsageSession(id: number): Promise<OllamaCloudUsageState> {
-  const { data } = await apiClient.delete<OllamaCloudUsageState>(`/admin/accounts/${id}/ollama-cloud-usage/session`)
-  return data
-}
-
 export async function setOllamaCloudUsageAutoRefresh(id: number, enabled: boolean): Promise<OllamaCloudUsageState> {
   const { data } = await apiClient.put<OllamaCloudUsageState>(`/admin/accounts/${id}/ollama-cloud-usage/auto-refresh`, {
     enabled
@@ -1194,8 +1182,6 @@ export const accountsAPI = {
   getOllamaCloudUsageSettings,
   updateOllamaCloudUsageSettings,
   getOllamaCloudUsage,
-  saveOllamaCloudUsageSession,
-  deleteOllamaCloudUsageSession,
   setOllamaCloudUsageAutoRefresh,
   refreshOllamaCloudUsage,
   getOpenCodeGoUsageSettings,

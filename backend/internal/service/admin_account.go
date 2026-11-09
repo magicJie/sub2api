@@ -414,11 +414,12 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 	if input.Platform == PlatformTypeSafe && input.Type != AccountTypeAPIKey {
 		return nil, errors.New("typesafe accounts only support apikey credentials")
 	}
-	// Probe/session state is system-managed. New accounts always start with automatic refresh disabled.
+	// Usage and probe state is system-managed. New accounts start with automatic refresh disabled.
 	delete(accountExtra, UpstreamBillingProbeEnabledExtraKey)
 	delete(accountExtra, UpstreamBillingRateSyncEnabledExtraKey)
 	delete(accountExtra, UpstreamBillingProbeExtraKey)
 	delete(accountExtra, OllamaCloudUsageSessionExtraKey)
+	delete(accountExtra, "ollama_cloud_usage_snapshot")
 	delete(accountExtra, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(accountExtra, OllamaCloudUsageSnapshotExtraKey)
 	delete(accountExtra, KiroUsageSnapshotExtraKey) // Kiro（fork）
@@ -708,6 +709,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		delete(normalizedExtra, UpstreamBillingRateSyncEnabledExtraKey)
 		delete(normalizedExtra, UpstreamBillingProbeExtraKey)
 		delete(normalizedExtra, OllamaCloudUsageSessionExtraKey)
+		delete(normalizedExtra, "ollama_cloud_usage_snapshot")
 		delete(normalizedExtra, OllamaCloudUsageAutoRefreshExtraKey)
 		delete(normalizedExtra, OllamaCloudUsageSnapshotExtraKey)
 		delete(normalizedExtra, KiroUsageSnapshotExtraKey)              // Kiro（fork）
@@ -730,7 +732,6 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			UpstreamBillingProbeEnabledExtraKey,
 			UpstreamBillingRateSyncEnabledExtraKey,
 			UpstreamBillingProbeExtraKey,
-			OllamaCloudUsageSessionExtraKey,
 			OllamaCloudUsageAutoRefreshExtraKey,
 			OllamaCloudUsageSnapshotExtraKey,
 			KiroUsageSnapshotExtraKey, // Kiro（fork）
@@ -823,12 +824,12 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		}
 	}
 	if account.Extra != nil {
+		delete(account.Extra, OllamaCloudUsageSessionExtraKey)
+		delete(account.Extra, "ollama_cloud_usage_snapshot")
 		if !IsOllamaCloudUsageAccount(account) {
-			delete(account.Extra, OllamaCloudUsageSessionExtraKey)
 			delete(account.Extra, OllamaCloudUsageAutoRefreshExtraKey)
 			delete(account.Extra, OllamaCloudUsageSnapshotExtraKey)
 		} else if !reflect.DeepEqual(previousOllamaUsageIdentity, ollamaCloudUsageIdentity(account)) {
-			delete(account.Extra, OllamaCloudUsageSessionExtraKey)
 			delete(account.Extra, OllamaCloudUsageAutoRefreshExtraKey)
 			delete(account.Extra, OllamaCloudUsageSnapshotExtraKey)
 		}
@@ -978,6 +979,7 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 	delete(updates, UpstreamBillingRateSyncEnabledExtraKey)
 	delete(updates, UpstreamBillingProbeExtraKey)
 	delete(updates, OllamaCloudUsageSessionExtraKey)
+	delete(updates, "ollama_cloud_usage_snapshot")
 	delete(updates, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(updates, OllamaCloudUsageSnapshotExtraKey)
 	delete(updates, KiroUsageSnapshotExtraKey) // Kiro（fork）
@@ -1002,13 +1004,14 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 // BulkUpdateAccounts updates multiple accounts in one request.
 // It merges credentials/extra keys instead of overwriting the whole object.
 func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUpdateAccountsInput) (*BulkUpdateAccountsResult, error) {
-	// Managed probe/session state may only enter through dedicated typed endpoints.
+	// Managed usage and probe state enters through dedicated typed endpoints.
 	input.Extra = sanitizedCodexFingerprintExtraUpdates(input.Extra)
 	input.Extra = stripOpenAIAutoResetCreditManagedExtra(input.Extra, true)
 	delete(input.Extra, UpstreamBillingProbeEnabledExtraKey)
 	delete(input.Extra, UpstreamBillingRateSyncEnabledExtraKey)
 	delete(input.Extra, UpstreamBillingProbeExtraKey)
 	delete(input.Extra, OllamaCloudUsageSessionExtraKey)
+	delete(input.Extra, "ollama_cloud_usage_snapshot")
 	delete(input.Extra, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(input.Extra, OllamaCloudUsageSnapshotExtraKey)
 	delete(input.Extra, KiroUsageSnapshotExtraKey) // Kiro（fork）

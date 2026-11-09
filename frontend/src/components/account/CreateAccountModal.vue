@@ -3706,28 +3706,13 @@
         </div>
       </div>
 
-      <!-- Ollama Cloud 用量会话：账号创建后再加密保存并立即查询一次 -->
+      <!-- Ollama Cloud 用量：按需开启自动刷新，账号创建后使用 API Key 查询一次 -->
       <section
         v-if="form.platform === 'ollama'"
         class="space-y-3 border-t border-gray-200 pt-4 dark:border-dark-600"
-        data-testid="create-ollama-usage-session"
+        data-testid="create-ollama-usage"
       >
-        <div>
-          <label class="input-label mb-0" for="create-ollama-session">{{ t('admin.accounts.ollamaCloud.sessionLabel') }}</label>
-          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.ollamaCloud.createSessionHint') }}</p>
-        </div>
-        <textarea
-          id="create-ollama-session"
-          v-model="ollamaUsageSession"
-          rows="3"
-          class="input font-mono text-xs"
-          autocomplete="new-password"
-          data-1p-ignore
-          data-lpignore="true"
-          data-bwignore="true"
-          :placeholder="t('admin.accounts.ollamaCloud.sessionPlaceholder')"
-        />
-        <div v-if="ollamaUsageSession.trim()" class="flex items-center justify-between gap-4">
+        <div class="flex items-center justify-between gap-4">
           <div>
             <label class="input-label mb-0">{{ t('admin.accounts.ollamaCloud.autoRefresh') }}</label>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.ollamaCloud.autoRefreshHint') }}</p>
@@ -4431,7 +4416,7 @@ import {
   resolveOpenAIWSModeHintKey,
   type OpenAIWSMode
 } from '@/utils/openaiWsMode'
-import { DEFAULT_OLLAMA_BASE_URL, isValidOllamaBaseUrl } from '@/utils/ollamaUsage'
+import { DEFAULT_OLLAMA_BASE_URL, formatOllamaSnapshotError, isValidOllamaBaseUrl } from '@/utils/ollamaUsage'
 import OAuthAuthorizationFlow from './OAuthAuthorizationFlow.vue'
 
 // Type for exposed OAuthAuthorizationFlow component
@@ -5873,27 +5858,34 @@ const ensureAntigravityMixedChannelConfirmed = async (onConfirm: () => Promise<v
   }
 }
 
-// Ollama Cloud 用量会话只能挂在已存在的账号上（按账号加密落库），所以在创建成功后保存。
-const ollamaUsageSession = ref('')
-const ollamaUsageAutoRefresh = ref(true)
+const ollamaUsageAutoRefresh = ref(false)
 
 const setupOllamaUsageAfterCreate = async (accountId: number) => {
-  const session = ollamaUsageSession.value.trim()
-  if (form.platform !== 'ollama' || !session) return
-  try {
-    await adminAPI.accounts.saveOllamaCloudUsageSession(accountId, session)
-    if (ollamaUsageAutoRefresh.value) {
+  if (form.platform !== 'ollama') return
+  if (ollamaUsageAutoRefresh.value) {
+    try {
       await adminAPI.accounts.setOllamaCloudUsageAutoRefresh(accountId, true)
+    } catch (error: unknown) {
+      appStore.showWarning(extractApiErrorMessage(error, t('admin.accounts.ollamaCloud.autoRefreshFailed')))
     }
+  }
+  try {
     const state = await adminAPI.accounts.refreshOllamaCloudUsage(accountId)
     const snap = state?.snapshot
     if (snap && snap.status !== 'ok') {
-      appStore.showWarning(t('admin.accounts.ollamaCloud.createCheckFailed', { reason: snap.last_error || snap.status }))
-    } else {
+      const reason = formatOllamaSnapshotError(snap, t) || snap.last_error || snap.status
+      appStore.showWarning(t('admin.accounts.ollamaCloud.createCheckFailed', { reason }))
+    } else if (snap?.status === 'ok') {
       appStore.showSuccess(t('admin.accounts.ollamaCloud.createCheckOk'))
     }
   } catch (error: unknown) {
-    appStore.showWarning(extractApiErrorMessage(error, t('admin.accounts.ollamaCloud.sessionSaveFailed')))
+    const reason = extractI18nErrorMessage(
+      error,
+      t,
+      'admin.accounts.ollamaCloud.errors',
+      t('admin.accounts.ollamaCloud.refreshFailed')
+    )
+    appStore.showWarning(t('admin.accounts.ollamaCloud.createCheckFailed', { reason }))
   }
 }
 
@@ -5954,8 +5946,7 @@ const submitCreateAccount = async (payload: CreateAccountRequest) => {
 
 // Methods
 const resetForm = () => {
-  ollamaUsageSession.value = ''
-  ollamaUsageAutoRefresh.value = true
+  ollamaUsageAutoRefresh.value = false
   step.value = 1
   form.name = ''
   form.notes = ''

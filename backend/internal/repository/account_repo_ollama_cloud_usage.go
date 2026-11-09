@@ -17,6 +17,7 @@ const (
 	platform = 'ollama'
 	AND type = 'apikey'
 	AND jsonb_typeof(credentials -> 'api_key') = 'string'
+	AND btrim(credentials ->> 'api_key') <> ''
 `
 )
 
@@ -82,57 +83,36 @@ func (r *accountRepository) ListOllamaCloudUsageGroupAccounts(ctx context.Contex
 	return result, nil
 }
 
-func (r *accountRepository) SaveOllamaCloudUsageSession(ctx context.Context, account *service.Account, ciphertext string, autoRefresh bool) error {
-	return r.updateOllamaCloudUsageGroup(ctx, account, map[string]any{
-		service.OllamaCloudUsageSessionExtraKey:     ciphertext,
-		service.OllamaCloudUsageAutoRefreshExtraKey: autoRefresh,
-	}, false)
-}
-
-func (r *accountRepository) DeleteOllamaCloudUsageSession(ctx context.Context, account *service.Account) error {
-	return r.updateOllamaCloudUsageGroup(ctx, account, map[string]any{}, false)
-}
-
 func (r *accountRepository) SetOllamaCloudUsageAutoRefresh(ctx context.Context, account *service.Account, enabled bool) error {
-	if !ollamaCloudUsageAccountHasSession(account) {
-		return service.ErrOllamaCloudUsageSessionRequired
-	}
 	payload := ollamaCloudUsageManagedPayload(account)
 	payload[service.OllamaCloudUsageAutoRefreshExtraKey] = enabled
-	return r.updateOllamaCloudUsageGroup(ctx, account, payload, true)
+	return r.updateOllamaCloudUsageGroup(ctx, account, payload)
 }
 
 func (r *accountRepository) UpdateOllamaCloudUsageSnapshot(ctx context.Context, account *service.Account, snapshot *service.OllamaCloudUsageSnapshot) error {
 	if account == nil || snapshot == nil {
 		return service.ErrAccountNilInput
 	}
-	if !ollamaCloudUsageAccountHasSession(account) {
-		return service.ErrOllamaCloudUsageSessionRequired
-	}
 	payload := ollamaCloudUsageManagedPayload(account)
 	payload[service.OllamaCloudUsageSnapshotExtraKey] = snapshot
-	return r.updateOllamaCloudUsageGroup(ctx, account, payload, true)
+	return r.updateOllamaCloudUsageGroup(ctx, account, payload)
 }
 
 // DisableOllamaCloudUsageAutoRefresh is group-scoped and retains the loaded
 // identity CAS. It cannot disable a new group after the account changes key.
 func (r *accountRepository) DisableOllamaCloudUsageAutoRefresh(ctx context.Context, account *service.Account) error {
-	if !ollamaCloudUsageAccountHasSession(account) {
-		return service.ErrOllamaCloudUsageSessionRequired
-	}
 	payload := ollamaCloudUsageManagedPayload(account)
 	payload[service.OllamaCloudUsageAutoRefreshExtraKey] = false
 	delete(payload, service.OllamaCloudUsageSnapshotExtraKey)
-	return r.updateOllamaCloudUsageGroup(ctx, account, payload, true)
+	return r.updateOllamaCloudUsageGroup(ctx, account, payload)
 }
 
 func ollamaCloudUsageManagedPayload(account *service.Account) map[string]any {
-	payload := make(map[string]any, 3)
+	payload := make(map[string]any, 2)
 	if account == nil || account.Extra == nil {
 		return payload
 	}
 	for _, key := range []string{
-		service.OllamaCloudUsageSessionExtraKey,
 		service.OllamaCloudUsageAutoRefreshExtraKey,
 		service.OllamaCloudUsageSnapshotExtraKey,
 	} {
@@ -143,18 +123,9 @@ func ollamaCloudUsageManagedPayload(account *service.Account) map[string]any {
 	return payload
 }
 
-func ollamaCloudUsageAccountHasSession(account *service.Account) bool {
-	if account == nil || account.Extra == nil {
-		return false
-	}
-	value, ok := account.Extra[service.OllamaCloudUsageSessionExtraKey].(string)
-	return ok && value != ""
-}
-
 type lockedOllamaCloudUsageMember struct {
 	id            int64
 	anchorMatches bool
-	sessionJSON   string
 	autoJSON      string
 	snapshotJSON  string
 }
@@ -163,7 +134,6 @@ func (r *accountRepository) updateOllamaCloudUsageGroup(
 	ctx context.Context,
 	account *service.Account,
 	payload map[string]any,
-	requireExpectedState bool,
 ) error {
 	if account == nil {
 		return service.ErrAccountNilInput
@@ -194,31 +164,24 @@ func (r *accountRepository) updateOllamaCloudUsageGroup(
 		if !anchorMatches {
 			return service.ErrOllamaCloudUsageIdentityChanged
 		}
-		if requireExpectedState {
-			expectedSession, err := canonicalAccountExtraJSON(account, service.OllamaCloudUsageSessionExtraKey)
-			if err != nil {
-				return err
+		expectedAuto, err := canonicalAccountExtraJSON(account, service.OllamaCloudUsageAutoRefreshExtraKey)
+		if err != nil {
+			return err
+		}
+		expectedSnapshot, err := canonicalAccountExtraJSON(account, service.OllamaCloudUsageSnapshotExtraKey)
+		if err != nil {
+			return err
+		}
+		stateMatches := false
+		for _, member := range members {
+			if canonicalJSON(member.autoJSON) == expectedAuto &&
+				canonicalJSON(member.snapshotJSON) == expectedSnapshot {
+				stateMatches = true
+				break
 			}
-			expectedAuto, err := canonicalAccountExtraJSON(account, service.OllamaCloudUsageAutoRefreshExtraKey)
-			if err != nil {
-				return err
-			}
-			expectedSnapshot, err := canonicalAccountExtraJSON(account, service.OllamaCloudUsageSnapshotExtraKey)
-			if err != nil {
-				return err
-			}
-			stateMatches := false
-			for _, member := range members {
-				if canonicalJSON(member.sessionJSON) == expectedSession &&
-					canonicalJSON(member.autoJSON) == expectedAuto &&
-					canonicalJSON(member.snapshotJSON) == expectedSnapshot {
-					stateMatches = true
-					break
-				}
-			}
-			if !stateMatches {
-				return service.ErrOllamaCloudUsageIdentityChanged
-			}
+		}
+		if !stateMatches {
+			return service.ErrOllamaCloudUsageIdentityChanged
 		}
 		encoded, err := json.Marshal(payload)
 		if err != nil {
@@ -233,7 +196,8 @@ func (r *accountRepository) updateOllamaCloudUsageGroup(
 			SET extra = (COALESCE(extra, '{}'::jsonb)
 					- 'ollama_cloud_usage_session'
 					- 'ollama_cloud_usage_auto_refresh'
-					- 'ollama_cloud_usage_snapshot') || $1::jsonb,
+					- 'ollama_cloud_usage_snapshot'
+					- 'ollama_cloud_usage_api_snapshot') || $1::jsonb,
 				updated_at = NOW()
 			WHERE deleted_at IS NULL
 				AND `+ollamaCloudUsageEligibleSQL+`
@@ -292,9 +256,8 @@ func lockOllamaCloudUsageGroup(
 				AND type = $4
 				AND credentials = $5::jsonb
 				AND proxy_id IS NOT DISTINCT FROM $6,
-			COALESCE((extra -> 'ollama_cloud_usage_session')::text, 'null'),
 			COALESCE((extra -> 'ollama_cloud_usage_auto_refresh')::text, 'null'),
-			COALESCE((extra -> 'ollama_cloud_usage_snapshot')::text, 'null')
+			COALESCE((extra -> 'ollama_cloud_usage_api_snapshot')::text, 'null')
 		FROM accounts
 		WHERE deleted_at IS NULL
 			AND `+ollamaCloudUsageEligibleSQL+`
@@ -309,7 +272,7 @@ func lockOllamaCloudUsageGroup(
 	members := make([]lockedOllamaCloudUsageMember, 0, 1)
 	for rows.Next() {
 		var member lockedOllamaCloudUsageMember
-		if err := rows.Scan(&member.id, &member.anchorMatches, &member.sessionJSON, &member.autoJSON, &member.snapshotJSON); err != nil {
+		if err := rows.Scan(&member.id, &member.anchorMatches, &member.autoJSON, &member.snapshotJSON); err != nil {
 			return nil, err
 		}
 		members = append(members, member)
@@ -420,12 +383,11 @@ func (r *accountRepository) ListDueOllamaCloudUsageAccounts(
 			SELECT id,
 				credentials ->> 'api_key' AS api_key,
 				last_used_at,
-				extra -> 'ollama_cloud_usage_snapshot' AS snapshot
+				extra -> 'ollama_cloud_usage_api_snapshot' AS snapshot
 			FROM accounts
 			WHERE deleted_at IS NULL
 				AND status = 'active'
 				AND `+ollamaCloudUsageEligibleSQL+`
-				AND jsonb_typeof(extra -> 'ollama_cloud_usage_session') = 'string'
 				AND extra @> '{"ollama_cloud_usage_auto_refresh": true}'::jsonb
 		), group_activity AS (
 			SELECT credentials ->> 'api_key' AS api_key,

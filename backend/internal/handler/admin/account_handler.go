@@ -350,20 +350,13 @@ type AccountSchedulerGroupScore struct {
 const accountListGroupUngroupedQueryValue = "ungrouped"
 
 func (h *AccountHandler) accountResponseFromService(account *service.Account) *dto.Account {
-	out := dto.AccountFromService(account)
-	if h != nil && h.ollamaCloudUsage != nil && out != nil {
-		h.ollamaCloudUsage.EnrichState(out.OllamaCloudUsage)
-	}
-	return out
+	return dto.AccountFromService(account)
 }
 
 func (h *AccountHandler) accountListResponseFromService(account *service.Account) *dto.Account {
 	out := dto.AccountFromServiceShallow(account)
 	if out != nil && account != nil {
 		out.Proxy = dto.ProxyFromService(account.Proxy)
-	}
-	if h != nil && h.ollamaCloudUsage != nil && out != nil {
-		h.ollamaCloudUsage.EnrichState(out.OllamaCloudUsage)
 	}
 	return out
 }

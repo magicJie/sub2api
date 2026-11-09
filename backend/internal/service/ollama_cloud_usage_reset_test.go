@@ -77,7 +77,7 @@ func TestOllamaCloudUsageExhaustionResetAt(t *testing.T) {
 		{
 			name: "five hour exhausted below boundary not counted",
 			snapshot: okSnapshot(&OllamaCloudUsageData{
-				FiveHour: window(98.5, at(2, 0)),
+				FiveHour: window(99.999, at(2, 0)),
 			}),
 			minFresh: minFetchedAt,
 			wantOK:   false,
@@ -110,7 +110,7 @@ func TestOllamaCloudUsageExhaustionResetAt(t *testing.T) {
 		{
 			name: "seven day exhausted alone",
 			snapshot: okSnapshot(&OllamaCloudUsageData{
-				SevenDay: window(120, at(30, 0)),
+				SevenDay: window(100, at(30, 0)),
 			}),
 			minFresh: minFetchedAt,
 			want:     now.Add(30 * time.Hour),
@@ -205,31 +205,21 @@ func TestOllamaCloudUsageExhaustionResetAt(t *testing.T) {
 			wantOK:   true,
 		},
 		{
-			name: "page rounds to 99 percent after upstream rejection",
+			name: "99 percent remains below exact API exhaustion",
 			snapshot: okSnapshot(&OllamaCloudUsageData{
 				FiveHour: window(99, at(1, 0)),
 			}),
 			minFresh: minFetchedAt,
-			want:     now.Add(time.Hour),
-			wantOK:   true,
-		},
-		{
-			name: "relative reset text resolved against fetched at",
-			snapshot: okSnapshot(&OllamaCloudUsageData{
-				FiveHour: &OllamaCloudUsageWindow{UsedPercent: 100, ResetText: "in 3 hours."},
-			}),
-			minFresh: minFetchedAt,
-			want:     now.Add(-time.Minute + 3*time.Hour),
-			wantOK:   true,
+			wantOK:   false,
 		},
 		{
 			name: "monthly exhausted without balance blocks until refill",
 			snapshot: okSnapshot(&OllamaCloudUsageData{
-				Monthly: &OllamaCloudUsageWindow{UsedPercent: 100, ResetText: "Refills in 1 week"},
+				Monthly: window(100, at(168, 0)),
 				Balance: "$0.00",
 			}),
 			minFresh: minFetchedAt,
-			want:     now.Add(-time.Minute + 7*24*time.Hour),
+			want:     now.Add(7 * 24 * time.Hour),
 			wantOK:   true,
 		},
 		{
@@ -244,7 +234,7 @@ func TestOllamaCloudUsageExhaustionResetAt(t *testing.T) {
 		{
 			name: "exhausted window without any reset yields no recovery",
 			snapshot: okSnapshot(&OllamaCloudUsageData{
-				FiveHour: &OllamaCloudUsageWindow{UsedPercent: 100, ResetText: "soon"},
+				FiveHour: window(100, nil),
 			}),
 			minFresh: minFetchedAt,
 			wantOK:   false,
@@ -276,31 +266,12 @@ func TestOllamaCloudUsageExhaustionResetAt(t *testing.T) {
 	}
 }
 
-// TestOllamaCloudUsageExhaustionResetAtMissingFetchedAt checks the fetched-at
-// gate separately because the okSnapshot helper always sets FetchedAt.
-func TestParseOllamaRelativeDuration(t *testing.T) {
-	for text, want := range map[string]time.Duration{
-		"in 3 hours.":           3 * time.Hour,
-		"in 2 hours 15 minutes": 2*time.Hour + 15*time.Minute,
-		"Refills in 1 week":     7 * 24 * time.Hour,
-		"in an hour":            time.Hour,
-		"in 4 days":             96 * time.Hour,
-		"in 1.5 hours":          90 * time.Minute,
-	} {
-		got, ok := parseOllamaRelativeDuration(text)
-		require.True(t, ok, text)
-		require.Equal(t, want, got, text)
-	}
-	_, ok := parseOllamaRelativeDuration("Jan 2, 2027")
-	require.False(t, ok)
-}
-
 func TestOllamaCloudUsageHasPositiveBalance(t *testing.T) {
 	require.True(t, ollamaCloudUsageHasPositiveBalance("$15.47"))
-	require.True(t, ollamaCloudUsageHasPositiveBalance("USD 1,200"))
+	require.True(t, ollamaCloudUsageHasPositiveBalance("$0.00000001"))
 	require.False(t, ollamaCloudUsageHasPositiveBalance("$0.00"))
 	require.False(t, ollamaCloudUsageHasPositiveBalance(""))
-	require.False(t, ollamaCloudUsageHasPositiveBalance("-$3"))
+	require.False(t, ollamaCloudUsageHasPositiveBalance("$-3"))
 }
 
 func TestOllamaCloudUsageExhaustionResetAtMissingFetchedAt(t *testing.T) {

@@ -29,21 +29,25 @@ const usageState = (): OllamaCloudUsageState => ({
   eligible: true,
   configured: true,
   auto_refresh_enabled: false,
-  encryption_key_configured: true,
   snapshot: {
     status: 'ok',
     fetched_at: '2026-07-22T12:00:00Z',
     last_attempt_at: '2026-07-22T12:00:00Z',
     next_refresh_at: '2026-07-22T13:00:00Z',
     data: {
-      plan: 'max',
       five_hour: { used_percent: 5.6, reset_at: '2026-07-23T03:00:00Z' },
       seven_day: { used_percent: 14.2, reset_at: '2026-07-29T00:00:00Z' },
       balance: '$0',
-      models: [
-        { model: 'gpt-oss:120b-cloud', window: 'five_hour', requests: 2 },
-        { model: 'gpt-oss:120b-cloud', window: 'seven_day', requests: 12 }
-      ]
+      usage: {
+        range: '7d',
+        scope: 'self',
+        from: '2026-07-15T00:00:00Z',
+        until: '2026-07-22T12:00:00Z',
+        totals: {
+          request_count: 14,
+          groups: [{ model: 'gpt-oss:120b-cloud', request_count: 14 }]
+        }
+      }
     }
   }
 })
@@ -159,28 +163,30 @@ describe('OllamaCloudUsageCell', () => {
     expect(wrapper.emitted<OllamaCloudUsageState[]>('updated')?.[0]?.[0]).toEqual(next)
   })
 
-  it('hides the query action until a browser session is configured', () => {
+  it('hides the query action until a valid API key is configured', () => {
     const state = usageState()
     state.configured = false
 
     const wrapper = mount(OllamaCloudUsageCell, { props: { account: account(state) } })
 
     expect(wrapper.find('[data-testid="ollama-cloud-usage-query"]').exists()).toBe(false)
-  })
-  it('warns about legacy balance-only snapshots and keeps the balance visible', () => {
-    const incomplete = usageState()
-    incomplete.snapshot!.data = { balance: '$40' }
-    const wrapper = mount(OllamaCloudUsageCell, { props: { account: account(incomplete) } })
-    expect(wrapper.findAllComponents(UsageProgressBar)).toHaveLength(0)
-    expect(wrapper.get('[data-testid="ollama-cloud-balance"]').text()).toContain('$40')
-    expect(wrapper.get('[data-testid="ollama-cloud-usage-warning"]').text()).toContain('admin.accounts.ollamaCloud.errors.incomplete_usage')
+    expect(wrapper.get('[data-testid="ollama-cloud-usage-not-configured"]').text()).toContain('admin.accounts.ollamaCloud.cellNotConfigured')
   })
 
-  it('keeps previous bars and marks them stale after an incomplete refresh', async () => {
-    const incomplete = usageState()
-    incomplete.snapshot!.status = 'failed'
-    incomplete.snapshot!.last_error = 'incomplete_usage'
-    refreshOllamaCloudUsage.mockResolvedValueOnce(incomplete)
+  it('accepts balance-only snapshots with zero allowance without false incomplete warnings', () => {
+    const balanceOnly = usageState()
+    balanceOnly.snapshot!.data = { balance: '$40' }
+    const wrapper = mount(OllamaCloudUsageCell, { props: { account: account(balanceOnly) } })
+    expect(wrapper.findAllComponents(UsageProgressBar)).toHaveLength(0)
+    expect(wrapper.get('[data-testid="ollama-cloud-balance"]').text()).toContain('$40')
+    expect(wrapper.find('[data-testid="ollama-cloud-usage-warning"]').exists()).toBe(false)
+  })
+
+  it('keeps previous data and marks it stale after a failed refresh', async () => {
+    const failed = usageState()
+    failed.snapshot!.status = 'failed'
+    failed.snapshot!.last_error = 'incomplete_usage'
+    refreshOllamaCloudUsage.mockResolvedValueOnce(failed)
     const wrapper = mount(OllamaCloudUsageCell, { props: { account: account() } })
     await wrapper.get('[data-testid="ollama-cloud-usage-query"]').trigger('click')
     await flushPromises()
@@ -190,14 +196,24 @@ describe('OllamaCloudUsageCell', () => {
     expect(warning.text()).toContain('admin.accounts.ollamaCloud.staleData')
   })
 
-  it('passes an upstream refill hint to the monthly progress bar', () => {
-    const monthly = usageState()
-    monthly.snapshot!.data = { monthly: { used_percent: 63, reset_text: 'Refills in 1 week' } }
-    const wrapper = mount(OllamaCloudUsageCell, { props: { account: account(monthly) } })
-    const bar = wrapper.getComponent(UsageProgressBar)
-    expect(bar.props('resetsAt')).toBeUndefined()
-    expect(bar.props('resetText')).toBe('admin.accounts.ollamaCloud.approximateReset')
-    expect(bar.text()).toContain('admin.accounts.ollamaCloud.approximateReset')
-  })
+  it('surfaces HTTP 403 suspended account and HTTP 401 unauthorized API key errors with stale indicator', () => {
+    const suspended = usageState()
+    suspended.snapshot!.status = 'failed'
+    suspended.snapshot!.last_error = 'http_error'
+    suspended.snapshot!.http_status = 403
+    const suspendedWrapper = mount(OllamaCloudUsageCell, { props: { account: account(suspended) } })
+    const suspendedWarning = suspendedWrapper.get('[data-testid="ollama-cloud-usage-warning"]')
+    expect(suspendedWarning.text()).toContain('admin.accounts.ollamaCloud.errors.account_suspended')
+    expect(suspendedWarning.text()).toContain('HTTP 403')
+    expect(suspendedWarning.text()).toContain('admin.accounts.ollamaCloud.staleData')
 
+    const unauthorized = usageState()
+    unauthorized.snapshot!.status = 'unauthorized'
+    unauthorized.snapshot!.last_error = 'unauthorized'
+    unauthorized.snapshot!.http_status = 401
+    const unauthorizedWrapper = mount(OllamaCloudUsageCell, { props: { account: account(unauthorized) } })
+    const unauthorizedWarning = unauthorizedWrapper.get('[data-testid="ollama-cloud-usage-warning"]')
+    expect(unauthorizedWarning.text()).toContain('admin.accounts.ollamaCloud.errors.unauthorized')
+    expect(unauthorizedWarning.text()).toContain('HTTP 401')
+  })
 })

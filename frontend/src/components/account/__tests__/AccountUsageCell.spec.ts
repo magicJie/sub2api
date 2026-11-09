@@ -60,7 +60,6 @@ function makeOllamaUsage(accountId: number, overrides: Partial<NonNullable<Accou
     eligible: true,
     configured: true,
     auto_refresh_enabled: true,
-    encryption_key_configured: true,
     snapshot: {
       status: 'ok' as const,
       last_attempt_at: '2026-07-23T00:00:00Z',
@@ -142,7 +141,6 @@ describe('AccountUsageCell', () => {
             eligible: true,
             configured: true,
             auto_refresh_enabled: true,
-            encryption_key_configured: true,
             snapshot: {
               status: 'ok',
               last_attempt_at: '2026-07-23T00:00:00Z',

@@ -26,20 +26,23 @@ func TestListDueOllamaCloudUsageAccountsOrderingLimitAndProxyHydration(t *testin
 	createAccount := func(name, baseURL string, proxyID *int64, snapshot map[string]any, lastUsed *time.Time) *service.Account {
 		t.Helper()
 		extra := map[string]any{
-			service.OllamaCloudUsageSessionExtraKey:     "cipher:wos-session=fixture",
 			service.OllamaCloudUsageAutoRefreshExtraKey: true,
 		}
 		if snapshot != nil {
 			extra[service.OllamaCloudUsageSnapshotExtraKey] = snapshot
 		}
 		return mustCreateAccount(t, tx.Client(), &service.Account{
-			Name: name, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+			Name: name, Platform: service.PlatformOllama, Type: service.AccountTypeAPIKey,
 			Credentials: map[string]any{"api_key": name, "base_url": baseURL},
 			Extra:       extra, ProxyID: proxyID, LastUsedAt: lastUsed,
 		})
 	}
 
-	uppercasePath := createAccount("ollama-uppercase-path", "https://ollama.com/V1", nil, nil, nil)
+	excludedPlatform := mustCreateAccount(t, tx.Client(), &service.Account{
+		Name: "ollama-excluded-platform", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "excluded", "base_url": "https://ollama.com"},
+		Extra:       map[string]any{service.OllamaCloudUsageAutoRefreshExtraKey: true},
+	})
 	missingSnapshot := createAccount("ollama-due-missing", "HTTPS://WWW.OLLAMA.COM:443/v1", &proxy.ID, nil, nil)
 	fetched := now.Add(-2 * time.Hour)
 	activity := now.Add(-5 * time.Minute)
@@ -56,7 +59,6 @@ func TestListDueOllamaCloudUsageAccountsOrderingLimitAndProxyHydration(t *testin
 		"last_attempt_at": now.Add(-time.Hour).UTC().Format(time.RFC3339Nano),
 		"next_refresh_at": now.Add(-time.Minute).UTC().Format(time.RFC3339Nano),
 	}, nil)
-	_ = createAccount("ollama-ineligible", "https://ollama.com.evil.test", nil, nil, nil)
 
 	accounts, err := repo.ListDueOllamaCloudUsageAccounts(ctx, now, time.Minute, time.Hour, 2)
 
@@ -66,7 +68,7 @@ func TestListDueOllamaCloudUsageAccountsOrderingLimitAndProxyHydration(t *testin
 	require.Equal(t, due.ID, accounts[1].ID)
 	require.NotNil(t, accounts[1].LastUsedAt)
 	require.WithinDuration(t, activity.UTC(), accounts[1].LastUsedAt.UTC(), time.Second)
-	require.NotContains(t, accountIDs(accounts), uppercasePath.ID)
+	require.NotContains(t, accountIDs(accounts), excludedPlatform.ID)
 	require.NotNil(t, accounts[0].Proxy)
 	require.Equal(t, proxy.ID, accounts[0].Proxy.ID)
 	require.Equal(t, proxy.URL(), accounts[0].Proxy.URL())
@@ -106,10 +108,9 @@ func TestListDueOllamaCloudUsageAccountsParsesAllRFC3339Precisions(t *testing.T)
 	}
 	for name, fetchedAt := range notDue {
 		_ = mustCreateAccount(t, tx.Client(), &service.Account{
-			Name: "ollama-precision-" + name, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+			Name: "ollama-precision-" + name, Platform: service.PlatformOllama, Type: service.AccountTypeAPIKey,
 			Credentials: map[string]any{"api_key": "precision-" + name, "base_url": "https://ollama.com"},
 			Extra: map[string]any{
-				service.OllamaCloudUsageSessionExtraKey:     "cipher:wos-session=fixture",
 				service.OllamaCloudUsageAutoRefreshExtraKey: true,
 				service.OllamaCloudUsageSnapshotExtraKey: map[string]any{
 					"status":          service.OllamaCloudUsageStatusOK,
@@ -124,10 +125,9 @@ func TestListDueOllamaCloudUsageAccountsParsesAllRFC3339Precisions(t *testing.T)
 	// Guards against a vacuous pass: an genuinely due row must still come back.
 	staleFetched := now.Add(-2 * time.Hour)
 	due := mustCreateAccount(t, tx.Client(), &service.Account{
-		Name: "ollama-precision-due", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+		Name: "ollama-precision-due", Platform: service.PlatformOllama, Type: service.AccountTypeAPIKey,
 		Credentials: map[string]any{"api_key": "precision-due", "base_url": "https://ollama.com"},
 		Extra: map[string]any{
-			service.OllamaCloudUsageSessionExtraKey:     "cipher:wos-session=fixture",
 			service.OllamaCloudUsageAutoRefreshExtraKey: true,
 			service.OllamaCloudUsageSnapshotExtraKey: map[string]any{
 				"status":          service.OllamaCloudUsageStatusOK,
@@ -157,10 +157,9 @@ func TestListDueOllamaCloudUsageAccountsUsesGroupMaxLastUsedAndFailsOpen(t *test
 	newer := now.Add(-2 * time.Minute)
 
 	leader := mustCreateAccount(t, tx.Client(), &service.Account{
-		Name: "ollama-group-leader", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+		Name: "ollama-group-leader", Platform: service.PlatformOllama, Type: service.AccountTypeAPIKey,
 		Credentials: map[string]any{"api_key": "shared-key", "base_url": "https://ollama.com"},
 		Extra: map[string]any{
-			service.OllamaCloudUsageSessionExtraKey:     "cipher:wos-session=fixture",
 			service.OllamaCloudUsageAutoRefreshExtraKey: true,
 			service.OllamaCloudUsageSnapshotExtraKey: map[string]any{
 				"status":          service.OllamaCloudUsageStatusOK,
@@ -172,15 +171,14 @@ func TestListDueOllamaCloudUsageAccountsUsesGroupMaxLastUsedAndFailsOpen(t *test
 		LastUsedAt: &older,
 	})
 	_ = mustCreateAccount(t, tx.Client(), &service.Account{
-		Name: "ollama-group-sibling", Platform: service.PlatformAnthropic, Type: service.AccountTypeAPIKey,
+		Name: "ollama-group-sibling", Platform: service.PlatformOllama, Type: service.AccountTypeAPIKey,
 		Credentials: map[string]any{"api_key": "shared-key", "base_url": "https://www.ollama.com/v1"},
 		LastUsedAt:  &newer,
 	})
 	invalid := mustCreateAccount(t, tx.Client(), &service.Account{
-		Name: "ollama-invalid-snapshot", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+		Name: "ollama-invalid-snapshot", Platform: service.PlatformOllama, Type: service.AccountTypeAPIKey,
 		Credentials: map[string]any{"api_key": "invalid-key", "base_url": "https://ollama.com"},
 		Extra: map[string]any{
-			service.OllamaCloudUsageSessionExtraKey:     "cipher:wos-session=fixture",
 			service.OllamaCloudUsageAutoRefreshExtraKey: true,
 			service.OllamaCloudUsageSnapshotExtraKey: map[string]any{
 				"status": service.OllamaCloudUsageStatusOK, "fetched_at": "2026-02-30T09:00:00.123456789Z",
@@ -188,10 +186,9 @@ func TestListDueOllamaCloudUsageAccountsUsesGroupMaxLastUsedAndFailsOpen(t *test
 		},
 	})
 	idle := mustCreateAccount(t, tx.Client(), &service.Account{
-		Name: "ollama-idle-ok", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+		Name: "ollama-idle-ok", Platform: service.PlatformOllama, Type: service.AccountTypeAPIKey,
 		Credentials: map[string]any{"api_key": "idle-key", "base_url": "https://ollama.com"},
 		Extra: map[string]any{
-			service.OllamaCloudUsageSessionExtraKey:     "cipher:wos-session=fixture",
 			service.OllamaCloudUsageAutoRefreshExtraKey: true,
 			service.OllamaCloudUsageSnapshotExtraKey: map[string]any{
 				"status":          service.OllamaCloudUsageStatusOK,
@@ -236,7 +233,7 @@ func TestLockAndMergeAccountProbeExtraCoalescesNullableOllamaGroupIdentity(t *te
 	require.Equal(t, true, merged[service.UpstreamBillingProbeEnabledExtraKey])
 }
 
-func TestOllamaCloudUsageGroupWritesAreAtomicAcrossPlatformsAndURLVariants(t *testing.T) {
+func TestOllamaCloudUsageGroupWritesAreAtomicAcrossURLVariants(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)
 	repo := newAccountRepositoryWithSQL(tx.Client(), tx, nil)
@@ -245,23 +242,33 @@ func TestOllamaCloudUsageGroupWritesAreAtomicAcrossPlatformsAndURLVariants(t *te
 		return mustCreateAccount(t, tx.Client(), &service.Account{
 			Name: name, Platform: platform, Type: service.AccountTypeAPIKey,
 			Credentials: map[string]any{"api_key": apiKey, "base_url": baseURL},
-			Extra:       map[string]any{},
+			Extra: map[string]any{
+				service.OllamaCloudUsageSessionExtraKey: "legacy-cookie",
+				"ollama_cloud_usage_snapshot":           map[string]any{"status": "legacy"},
+				"ordinary":                              "kept",
+			},
 		})
 	}
-	first := create("ollama-group-openai", service.PlatformOpenAI, "shared-key", "https://ollama.com")
-	second := create("ollama-group-anthropic", service.PlatformAnthropic, "shared-key", "HTTPS://WWW.OLLAMA.COM:443/v1")
-	different := create("ollama-group-different", service.PlatformOpenAI, "different-key", "https://ollama.com")
+	first := create("ollama-group-first", service.PlatformOllama, "shared-key", "https://ollama.com")
+	second := create("ollama-group-second", service.PlatformOllama, "shared-key", "HTTPS://WWW.OLLAMA.COM:443/v1")
+	different := create("ollama-group-different", service.PlatformOllama, "different-key", "https://ollama.com")
+	excluded := create("ollama-group-excluded", service.PlatformOpenAI, "shared-key", "https://ollama.com")
 
-	require.NoError(t, repo.SaveOllamaCloudUsageSession(ctx, first, "cipher:shared", false))
+	require.NoError(t, repo.SetOllamaCloudUsageAutoRefresh(ctx, first, false))
 	for _, id := range []int64{first.ID, second.ID} {
 		account, err := repo.GetByID(ctx, id)
 		require.NoError(t, err)
-		require.Equal(t, "cipher:shared", account.Extra[service.OllamaCloudUsageSessionExtraKey])
+		require.NotContains(t, account.Extra, service.OllamaCloudUsageSessionExtraKey)
+		require.NotContains(t, account.Extra, "ollama_cloud_usage_snapshot")
+		require.Equal(t, "kept", account.Extra["ordinary"])
 		require.Equal(t, false, account.Extra[service.OllamaCloudUsageAutoRefreshExtraKey])
 	}
 	differentLoaded, err := repo.GetByID(ctx, different.ID)
 	require.NoError(t, err)
-	require.NotContains(t, differentLoaded.Extra, service.OllamaCloudUsageSessionExtraKey)
+	require.NotContains(t, differentLoaded.Extra, service.OllamaCloudUsageAutoRefreshExtraKey)
+	excludedLoaded, err := repo.GetByID(ctx, excluded.ID)
+	require.NoError(t, err)
+	require.NotContains(t, excludedLoaded.Extra, service.OllamaCloudUsageAutoRefreshExtraKey)
 
 	secondLoaded, err := repo.GetByID(ctx, second.ID)
 	require.NoError(t, err)
@@ -292,37 +299,38 @@ func TestOllamaCloudUsageGroupWritesAreAtomicAcrossPlatformsAndURLVariants(t *te
 	require.NoError(t, err)
 	secondLoaded, err = repo.GetByID(ctx, second.ID)
 	require.NoError(t, err)
-	require.Equal(t, "cipher:shared", firstLoaded.Extra[service.OllamaCloudUsageSessionExtraKey])
+	require.NotContains(t, firstLoaded.Extra, service.OllamaCloudUsageSessionExtraKey)
 	require.Equal(t, true, firstLoaded.Extra[service.OllamaCloudUsageAutoRefreshExtraKey])
 	require.NotContains(t, secondLoaded.Extra, service.OllamaCloudUsageSessionExtraKey)
 	require.NotContains(t, secondLoaded.Extra, service.OllamaCloudUsageAutoRefreshExtraKey)
 
-	require.NoError(t, repo.DeleteOllamaCloudUsageSession(ctx, firstLoaded))
+	require.NoError(t, repo.DisableOllamaCloudUsageAutoRefresh(ctx, firstLoaded))
 	firstLoaded, err = repo.GetByID(ctx, first.ID)
 	require.NoError(t, err)
 	require.NotContains(t, firstLoaded.Extra, service.OllamaCloudUsageSessionExtraKey)
+	require.Equal(t, false, firstLoaded.Extra[service.OllamaCloudUsageAutoRefreshExtraKey])
+	require.NotContains(t, firstLoaded.Extra, service.OllamaCloudUsageSnapshotExtraKey)
 }
 
-func TestConcurrentOllamaCloudUsageSaveAndDeleteSerializeGroupState(t *testing.T) {
+func TestConcurrentOllamaCloudUsageWritesSerializeGroupState(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	client := testEntClient(t)
 	repo := newAccountRepositoryWithSQL(client, integrationDB, nil)
 	suffix := time.Now().UnixNano()
 	apiKey := fmt.Sprintf("ollama-concurrent-%d", suffix)
-	create := func(platform string) *service.Account {
+	create := func(name string) *service.Account {
 		t.Helper()
 		return mustCreateAccount(t, client, &service.Account{
-			Name: fmt.Sprintf("%s-%s", apiKey, platform), Platform: platform, Type: service.AccountTypeAPIKey,
+			Name: apiKey + "-" + name, Platform: service.PlatformOllama, Type: service.AccountTypeAPIKey,
 			Credentials: map[string]any{"api_key": apiKey, "base_url": "https://ollama.com"},
 			Extra: map[string]any{
-				service.OllamaCloudUsageSessionExtraKey:     "cipher:initial",
 				service.OllamaCloudUsageAutoRefreshExtraKey: true,
 			},
 		})
 	}
-	first := create(service.PlatformOpenAI)
-	second := create(service.PlatformAnthropic)
+	first := create("first")
+	second := create("second")
 	t.Cleanup(func() {
 		_, _ = integrationDB.ExecContext(context.Background(), "DELETE FROM accounts WHERE id IN ($1, $2)", first.ID, second.ID)
 	})
@@ -336,19 +344,30 @@ func TestConcurrentOllamaCloudUsageSaveAndDeleteSerializeGroupState(t *testing.T
 	go func() {
 		defer wg.Done()
 		<-start
-		errs <- repo.SaveOllamaCloudUsageSession(ctx, anchor, "cipher:replacement", true)
+		errs <- repo.SetOllamaCloudUsageAutoRefresh(ctx, anchor, false)
 	}()
 	go func() {
 		defer wg.Done()
 		<-start
-		errs <- repo.DeleteOllamaCloudUsageSession(ctx, anchor)
+		now := time.Now().UTC()
+		errs <- repo.UpdateOllamaCloudUsageSnapshot(ctx, anchor, &service.OllamaCloudUsageSnapshot{
+			Status: service.OllamaCloudUsageStatusOK, LastAttemptAt: now, NextRefreshAt: now.Add(time.Hour),
+		})
 	}()
 	close(start)
 	wg.Wait()
 	close(errs)
+	var successes, conflicts int
 	for writeErr := range errs {
-		require.NoError(t, writeErr)
+		if writeErr == nil {
+			successes++
+		} else {
+			require.ErrorIs(t, writeErr, service.ErrOllamaCloudUsageIdentityChanged)
+			conflicts++
+		}
 	}
+	require.Equal(t, 1, successes)
+	require.Equal(t, 1, conflicts)
 
 	firstLoaded, err := repo.GetByID(ctx, first.ID)
 	require.NoError(t, err)
@@ -357,7 +376,6 @@ func TestConcurrentOllamaCloudUsageSaveAndDeleteSerializeGroupState(t *testing.T
 	managedState := func(account *service.Account) map[string]any {
 		state := make(map[string]any)
 		for _, key := range []string{
-			service.OllamaCloudUsageSessionExtraKey,
 			service.OllamaCloudUsageAutoRefreshExtraKey,
 			service.OllamaCloudUsageSnapshotExtraKey,
 		} {
@@ -369,10 +387,11 @@ func TestConcurrentOllamaCloudUsageSaveAndDeleteSerializeGroupState(t *testing.T
 	}
 	firstState := managedState(firstLoaded)
 	require.Equal(t, firstState, managedState(secondLoaded), "a serialized last commit must own the whole group")
-	if len(firstState) > 0 {
-		require.Equal(t, "cipher:replacement", firstState[service.OllamaCloudUsageSessionExtraKey])
-		require.Equal(t, true, firstState[service.OllamaCloudUsageAutoRefreshExtraKey])
+	if firstState[service.OllamaCloudUsageAutoRefreshExtraKey] == false {
 		require.NotContains(t, firstState, service.OllamaCloudUsageSnapshotExtraKey)
+	} else {
+		require.Equal(t, true, firstState[service.OllamaCloudUsageAutoRefreshExtraKey])
+		require.Contains(t, firstState, service.OllamaCloudUsageSnapshotExtraKey)
 	}
 }
 
@@ -382,68 +401,6 @@ func accountIDs(accounts []service.Account) []int64 {
 		ids[index] = accounts[index].ID
 	}
 	return ids
-}
-
-// 平台白名单放开后，官方 ollama.com key 挂在国产 OpenAI 兼容平台下同样进用量
-// 窗口：组写入跨 kimi/zhipu/deepseek 共享，白名单外平台（gemini）不得被卷入；
-// 组身份守卫（lockAndMerge）与 due 列表也必须识别 CN 平台的行。
-func TestOllamaCloudUsageEligibilityExtendsToCNOpenAICompatPlatforms(t *testing.T) {
-	ctx := context.Background()
-	tx := testEntTx(t)
-	repo := newAccountRepositoryWithSQL(tx.Client(), tx, nil)
-	now := time.Now().UTC()
-	activity := now.Add(-time.Minute)
-	create := func(name, platform, baseURL string) *service.Account {
-		t.Helper()
-		return mustCreateAccount(t, tx.Client(), &service.Account{
-			Name: name, Platform: platform, Type: service.AccountTypeAPIKey,
-			Credentials: map[string]any{"api_key": "cn-shared-key", "base_url": baseURL},
-			Extra:       map[string]any{}, LastUsedAt: &activity,
-		})
-	}
-	kimi := create("ollama-cn-kimi", service.PlatformKimi, "https://ollama.com")
-	zhipu := create("ollama-cn-zhipu", service.PlatformZhipu, "HTTPS://WWW.OLLAMA.COM:443/v1")
-	deepseek := create("ollama-cn-deepseek", service.PlatformDeepseek, "https://ollama.com/v1")
-	gemini := create("ollama-cn-gemini", service.PlatformGemini, "https://ollama.com")
-
-	require.NoError(t, repo.SaveOllamaCloudUsageSession(ctx, kimi, "cipher:cn-shared", true))
-	for _, id := range []int64{kimi.ID, zhipu.ID, deepseek.ID} {
-		account, err := repo.GetByID(ctx, id)
-		require.NoError(t, err)
-		require.Equal(t, "cipher:cn-shared", account.Extra[service.OllamaCloudUsageSessionExtraKey], account.Name)
-		require.Equal(t, true, account.Extra[service.OllamaCloudUsageAutoRefreshExtraKey], account.Name)
-	}
-	geminiLoaded, err := repo.GetByID(ctx, gemini.ID)
-	require.NoError(t, err)
-	require.NotContains(t, geminiLoaded.Extra, service.OllamaCloudUsageSessionExtraKey,
-		"用量窗口不随 base_url 放开到白名单外平台")
-
-	// lockAndMerge 组身份守卫：CN 行凭证未变时必须保留 ollama 托管键。
-	kimiLoaded, err := repo.GetByID(ctx, kimi.ID)
-	require.NoError(t, err)
-	merged, err := lockAndMergeAccountProbeExtra(ctx, tx.Client(), kimiLoaded, nil, nil)
-	require.NoError(t, err)
-	require.Equal(t, "cipher:cn-shared", merged[service.OllamaCloudUsageSessionExtraKey])
-	require.Equal(t, true, merged[service.OllamaCloudUsageAutoRefreshExtraKey])
-
-	// due 列表识别 CN 行：给同 key 组挂上过期快照（fetched 2h 前、活动更新），
-	// 每个 api_key 只返回一行，且必须来自 CN 组员。
-	staleFetched := now.Add(-2 * time.Hour)
-	deepseekLoaded, err := repo.GetByID(ctx, deepseek.ID)
-	require.NoError(t, err)
-	require.NoError(t, repo.UpdateOllamaCloudUsageSnapshot(ctx, deepseekLoaded, &service.OllamaCloudUsageSnapshot{
-		Status:        service.OllamaCloudUsageStatusOK,
-		FetchedAt:     &staleFetched,
-		LastAttemptAt: staleFetched,
-	}))
-
-	due, err := repo.ListDueOllamaCloudUsageAccounts(ctx, now, time.Minute, time.Hour, 10)
-
-	require.NoError(t, err)
-	require.Len(t, due, 1, "同 key 跨 CN 平台组按组去重后只应有一行 due")
-	require.Contains(t, []int64{kimi.ID, zhipu.ID, deepseek.ID}, due[0].ID,
-		"due 行必须来自 CN 平台的 ollama 组员")
-	require.NotNil(t, due[0].LastUsedAt)
 }
 
 // 语义等价性端到端：普通（非 ollama）kimi apikey 账号改凭证落进 Ollama 分支后，
@@ -483,10 +440,11 @@ func TestOllamaCloudUsageCredentialAndBulkUpdatesPreserveManagedStateOnlyWhenSaf
 	now := time.Now().UTC()
 	newAccount := func(name string) *service.Account {
 		return mustCreateAccount(t, tx.Client(), &service.Account{
-			Name: name, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+			Name: name, Platform: service.PlatformOllama, Type: service.AccountTypeAPIKey,
 			Credentials: map[string]any{"api_key": "old-key", "base_url": "https://ollama.com"},
 			Extra: map[string]any{
 				service.OllamaCloudUsageSessionExtraKey:     "cipher:wos-session=fixture",
+				"ollama_cloud_usage_snapshot":               map[string]any{"status": "legacy"},
 				service.OllamaCloudUsageAutoRefreshExtraKey: true,
 				service.OllamaCloudUsageSnapshotExtraKey: map[string]any{
 					"status": service.OllamaCloudUsageStatusOK, "last_attempt_at": now, "next_refresh_at": now.Add(time.Hour),
@@ -502,8 +460,9 @@ func TestOllamaCloudUsageCredentialAndBulkUpdatesPreserveManagedStateOnlyWhenSaf
 	rawUpdated, err := repo.GetByID(ctx, rawAccount.ID)
 	require.NoError(t, err)
 	require.NotContains(t, rawUpdated.Extra, service.OllamaCloudUsageSessionExtraKey)
-	require.NotContains(t, rawUpdated.Extra, service.OllamaCloudUsageAutoRefreshExtraKey)
-	require.NotContains(t, rawUpdated.Extra, service.OllamaCloudUsageSnapshotExtraKey)
+	require.NotContains(t, rawUpdated.Extra, "ollama_cloud_usage_snapshot")
+	require.Equal(t, true, rawUpdated.Extra[service.OllamaCloudUsageAutoRefreshExtraKey])
+	require.Contains(t, rawUpdated.Extra, service.OllamaCloudUsageSnapshotExtraKey)
 
 	bulkAccount := newAccount("ollama-bulk-credentials")
 	rows, err := repo.BulkUpdate(ctx, []int64{bulkAccount.ID}, service.AccountBulkUpdate{
@@ -516,7 +475,7 @@ func TestOllamaCloudUsageCredentialAndBulkUpdatesPreserveManagedStateOnlyWhenSaf
 	require.Contains(t, bulkUnchanged.Extra, service.OllamaCloudUsageSnapshotExtraKey)
 
 	rows, err = repo.BulkUpdate(ctx, []int64{bulkAccount.ID}, service.AccountBulkUpdate{
-		Credentials: map[string]any{"base_url": "https://ollama.com/V1"},
+		Credentials: map[string]any{"api_key": "rotated-key"},
 	})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), rows)
@@ -538,11 +497,12 @@ func TestProxyIdentityUpdateInvalidatesOllamaSnapshotAndRejectsInFlightCAS(t *te
 	})
 	now := time.Now().UTC()
 	account := mustCreateAccount(t, tx.Client(), &service.Account{
-		Name: "ollama-proxy-account", Platform: service.PlatformAnthropic, Type: service.AccountTypeAPIKey,
+		Name: "ollama-proxy-account", Platform: service.PlatformOllama, Type: service.AccountTypeAPIKey,
 		Credentials: map[string]any{"api_key": "key", "base_url": "https://ollama.com"},
 		ProxyID:     &proxy.ID,
 		Extra: map[string]any{
 			service.OllamaCloudUsageSessionExtraKey:     "cipher:wos-session=fixture",
+			"ollama_cloud_usage_snapshot":               map[string]any{"status": "legacy"},
 			service.OllamaCloudUsageAutoRefreshExtraKey: true,
 			service.OllamaCloudUsageSnapshotExtraKey: map[string]any{
 				"status": service.OllamaCloudUsageStatusOK, "last_attempt_at": now, "next_refresh_at": now.Add(time.Hour),
@@ -562,7 +522,8 @@ func TestProxyIdentityUpdateInvalidatesOllamaSnapshotAndRejectsInFlightCAS(t *te
 	got, err := accountRepo.GetByID(ctx, account.ID)
 	require.NoError(t, err)
 	require.NotContains(t, got.Extra, service.OllamaCloudUsageSnapshotExtraKey)
-	require.Equal(t, "cipher:wos-session=fixture", got.Extra[service.OllamaCloudUsageSessionExtraKey])
+	require.NotContains(t, got.Extra, service.OllamaCloudUsageSessionExtraKey)
+	require.NotContains(t, got.Extra, "ollama_cloud_usage_snapshot")
 	require.Equal(t, true, got.Extra[service.OllamaCloudUsageAutoRefreshExtraKey])
 
 	err = accountRepo.UpdateOllamaCloudUsageSnapshot(ctx, inFlight, &service.OllamaCloudUsageSnapshot{
@@ -571,8 +532,8 @@ func TestProxyIdentityUpdateInvalidatesOllamaSnapshotAndRejectsInFlightCAS(t *te
 	require.ErrorIs(t, err, service.ErrOllamaCloudUsageIdentityChanged)
 }
 
-// 无变化的凭证持久化（如 CRS 同步重放同一凭证）不得触发任何 extra 清理；
-// 真实变化仍必须按旧语义清 openai 探测快照。
+// Unchanged credentials preserve current API observations while clearing legacy
+// HTML/session state; real credential changes invalidate probe snapshots.
 func TestUpdateCredentialsUnchangedCredentialsPreserveManagedExtra(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)
@@ -596,10 +557,11 @@ func TestUpdateCredentialsUnchangedCredentialsPreserveManagedExtra(t *testing.T)
 
 	now := time.Now().UTC()
 	ollamaAccount := mustCreateAccount(t, tx.Client(), &service.Account{
-		Name: "ollama-unchanged", Platform: service.PlatformAnthropic, Type: service.AccountTypeAPIKey,
+		Name: "ollama-unchanged", Platform: service.PlatformOllama, Type: service.AccountTypeAPIKey,
 		Credentials: map[string]any{"api_key": "ollama-key", "base_url": "https://ollama.com"},
 		Extra: map[string]any{
 			service.OllamaCloudUsageSessionExtraKey:     "cipher:wos-session=fixture",
+			"ollama_cloud_usage_snapshot":               map[string]any{"status": "legacy"},
 			service.OllamaCloudUsageAutoRefreshExtraKey: true,
 			service.OllamaCloudUsageSnapshotExtraKey: map[string]any{
 				"status": service.OllamaCloudUsageStatusOK, "last_attempt_at": now, "next_refresh_at": now.Add(time.Hour),
@@ -611,7 +573,8 @@ func TestUpdateCredentialsUnchangedCredentialsPreserveManagedExtra(t *testing.T)
 	}))
 	ollamaLoaded, err := repo.GetByID(ctx, ollamaAccount.ID)
 	require.NoError(t, err)
-	require.Equal(t, "cipher:wos-session=fixture", ollamaLoaded.Extra[service.OllamaCloudUsageSessionExtraKey])
+	require.NotContains(t, ollamaLoaded.Extra, service.OllamaCloudUsageSessionExtraKey)
+	require.NotContains(t, ollamaLoaded.Extra, "ollama_cloud_usage_snapshot")
 	require.Equal(t, true, ollamaLoaded.Extra[service.OllamaCloudUsageAutoRefreshExtraKey])
 	require.Contains(t, ollamaLoaded.Extra, service.OllamaCloudUsageSnapshotExtraKey)
 
@@ -639,10 +602,9 @@ func TestListDueOllamaCloudUsageAccountsSQLDueRulesMatchService(t *testing.T) {
 	createOK := func(name string, fetched, lastUsed time.Time) *service.Account {
 		t.Helper()
 		return mustCreateAccount(t, tx.Client(), &service.Account{
-			Name: name, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+			Name: name, Platform: service.PlatformOllama, Type: service.AccountTypeAPIKey,
 			Credentials: map[string]any{"api_key": name, "base_url": "https://ollama.com"},
 			Extra: map[string]any{
-				service.OllamaCloudUsageSessionExtraKey:     "cipher:wos-session=fixture",
 				service.OllamaCloudUsageAutoRefreshExtraKey: true,
 				service.OllamaCloudUsageSnapshotExtraKey: map[string]any{
 					"status":          service.OllamaCloudUsageStatusOK,
@@ -667,10 +629,9 @@ func TestListDueOllamaCloudUsageAccountsSQLDueRulesMatchService(t *testing.T) {
 			snapshot["next_refresh_at"] = nextRefresh.UTC().Format(time.RFC3339Nano)
 		}
 		return mustCreateAccount(t, tx.Client(), &service.Account{
-			Name: name, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+			Name: name, Platform: service.PlatformOllama, Type: service.AccountTypeAPIKey,
 			Credentials: map[string]any{"api_key": name, "base_url": "https://ollama.com"},
 			Extra: map[string]any{
-				service.OllamaCloudUsageSessionExtraKey:     "cipher:wos-session=fixture",
 				service.OllamaCloudUsageAutoRefreshExtraKey: true,
 				service.OllamaCloudUsageSnapshotExtraKey:    snapshot,
 			},
@@ -730,4 +691,29 @@ func TestListDueOllamaCloudUsageAccountsSQLDueRulesMatchService(t *testing.T) {
 		require.NotEqual(t, "ollama-fail-backoff", account.Name)
 		require.NotEqual(t, "ollama-not-due-fresh", account.Name)
 	}
+}
+
+func TestListDueOllamaCloudUsageAccountsIgnoresLegacyHTMLBackoff(t *testing.T) {
+	ctx := context.Background()
+	tx := testEntTx(t)
+	repo := newAccountRepositoryWithSQL(tx.Client(), tx, nil)
+	now := time.Now().UTC()
+	account := mustCreateAccount(t, tx.Client(), &service.Account{
+		Name: "ollama-legacy-backoff", Platform: service.PlatformOllama, Type: service.AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "legacy-backoff"},
+		Extra: map[string]any{
+			service.OllamaCloudUsageAutoRefreshExtraKey: true,
+			"ollama_cloud_usage_snapshot": map[string]any{
+				"status":          service.OllamaCloudUsageStatusFailed,
+				"last_attempt_at": now.Format(time.RFC3339Nano),
+				"next_refresh_at": now.Add(24 * time.Hour).Format(time.RFC3339Nano),
+			},
+		},
+	})
+
+	due, err := repo.ListDueOllamaCloudUsageAccounts(ctx, now, time.Minute, time.Hour, 10)
+
+	require.NoError(t, err)
+	require.Contains(t, accountIDs(due), account.ID,
+		"the first official API fetch must be due without a cookie despite legacy HTML backoff")
 }

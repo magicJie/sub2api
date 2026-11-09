@@ -518,9 +518,9 @@ export default {
       },
       ollamaCloudUsage: {
         title: 'Ollama Cloud Usage Refresh',
-        description: 'Refresh official Ollama settings-page usage driven by model requests for individually opted-in accounts. Disabled by default. Idle accounts are not polled.',
+        description: 'Refresh official Ollama API balance and 7-day usage driven by model requests for individually opted-in accounts. Disabled by default. Idle accounts are not polled.',
         enabled: 'Enable global automatic refresh',
-        enabledHint: 'Only accounts with a stored browser session and their own automatic refresh switch enabled are refreshed, and only after subsequent model requests. Manual refresh remains available.',
+        enabledHint: 'Only accounts with a valid API key and their own automatic refresh switch enabled are refreshed, and only after subsequent model requests. Manual refresh remains available.',
         intervalMinutes: 'Max wait while requests continue (minutes)',
         intervalHint: 'Range: 15–1440 minutes. When continuous requests keep sliding the debounce, force a refresh after this wait.',
         debounceMinutes: 'Quiet period after last request (minutes)',
