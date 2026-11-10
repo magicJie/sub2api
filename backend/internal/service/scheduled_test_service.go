@@ -60,21 +60,12 @@ func (s *ScheduledTestService) BatchCreatePlans(ctx context.Context, accountIDs 
 	if err := prepareScheduledTestPlan(&template); err != nil {
 		return nil, err
 	}
-	result := &ScheduledTestBatchResult{Results: make([]ScheduledTestBatchItem, 0, len(accountIDs))}
-	seen := make(map[int64]struct{}, len(accountIDs))
-	for _, accountID := range accountIDs {
-		if _, exists := seen[accountID]; exists {
-			continue
-		}
-		seen[accountID] = struct{}{}
+	return runBatch(accountIDs, func(accountID int64) ScheduledTestBatchItem {
 		item := ScheduledTestBatchItem{AccountID: accountID}
 		existing, err := s.planRepo.ListByAccountID(ctx, accountID)
 		if err == nil {
 			for _, plan := range existing {
-				if plan.ModelID == template.ModelID && plan.TestType == template.TestType &&
-					plan.ExpectedModel == template.ExpectedModel && plan.QualityThreshold == template.QualityThreshold &&
-					plan.CronExpression == template.CronExpression && plan.Enabled == template.Enabled &&
-					plan.MaxResults == template.MaxResults && plan.AutoRecover == template.AutoRecover {
+				if scheduledPlanMatchesTemplate(plan, template) {
 					item.Status, item.Plan = "skipped", plan
 					break
 				}
@@ -91,9 +82,95 @@ func (s *ScheduledTestService) BatchCreatePlans(ctx context.Context, accountIDs 
 		if err != nil {
 			item.Status, item.Error = "failed", err.Error()
 		}
+		return item
+	}), nil
+}
+
+func scheduledPlanMatchesTemplate(plan *ScheduledTestPlan, template ScheduledTestPlan) bool {
+	return plan.ModelID == template.ModelID && plan.TestType == template.TestType &&
+		plan.ExpectedModel == template.ExpectedModel && plan.QualityThreshold == template.QualityThreshold &&
+		plan.CronExpression == template.CronExpression && plan.Enabled == template.Enabled &&
+		plan.MaxResults == template.MaxResults && plan.AutoRecover == template.AutoRecover
+}
+
+// BatchUpsertPlans keeps the newest plan of each account's selected test type.
+// Extra plans and their historical results are deleted after a successful update.
+func (s *ScheduledTestService) BatchUpsertPlans(ctx context.Context, accountIDs []int64, template ScheduledTestPlan) (*ScheduledTestBatchResult, error) {
+	if err := prepareScheduledTestPlan(&template); err != nil {
+		return nil, err
+	}
+	return runBatch(accountIDs, func(accountID int64) ScheduledTestBatchItem {
+		item := ScheduledTestBatchItem{AccountID: accountID}
+		existing, err := s.planRepo.ListByAccountID(ctx, accountID)
+		if err != nil {
+			item.Status, item.Error = "failed", err.Error()
+			return item
+		}
+		var keep *ScheduledTestPlan
+		for _, plan := range existing {
+			if plan.TestType == template.TestType {
+				keep = plan
+				break
+			}
+		}
+		if keep == nil {
+			plan := template
+			plan.AccountID = accountID
+			item.Plan, err = s.planRepo.Create(ctx, &plan)
+			if err != nil {
+				item.Status, item.Error = "failed", err.Error()
+			} else {
+				item.Status = "created"
+			}
+			return item
+		}
+		item.Status = "skipped"
+		if !scheduledPlanMatchesTemplate(keep, template) {
+			updated := *keep
+			updated.ModelID = template.ModelID
+			updated.ExpectedModel = template.ExpectedModel
+			updated.QualityThreshold = template.QualityThreshold
+			updated.CronExpression = template.CronExpression
+			updated.Enabled = template.Enabled
+			updated.MaxResults = template.MaxResults
+			updated.AutoRecover = template.AutoRecover
+			keep, err = s.UpdatePlan(ctx, &updated)
+			if err != nil {
+				item.Status, item.Error = "failed", err.Error()
+				return item
+			}
+			item.Status = "updated"
+		}
+		item.Plan = keep
+		for _, plan := range existing {
+			if plan.TestType != template.TestType || plan.ID == keep.ID {
+				continue
+			}
+			if err := s.planRepo.Delete(ctx, plan.ID); err != nil {
+				item.Status, item.Error = "failed", err.Error()
+				return item
+			}
+			item.Removed++
+			item.Status = "updated"
+		}
+		return item
+	}), nil
+}
+
+func runBatch(accountIDs []int64, handle func(accountID int64) ScheduledTestBatchItem) *ScheduledTestBatchResult {
+	result := &ScheduledTestBatchResult{Results: make([]ScheduledTestBatchItem, 0, len(accountIDs))}
+	seen := make(map[int64]struct{}, len(accountIDs))
+	for _, accountID := range accountIDs {
+		if _, exists := seen[accountID]; exists {
+			continue
+		}
+		seen[accountID] = struct{}{}
+		item := handle(accountID)
 		switch item.Status {
 		case "created":
 			result.Created++
+		case "updated":
+			result.Updated++
 		case "skipped":
 			result.Skipped++
 		case "failed":
@@ -101,7 +178,7 @@ func (s *ScheduledTestService) BatchCreatePlans(ctx context.Context, accountIDs 
 		}
 		result.Results = append(result.Results, item)
 	}
-	return result, nil
+	return result
 }
 
 // GetPlan retrieves a plan by ID.
@@ -139,6 +216,11 @@ func (s *ScheduledTestService) ListResults(ctx context.Context, planID int64, li
 		limit = 50
 	}
 	return s.resultRepo.ListByPlanID(ctx, planID, limit)
+}
+
+// ListLogs returns paginated diagnostic results across accounts.
+func (s *ScheduledTestService) ListLogs(ctx context.Context, filter ScheduledTestLogFilter) ([]*ScheduledTestLogItem, int64, error) {
+	return s.resultRepo.ListLogs(ctx, filter)
 }
 
 // SaveResult inserts a result and prunes old entries beyond maxResults.

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -137,6 +138,76 @@ func (r *scheduledTestResultRepository) ListByPlanID(ctx context.Context, planID
 	return results, rows.Err()
 }
 
+func (r *scheduledTestResultRepository) ListLogs(ctx context.Context, filter service.ScheduledTestLogFilter) ([]*service.ScheduledTestLogItem, int64, error) {
+	conditions := make([]string, 0, 7)
+	args := make([]any, 0, 9)
+	add := func(expression string, value any) {
+		args = append(args, value)
+		conditions = append(conditions, fmt.Sprintf(expression, len(args)))
+	}
+	if filter.Platform != "" {
+		add("a.platform = $%d", filter.Platform)
+	}
+	if filter.Status == "abnormal" {
+		conditions = append(conditions, "r.status IN ('warning','failed')")
+	} else if filter.Status != "" {
+		add("r.status = $%d", filter.Status)
+	}
+	if filter.TestType != "" {
+		add("p.test_type = $%d", filter.TestType)
+	}
+	if filter.AccountID > 0 {
+		add("p.account_id = $%d", filter.AccountID)
+	}
+	if filter.FingerprintStatus != "" {
+		add("r.diagnostics->'fingerprint'->>'status' = $%d", filter.FingerprintStatus)
+	}
+	if filter.Start != nil {
+		add("r.created_at >= $%d", *filter.Start)
+	}
+	if filter.End != nil {
+		add("r.created_at < $%d", *filter.End)
+	}
+	from := ` FROM scheduled_test_results r
+		JOIN scheduled_test_plans p ON p.id = r.plan_id
+		JOIN accounts a ON a.id = p.account_id`
+	if len(conditions) > 0 {
+		from += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	var total int64
+	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*)"+from, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	query := `SELECT r.id, r.plan_id, r.status, r.error_message, r.latency_ms, r.started_at,
+		r.finished_at, r.created_at, r.diagnostics, p.account_id, p.model_id, p.test_type,
+		p.expected_model, a.name, a.platform` + from +
+		fmt.Sprintf(" ORDER BY r.created_at DESC, r.id DESC LIMIT $%d OFFSET $%d", len(args)+1, len(args)+2)
+	args = append(args, filter.PageSize, (filter.Page-1)*filter.PageSize)
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = rows.Close() }()
+	items := make([]*service.ScheduledTestLogItem, 0)
+	for rows.Next() {
+		item := &service.ScheduledTestLogItem{}
+		var diagnostics []byte
+		if err := rows.Scan(
+			&item.ID, &item.PlanID, &item.Status, &item.ErrorMessage, &item.LatencyMs,
+			&item.StartedAt, &item.FinishedAt, &item.CreatedAt, &diagnostics,
+			&item.AccountID, &item.ModelID, &item.TestType, &item.ExpectedModel, &item.AccountName, &item.Platform,
+		); err != nil {
+			return nil, 0, err
+		}
+		item.Diagnostics, err = decodeDiagnostics(diagnostics)
+		if err != nil {
+			return nil, 0, err
+		}
+		items = append(items, item)
+	}
+	return items, total, rows.Err()
+}
+
 func (r *scheduledTestResultRepository) PruneOldResults(ctx context.Context, planID int64, keepCount int) error {
 	_, err := r.db.ExecContext(ctx, `
 		DELETE FROM scheduled_test_results
@@ -179,12 +250,22 @@ func scanScheduledTestResult(row scannable) (*service.ScheduledTestResult, error
 	); err != nil {
 		return nil, err
 	}
-	if len(diagnostics) > 0 {
-		if err := json.Unmarshal(diagnostics, &result.Diagnostics); err != nil {
+	var err error
+	result.Diagnostics, err = decodeDiagnostics(diagnostics)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func decodeDiagnostics(raw []byte) (*service.ModelDetectionReport, error) {
+	var diagnostics *service.ModelDetectionReport
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &diagnostics); err != nil {
 			return nil, fmt.Errorf("decode scheduled test diagnostics: %w", err)
 		}
 	}
-	return result, nil
+	return diagnostics, nil
 }
 
 func scanPlans(rows *sql.Rows) ([]*service.ScheduledTestPlan, error) {

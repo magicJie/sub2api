@@ -2782,6 +2782,34 @@ export interface ScheduledTestResult {
   created_at: string
 }
 
+export interface ScheduledTestLogItem extends ScheduledTestResult {
+  account_id: number
+  account_name: string
+  platform: string
+  model_id: string
+  test_type: ScheduledTestType | string
+  expected_model: string
+}
+
+export interface ScheduledTestLogQuery {
+  platform?: string
+  status?: 'success' | 'warning' | 'failed' | 'running' | 'abnormal'
+  test_type?: ScheduledTestType
+  fingerprint_status?: 'match' | 'mismatch' | 'inconclusive' | 'observed'
+  account_id?: number
+  start_time?: string
+  end_time?: string
+  page?: number
+  page_size?: number
+}
+
+export interface ScheduledTestLogListResponse {
+  items: ScheduledTestLogItem[]
+  total: number
+  page: number
+  page_size: number
+}
+
 export interface CreateScheduledTestPlanRequest {
   account_id: number
   model_id: string
@@ -2805,10 +2833,11 @@ export interface UpdateScheduledTestPlanRequest {
   auto_recover?: boolean
 }
 
-export type BatchScheduledTestPlanItemStatus = 'created' | 'skipped' | 'failed'
+export type BatchScheduledTestPlanItemStatus = 'created' | 'updated' | 'skipped' | 'failed'
 
 export interface BatchCreateScheduledTestPlansRequest {
   account_ids: number[]
+  mode?: 'create' | 'edit'
   model_id: string
   test_type?: ScheduledTestType | string
   expected_model?: string
@@ -2823,11 +2852,13 @@ export interface BatchScheduledTestPlanResultItem {
   account_id: number
   status: BatchScheduledTestPlanItemStatus
   plan?: ScheduledTestPlan
+  removed?: number
   error?: string
 }
 
 export interface BatchCreateScheduledTestPlansResponse {
   created: number
+  updated: number
   skipped: number
   failed: number
   results: BatchScheduledTestPlanResultItem[]

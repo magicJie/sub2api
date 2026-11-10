@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -35,6 +36,7 @@ type createScheduledTestPlanRequest struct {
 
 type batchCreateScheduledTestPlanRequest struct {
 	AccountIDs       []int64 `json:"account_ids" binding:"required,min=1,max=1000,dive,gt=0"`
+	Mode             string  `json:"mode" binding:"omitempty,oneof=create edit"`
 	ModelID          string  `json:"model_id"`
 	TestType         string  `json:"test_type"`
 	ExpectedModel    string  `json:"expected_model"`
@@ -125,7 +127,11 @@ func (h *ScheduledTestHandler) BatchCreate(c *gin.Context) {
 	if req.Enabled != nil {
 		plan.Enabled = *req.Enabled
 	}
-	result, err := h.scheduledTestSvc.BatchCreatePlans(c.Request.Context(), req.AccountIDs, plan)
+	batch := h.scheduledTestSvc.BatchCreatePlans
+	if req.Mode == "edit" {
+		batch = h.scheduledTestSvc.BatchUpsertPlans
+	}
+	result, err := batch(c.Request.Context(), req.AccountIDs, plan)
 	if err != nil {
 		response.BadRequest(c, err.Error())
 		return
@@ -220,6 +226,60 @@ func (h *ScheduledTestHandler) ListResults(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, results)
+}
+
+// ListLogs GET /admin/scheduled-test-results
+func (h *ScheduledTestHandler) ListLogs(c *gin.Context) {
+	var query struct {
+		Platform          string `form:"platform"`
+		Status            string `form:"status" binding:"omitempty,oneof=success warning failed running abnormal"`
+		TestType          string `form:"test_type" binding:"omitempty,oneof=connectivity fingerprint quality comprehensive"`
+		FingerprintStatus string `form:"fingerprint_status" binding:"omitempty,oneof=match mismatch inconclusive observed"`
+		AccountID         *int64 `form:"account_id" binding:"omitempty,gt=0"`
+		StartTime         string `form:"start_time"`
+		EndTime           string `form:"end_time"`
+		Page              int    `form:"page,default=1"`
+		PageSize          int    `form:"page_size,default=50"`
+	}
+	if err := c.ShouldBindQuery(&query); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	filter := service.ScheduledTestLogFilter{
+		Platform: query.Platform, Status: query.Status, TestType: query.TestType,
+		FingerprintStatus: query.FingerprintStatus,
+		Page:              max(1, query.Page), PageSize: min(200, max(1, query.PageSize)),
+	}
+	if query.AccountID != nil {
+		filter.AccountID = *query.AccountID
+	}
+	for _, field := range []struct {
+		name string
+		raw  string
+		dest **time.Time
+	}{
+		{"start_time", query.StartTime, &filter.Start},
+		{"end_time", query.EndTime, &filter.End},
+	} {
+		if field.raw == "" {
+			continue
+		}
+		parsed, err := time.Parse(time.RFC3339, field.raw)
+		if err != nil {
+			response.BadRequest(c, "invalid "+field.name+": expected RFC3339")
+			return
+		}
+		*field.dest = &parsed
+	}
+	items, total, err := h.scheduledTestSvc.ListLogs(c.Request.Context(), filter)
+	if err != nil {
+		response.InternalError(c, err.Error())
+		return
+	}
+	if items == nil {
+		items = []*service.ScheduledTestLogItem{}
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items, "total": total, "page": filter.Page, "page_size": filter.PageSize})
 }
 
 // RunNow POST /admin/scheduled-test-plans/:id/run executes and persists a plan immediately.

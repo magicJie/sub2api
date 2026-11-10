@@ -56,6 +56,34 @@
         {{ t('admin.scheduledTests.batchTargetCapWarning', { count: targetAccountIds.length }) }}
       </div>
 
+      <div>
+        <div class="mb-1.5 text-xs font-medium text-gray-600 dark:text-gray-400">
+          {{ t('admin.scheduledTests.batchModeLabel') }}
+        </div>
+        <div class="flex flex-wrap gap-1.5">
+          <button
+            v-for="mode in (['create', 'edit'] as const)"
+            :key="mode"
+            type="button"
+            :data-testid="`batch-schedule-mode-${mode}`"
+            :disabled="submitting"
+            :aria-pressed="form.mode === mode"
+            :class="[
+              'rounded-md border px-2 py-0.5 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+              form.mode === mode
+                ? 'border-primary-500 bg-primary-50 text-primary-700 dark:border-primary-400 dark:bg-primary-900/30 dark:text-primary-300'
+                : 'border-gray-200 bg-gray-50 text-gray-600 hover:border-gray-300 hover:bg-gray-100 dark:border-dark-600 dark:bg-dark-700 dark:text-gray-300 dark:hover:bg-dark-600'
+            ]"
+            @click="handleModeChange(mode)"
+          >
+            {{ t(`admin.scheduledTests.${mode === 'edit' ? 'batchModeEdit' : 'batchModeCreate'}`) }}
+          </button>
+        </div>
+        <p data-testid="batch-schedule-mode-notice" class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+          {{ t(`admin.scheduledTests.${form.mode === 'edit' ? 'batchModeEditNotice' : 'batchModeCreateNotice'}`) }}
+        </p>
+      </div>
+
       <!-- Configuration Form -->
       <div class="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
         <div>
@@ -68,7 +96,7 @@
               :options="testTypeOptions"
               :searchable="false"
               :disabled="submitting"
-              @update:model-value="(val) => handleTestTypeChange(String(val || 'quality'))"
+              @update:model-value="(val) => handleTestTypeChange(String(val || 'fingerprint'))"
             />
           </div>
         </div>
@@ -294,6 +322,10 @@
               {{ t('admin.scheduledTests.batchCreatedCount') }}:
               <strong data-testid="batch-schedule-created-count">{{ lastResult.created }}</strong>
             </span>
+            <span class="inline-flex items-center gap-1 rounded-full bg-primary-100 px-2.5 py-0.5 font-medium text-primary-700 dark:bg-primary-500/20 dark:text-primary-300">
+              {{ t('admin.scheduledTests.batchUpdatedCount') }}:
+              <strong data-testid="batch-schedule-updated-count">{{ lastResult.updated }}</strong>
+            </span>
             <span class="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2.5 py-0.5 font-medium text-gray-700 dark:bg-dark-700 dark:text-gray-300">
               {{ t('admin.scheduledTests.batchSkippedCount') }}:
               <strong data-testid="batch-schedule-skipped-count">{{ lastResult.skipped }}</strong>
@@ -396,6 +428,7 @@ import { Icon } from '@/components/icons'
 import { adminAPI } from '@/api/admin'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
+import { DEFAULT_FINGERPRINT_CRON, resolveDetectionDefaults } from '@/utils/scheduledTestDefaults'
 import type {
   BatchCreateScheduledTestPlansResponse,
   BatchScheduledTestPlanResultItem,
@@ -404,7 +437,6 @@ import type {
 } from '@/types'
 
 const MAX_BATCH_ACCOUNTS = 1000
-const DEFAULT_CRON_EXPRESSION = '0 9 * * *'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -436,11 +468,12 @@ const fetchedModelOptions = ref<SelectOption[]>([])
 let sessionId = 0
 
 const form = reactive({
-  test_type: 'quality' as ScheduledTestType,
+  mode: 'edit' as 'create' | 'edit',
+  test_type: 'fingerprint' as ScheduledTestType,
   model_id: '',
   expected_model: '',
   quality_threshold: '80',
-  cron_expression: DEFAULT_CRON_EXPRESSION,
+  cron_expression: DEFAULT_FINGERPRINT_CRON,
   max_results: '100',
   enabled: true,
   auto_recover: false
@@ -452,7 +485,7 @@ const normalizeTestType = (type?: string | null): ScheduledTestType => {
   if (type === 'connectivity' || type === 'fingerprint' || type === 'quality' || type === 'comprehensive') {
     return type
   }
-  return 'quality'
+  return 'fingerprint'
 }
 
 const isConnectivityType = (type?: string | null): boolean =>
@@ -549,11 +582,13 @@ const getCostNoticeText = (type?: string | null): string => {
 }
 
 const resetForm = () => {
-  form.test_type = 'quality'
-  form.model_id = ''
-  form.expected_model = ''
+  const defaults = resolveDetectionDefaults(props.selectedPlatforms)
+  form.mode = 'edit'
+  form.test_type = 'fingerprint'
+  form.model_id = defaults.model_id
+  form.expected_model = defaults.expected_model
   form.quality_threshold = '80'
-  form.cron_expression = DEFAULT_CRON_EXPRESSION
+  form.cron_expression = DEFAULT_FINGERPRINT_CRON
   form.max_results = '100'
   form.enabled = true
   form.auto_recover = false
@@ -565,6 +600,12 @@ const restoreCompletedTargetIfNeeded = () => {
     lastResult.value = null
     targetAccountIds.value = [...initialAccountIds.value]
   }
+}
+
+const handleModeChange = (mode: 'create' | 'edit') => {
+  if (submitting.value) return
+  restoreCompletedTargetIfNeeded()
+  form.mode = mode
 }
 
 const handleTestTypeChange = (type: string) => {
@@ -671,6 +712,7 @@ const submitBatch = async () => {
     const testType = normalizeTestType(form.test_type)
     const response = await adminAPI.scheduledTests.batchCreate({
       account_ids: idsToSubmit,
+      mode: form.mode,
       model_id: form.model_id.trim(),
       test_type: testType,
       expected_model: includesFingerprint(testType) ? form.expected_model.trim() : '',
@@ -697,6 +739,7 @@ const submitBatch = async () => {
     if (response.failed > 0 || nextFailedIds.length > 0) {
       const partialMsg = t('admin.scheduledTests.batchCreatePartial', {
         created: response.created,
+        updated: response.updated,
         skipped: response.skipped,
         failed: response.failed
       })
@@ -705,6 +748,7 @@ const submitBatch = async () => {
       appStore.showSuccess(
         t('admin.scheduledTests.batchCreateSuccess', {
           created: response.created,
+          updated: response.updated,
           skipped: response.skipped
         })
       )

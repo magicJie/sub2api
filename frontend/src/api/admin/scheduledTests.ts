@@ -7,6 +7,8 @@ import { apiClient } from '../client'
 import type {
   ScheduledTestPlan,
   ScheduledTestResult,
+  ScheduledTestLogQuery,
+  ScheduledTestLogListResponse,
   CreateScheduledTestPlanRequest,
   UpdateScheduledTestPlanRequest,
   BatchCreateScheduledTestPlansRequest,
@@ -39,9 +41,9 @@ export async function create(req: CreateScheduledTestPlanRequest): Promise<Sched
 }
 
 /**
- * Batch create scheduled test plans across multiple accounts
+ * Batch create or overwrite scheduled test plans across multiple accounts
  * @param req - Batch plan creation request
- * @returns Batch creation summary and per-account results
+ * @returns Batch configuration summary and per-account results
  */
 export async function batchCreate(
   req: BatchCreateScheduledTestPlansRequest
@@ -107,6 +109,11 @@ export async function listResults(planId: number, limit?: number): Promise<Sched
   return data ?? []
 }
 
+export async function listLogs(params: ScheduledTestLogQuery): Promise<ScheduledTestLogListResponse> {
+  const { data } = await apiClient.get<ScheduledTestLogListResponse>('/admin/scheduled-test-results', { params })
+  return data
+}
+
 export const scheduledTestsAPI = {
   listByAccount,
   create,
@@ -114,7 +121,8 @@ export const scheduledTestsAPI = {
   update,
   delete: deletePlan,
   runNow,
-  listResults
+  listResults,
+  listLogs
 }
 
 export default scheduledTestsAPI

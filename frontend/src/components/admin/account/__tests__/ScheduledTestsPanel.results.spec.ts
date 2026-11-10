@@ -33,7 +33,10 @@ vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showError, showSuccess })
 async function openPanel() {
   const wrapper = shallowMount(ScheduledTestsPanel, {
     props: { show: false, accountId: 1, modelOptions: [] },
-    global: { stubs: { BaseDialog: { template: '<div><slot /></div>' } } },
+    global: { stubs: {
+      BaseDialog: { template: '<div><slot /></div>' },
+      ScheduledTestDiagnosticsCards: false,
+    } },
   })
   await wrapper.setProps({ show: true })
   await flushPromises()

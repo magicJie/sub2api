@@ -559,163 +559,7 @@
                   </span>
                 </div>
 
-                <!-- Structured Diagnostics Summary -->
-                <div
-                  v-if="result.diagnostics && (result.diagnostics.fingerprint || result.diagnostics.quality)"
-                  class="mt-2.5 space-y-2"
-                >
-                  <!-- Fingerprint Card -->
-                  <div
-                    v-if="result.diagnostics.fingerprint"
-                    class="rounded-lg border border-gray-200/80 bg-white/80 p-2.5 text-xs dark:border-dark-700 dark:bg-dark-800/80"
-                  >
-                    <div class="flex flex-wrap items-center justify-between gap-2">
-                      <span class="font-medium text-gray-700 dark:text-gray-200">
-                        {{ t('admin.scheduledTests.fingerprintTitle') }}
-                      </span>
-                      <span
-                        :class="[
-                          'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium',
-                          getFingerprintStatusBadgeClass(result.diagnostics.fingerprint.status)
-                        ]"
-                      >
-                        {{ getFingerprintStatusLabel(result.diagnostics.fingerprint.status) }}
-                      </span>
-                    </div>
-
-                    <div class="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-gray-600 dark:text-gray-300">
-                      <div>
-                        <span class="text-gray-400 dark:text-gray-500">{{ t('admin.scheduledTests.predictedModel') }}: </span>
-                        <span class="font-mono font-semibold text-gray-900 dark:text-gray-100">
-                          {{ result.diagnostics.fingerprint.prediction || '-' }}
-                        </span>
-                      </div>
-                      <div v-if="result.diagnostics.expected_model">
-                        <span class="text-gray-400 dark:text-gray-500">{{ t('admin.scheduledTests.expectedModelLabel') }}: </span>
-                        <span class="font-mono">{{ result.diagnostics.expected_model }}</span>
-                      </div>
-                      <div>
-                        <span class="text-gray-400 dark:text-gray-500">{{ t('admin.scheduledTests.relativeProbability') }}: </span>
-                        <span class="font-mono font-medium">
-                          {{ formatProbability(result.diagnostics.fingerprint.probability) }}
-                        </span>
-                      </div>
-                      <div v-if="result.diagnostics.fingerprint.used_outputs > 0">
-                        <span class="text-gray-400 dark:text-gray-500">{{ t('admin.scheduledTests.usedOutputs') }}: </span>
-                        <span class="font-mono">{{ result.diagnostics.fingerprint.used_outputs }}</span>
-                      </div>
-                    </div>
-
-                    <!-- Top Candidates -->
-                    <div
-                      v-if="result.diagnostics.fingerprint.candidates && result.diagnostics.fingerprint.candidates.length > 0"
-                      class="mt-2"
-                    >
-                      <div class="mb-1 text-[11px] text-gray-400 dark:text-gray-500">
-                        {{ t('admin.scheduledTests.topCandidates') }}
-                      </div>
-                      <div class="flex flex-wrap gap-1.5">
-                        <span
-                          v-for="cand in result.diagnostics.fingerprint.candidates.slice(0, 4)"
-                          :key="cand.model"
-                          class="inline-flex items-center gap-1 rounded bg-gray-100 px-2 py-0.5 font-mono text-[11px] text-gray-700 dark:bg-dark-700 dark:text-gray-300"
-                        >
-                          <span>{{ cand.model }}</span>
-                          <span v-if="cand.family" class="text-gray-400 dark:text-gray-500">({{ cand.family }})</span>
-                          <span class="font-semibold text-primary-600 dark:text-primary-400">
-                            {{ formatProbability(cand.probability) }}
-                          </span>
-                        </span>
-                      </div>
-                    </div>
-
-                    <!-- Fingerprint Error -->
-                    <div
-                      v-if="result.diagnostics.fingerprint.error"
-                      class="mt-1.5 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
-                    >
-                      {{ result.diagnostics.fingerprint.error }}
-                    </div>
-                  </div>
-
-                  <!-- Quality / Ability Evaluation Card -->
-                  <div
-                    v-if="result.diagnostics.quality"
-                    class="rounded-lg border border-gray-200/80 bg-white/80 p-2.5 text-xs dark:border-dark-700 dark:bg-dark-800/80"
-                  >
-                    <div class="flex flex-wrap items-center justify-between gap-2">
-                      <span class="font-medium text-gray-700 dark:text-gray-200">
-                        {{ t('admin.scheduledTests.qualityTitle') }}
-                      </span>
-                      <span
-                        :class="[
-                          'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium',
-                          getQualityStatusBadgeClass(result.diagnostics.quality.status)
-                        ]"
-                      >
-                        {{ getQualityStatusLabel(result.diagnostics.quality.status) }}
-                      </span>
-                    </div>
-
-                    <div class="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-gray-600 dark:text-gray-300">
-                      <div>
-                        <span class="text-gray-400 dark:text-gray-500">{{ t('admin.scheduledTests.qualityScore') }}: </span>
-                        <span class="font-mono font-semibold text-gray-900 dark:text-gray-100">
-                          {{ result.diagnostics.quality.score }}/100
-                        </span>
-                      </div>
-                      <div>
-                        <span class="text-gray-400 dark:text-gray-500">{{ t('admin.scheduledTests.qualityThresholdLabel') }}: </span>
-                        <span class="font-mono">{{ result.diagnostics.quality.threshold }}</span>
-                      </div>
-                      <div>
-                        <span class="text-gray-400 dark:text-gray-500">{{ t('admin.scheduledTests.qualityChecksPassed') }}: </span>
-                        <span class="font-mono">
-                          {{ result.diagnostics.quality.passed }}/{{ result.diagnostics.quality.total }}
-                        </span>
-                      </div>
-                    </div>
-
-                    <!-- Per-check details -->
-                    <div
-                      v-if="result.diagnostics.quality.checks && result.diagnostics.quality.checks.length > 0"
-                      class="mt-2 space-y-1"
-                    >
-                      <div
-                        v-for="check in result.diagnostics.quality.checks"
-                        :key="check.id"
-                        class="flex flex-wrap items-center justify-between gap-2 rounded bg-gray-50 px-2 py-1 text-[11px] dark:bg-dark-900/60"
-                      >
-                        <div class="flex items-center gap-1.5">
-                          <span
-                            :class="[
-                              'inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium',
-                              check.passed
-                                ? 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400'
-                                : 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400'
-                            ]"
-                          >
-                            {{ check.passed ? t('admin.scheduledTests.checkPassed') : t('admin.scheduledTests.checkFailed') }}
-                          </span>
-                          <span class="font-mono font-medium text-gray-700 dark:text-gray-200">{{ check.id }}</span>
-                        </div>
-                        <div class="font-mono text-gray-500 dark:text-gray-400">
-                          <span>{{ t('admin.scheduledTests.checkExpected') }}: {{ check.expected }}</span>
-                          <span class="mx-1">·</span>
-                          <span>{{ t('admin.scheduledTests.checkActual') }}: {{ check.actual || '-' }}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <!-- Quality Error -->
-                    <div
-                      v-if="result.diagnostics.quality.error"
-                      class="mt-1.5 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
-                    >
-                      {{ result.diagnostics.quality.error }}
-                    </div>
-                  </div>
-                </div>
+                <ScheduledTestDiagnosticsCards v-if="result.diagnostics" :diagnostics="result.diagnostics" />
 
                 <!-- Response / Error (collapsible) -->
                 <div v-if="result.error_message" class="mt-2">
@@ -802,14 +646,21 @@ import { Icon } from '@/components/icons'
 import { adminAPI } from '@/api/admin'
 import { useAppStore } from '@/stores/app'
 import { formatDateTime } from '@/utils/format'
+import { DEFAULT_FINGERPRINT_CRON, resolveDetectionDefaults } from '@/utils/scheduledTestDefaults'
+import ScheduledTestDiagnosticsCards from './ScheduledTestDiagnosticsCards.vue'
+import { useScheduledTestDisplay } from './scheduledTestDisplay'
 import type { ScheduledTestPlan, ScheduledTestResult, ScheduledTestType } from '@/types'
 
 const { t } = useI18n()
+const {
+  getTestTypeLabel, getTestTypeBadgeClass, getResultStatusLabel, getResultStatusBadgeClass
+} = useScheduledTestDisplay()
 const appStore = useAppStore()
 
 const props = defineProps<{
   show: boolean
   accountId: number | null
+  platform?: string
   modelOptions: SelectOption[]
 }>()
 
@@ -885,90 +736,12 @@ const normalizeMaxResults = (raw: string | number | undefined): number => {
   return Math.min(1000, Math.max(1, Math.round(parsed)))
 }
 
-const getTestTypeLabel = (type?: string | null): string => {
-  const normalized = normalizeTestType(type)
-  if (normalized === 'fingerprint') return t('admin.scheduledTests.testTypeFingerprint')
-  if (normalized === 'quality') return t('admin.scheduledTests.testTypeQuality')
-  if (normalized === 'comprehensive') return t('admin.scheduledTests.testTypeComprehensive')
-  return t('admin.scheduledTests.testTypeConnectivity')
-}
-
-const getTestTypeBadgeClass = (type?: string | null): string => {
-  const normalized = normalizeTestType(type)
-  if (normalized === 'fingerprint') {
-    return 'bg-purple-100 text-purple-700 dark:bg-purple-500/20 dark:text-purple-300'
-  }
-  if (normalized === 'quality') {
-    return 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300'
-  }
-  if (normalized === 'comprehensive') {
-    return 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300'
-  }
-  return 'bg-gray-100 text-gray-700 dark:bg-dark-700 dark:text-gray-300'
-}
-
 const getCostNoticeText = (type?: string | null): string => {
   const normalized = normalizeTestType(type)
   if (normalized === 'fingerprint') return t('admin.scheduledTests.costNoticeFingerprint')
   if (normalized === 'quality') return t('admin.scheduledTests.costNoticeQuality')
   if (normalized === 'comprehensive') return t('admin.scheduledTests.costNoticeComprehensive')
   return t('admin.scheduledTests.costNoticeConnectivity')
-}
-
-const getResultStatusLabel = (status: string): string => {
-  if (status === 'success') return t('admin.scheduledTests.success')
-  if (status === 'warning') return t('admin.scheduledTests.warning')
-  if (status === 'running') return t('admin.scheduledTests.running')
-  return t('admin.scheduledTests.failed')
-}
-
-const getResultStatusBadgeClass = (status: string): string => {
-  if (status === 'success') {
-    return 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400'
-  }
-  if (status === 'warning') {
-    return 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400'
-  }
-  if (status === 'running') {
-    return 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400'
-  }
-  return 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400'
-}
-
-const getFingerprintStatusLabel = (status?: string): string => {
-  if (status === 'match') return t('admin.scheduledTests.fingerprintMatch')
-  if (status === 'mismatch') return t('admin.scheduledTests.fingerprintMismatch')
-  if (status === 'observed') return t('admin.scheduledTests.fingerprintObserved')
-  return t('admin.scheduledTests.fingerprintInconclusive')
-}
-
-const getFingerprintStatusBadgeClass = (status?: string): string => {
-  if (status === 'match') {
-    return 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400'
-  }
-  if (status === 'observed') {
-    return 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-400'
-  }
-  return 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400'
-}
-
-const getQualityStatusLabel = (status?: string): string => {
-  if (status === 'passed') return t('admin.scheduledTests.qualityPassed')
-  if (status === 'degraded') return t('admin.scheduledTests.qualityDegraded')
-  return t('admin.scheduledTests.qualityInconclusive')
-}
-
-const getQualityStatusBadgeClass = (status?: string): string => {
-  if (status === 'passed') {
-    return 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400'
-  }
-  return 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400'
-}
-
-const formatProbability = (prob?: number): string => {
-  const num = Number(prob)
-  if (!Number.isFinite(num) || num < 0) return '0.0%'
-  return `${(num * 100).toFixed(1)}%`
 }
 
 const editForm = reactive({
@@ -983,11 +756,10 @@ const editForm = reactive({
 })
 
 const newPlan = reactive({
-  test_type: 'connectivity' as ScheduledTestType,
-  model_id: '' as string,
-  expected_model: '' as string,
+  test_type: 'fingerprint' as ScheduledTestType,
+  ...resolveDetectionDefaults(props.platform ? [props.platform] : []),
   quality_threshold: '80' as string,
-  cron_expression: '' as string,
+  cron_expression: DEFAULT_FINGERPRINT_CRON,
   max_results: '100' as string,
   enabled: true,
   auto_recover: false
@@ -1010,11 +782,12 @@ const handleEditFormTestTypeChange = (type: string) => {
 }
 
 const resetNewPlan = () => {
-  newPlan.test_type = 'connectivity'
-  newPlan.model_id = ''
-  newPlan.expected_model = ''
+  const defaults = resolveDetectionDefaults(props.platform ? [props.platform] : [])
+  newPlan.test_type = 'fingerprint'
+  newPlan.model_id = defaults.model_id
+  newPlan.expected_model = defaults.expected_model
   newPlan.quality_threshold = '80'
-  newPlan.cron_expression = ''
+  newPlan.cron_expression = DEFAULT_FINGERPRINT_CRON
   newPlan.max_results = '100'
   newPlan.enabled = true
   newPlan.auto_recover = false
@@ -1039,6 +812,7 @@ watch(
     showAddForm.value = false
     showDeleteConfirm.value = false
     deletingPlan.value = null
+    resetNewPlan()
     if (visible && accountId) {
       await loadPlans()
     }

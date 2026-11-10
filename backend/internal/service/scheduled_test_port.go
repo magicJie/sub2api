@@ -27,11 +27,13 @@ type ScheduledTestBatchItem struct {
 	AccountID int64              `json:"account_id"`
 	Status    string             `json:"status"`
 	Plan      *ScheduledTestPlan `json:"plan,omitempty"`
+	Removed   int                `json:"removed,omitempty"`
 	Error     string             `json:"error,omitempty"`
 }
 
 type ScheduledTestBatchResult struct {
 	Created int                      `json:"created"`
+	Updated int                      `json:"updated"`
 	Skipped int                      `json:"skipped"`
 	Failed  int                      `json:"failed"`
 	Results []ScheduledTestBatchItem `json:"results"`
@@ -51,6 +53,28 @@ type ScheduledTestResult struct {
 	CreatedAt    time.Time             `json:"created_at"`
 }
 
+type ScheduledTestLogFilter struct {
+	Platform          string
+	Status            string
+	TestType          string
+	FingerprintStatus string
+	AccountID         int64
+	Start             *time.Time
+	End               *time.Time
+	Page              int
+	PageSize          int
+}
+
+type ScheduledTestLogItem struct {
+	ScheduledTestResult
+	AccountID     int64  `json:"account_id"`
+	AccountName   string `json:"account_name"`
+	Platform      string `json:"platform"`
+	ModelID       string `json:"model_id"`
+	TestType      string `json:"test_type"`
+	ExpectedModel string `json:"expected_model"`
+}
+
 // ScheduledTestPlanRepository defines the data access interface for test plans.
 type ScheduledTestPlanRepository interface {
 	Create(ctx context.Context, plan *ScheduledTestPlan) (*ScheduledTestPlan, error)
@@ -66,5 +90,6 @@ type ScheduledTestPlanRepository interface {
 type ScheduledTestResultRepository interface {
 	Create(ctx context.Context, result *ScheduledTestResult) (*ScheduledTestResult, error)
 	ListByPlanID(ctx context.Context, planID int64, limit int) ([]*ScheduledTestResult, error)
+	ListLogs(ctx context.Context, filter ScheduledTestLogFilter) ([]*ScheduledTestLogItem, int64, error)
 	PruneOldResults(ctx context.Context, planID int64, keepCount int) error
 }

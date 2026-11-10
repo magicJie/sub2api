@@ -30,6 +30,28 @@ func (r *scheduledBatchPlanRepo) Create(_ context.Context, plan *ScheduledTestPl
 	return &saved, nil
 }
 
+func (r *scheduledBatchPlanRepo) Update(_ context.Context, plan *ScheduledTestPlan) (*ScheduledTestPlan, error) {
+	for i, existing := range r.plans[plan.AccountID] {
+		if existing.ID == plan.ID {
+			r.plans[plan.AccountID][i] = plan
+			return plan, nil
+		}
+	}
+	return nil, errors.New("plan unavailable")
+}
+
+func (r *scheduledBatchPlanRepo) Delete(_ context.Context, id int64) error {
+	for accountID, plans := range r.plans {
+		for i, plan := range plans {
+			if plan.ID == id {
+				r.plans[accountID] = append(plans[:i], plans[i+1:]...)
+				return nil
+			}
+		}
+	}
+	return errors.New("plan unavailable")
+}
+
 func TestScheduledTestBatchPartialFailureAndRetry(t *testing.T) {
 	repo := &scheduledBatchPlanRepo{plans: make(map[int64][]*ScheduledTestPlan), failAccount: 2}
 	svc := NewScheduledTestService(repo, nil)
@@ -86,4 +108,66 @@ func TestScheduledTestBatchValidatesBeforeCreatingAnyPlan(t *testing.T) {
 		require.Error(t, err)
 		require.Empty(t, repo.plans)
 	}
+}
+
+func TestScheduledTestBatchUpsert(t *testing.T) {
+	template := ScheduledTestPlan{
+		ModelID: "model", TestType: "fingerprint", ExpectedModel: "reference",
+		QualityThreshold: 80, CronExpression: "0 */6 * * *", Enabled: true, MaxResults: 50,
+	}
+	for _, tc := range []struct {
+		name    string
+		count   int
+		oldCron string
+		status  string
+		removed int
+	}{
+		{"create", 0, "", "created", 0},
+		{"update", 1, "0 * * * *", "updated", 0},
+		{"remove duplicates", 3, template.CronExpression, "updated", 2},
+		{"skip identical", 1, template.CronExpression, "skipped", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			other := template
+			other.ID, other.AccountID, other.TestType = 10, 1, "quality"
+			repo := &scheduledBatchPlanRepo{plans: map[int64][]*ScheduledTestPlan{1: {&other}}}
+			for i := range tc.count {
+				plan := template
+				plan.ID, plan.AccountID, plan.CronExpression = int64(3-i), 1, tc.oldCron
+				repo.plans[1] = append(repo.plans[1], &plan)
+			}
+			result, err := NewScheduledTestService(repo, nil).BatchUpsertPlans(context.Background(), []int64{1, 1}, template)
+			require.NoError(t, err)
+			require.Len(t, result.Results, 1)
+			item := result.Results[0]
+			require.Equal(t, tc.status, item.Status)
+			require.Equal(t, tc.removed, item.Removed)
+			require.Equal(t, template.CronExpression, item.Plan.CronExpression)
+			if tc.count > 0 {
+				require.Equal(t, int64(3), item.Plan.ID)
+			}
+			require.Len(t, repo.plans[1], 2)
+			require.Equal(t, &other, repo.plans[1][0])
+			require.Equal(t, "quality", other.TestType)
+			require.Equal(t, template.CronExpression, other.CronExpression)
+			switch tc.status {
+			case "created":
+				require.Equal(t, 1, result.Created)
+			case "updated":
+				require.Equal(t, 1, result.Updated)
+			case "skipped":
+				require.Equal(t, 1, result.Skipped)
+			}
+		})
+	}
+}
+
+func TestScheduledTestBatchUpsertValidatesBeforeWriting(t *testing.T) {
+	plan := &ScheduledTestPlan{ID: 3, AccountID: 1, TestType: "fingerprint", CronExpression: "0 * * * *"}
+	repo := &scheduledBatchPlanRepo{plans: map[int64][]*ScheduledTestPlan{1: {plan}}}
+	_, err := NewScheduledTestService(repo, nil).BatchUpsertPlans(context.Background(), []int64{1, 2},
+		ScheduledTestPlan{ModelID: "model", TestType: "fingerprint", CronExpression: "invalid"})
+	require.Error(t, err)
+	require.Equal(t, map[int64][]*ScheduledTestPlan{1: {plan}}, repo.plans)
+	require.Equal(t, "0 * * * *", plan.CronExpression)
 }

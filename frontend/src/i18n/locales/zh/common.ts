@@ -214,6 +214,7 @@ export default {
     securityAudit: '安全审计',
     contentModeration: '内容审计',
     promptAudit: '提示词审计',
+    detectionLogs: '检测日志',
     auditLogs: '操作日志',
   },
 

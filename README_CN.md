@@ -280,6 +280,18 @@ fast_mode = true
 
 其中 `service_tier = "fast"` 会让请求携带 Fast 设置；`features.fast_mode` 只启用客户端 Fast 功能。模型目录没有声明 Fast 能力时，`/fast` 仍可能不显示。可通过 Sub2API 使用记录确认最终 `service_tier` 是否为 `priority`。
 
+## 定时检测计划
+
+账号列表支持批量新增或覆盖检测计划，默认使用「覆盖已有计划」和指纹检测，每 6 小时执行一次（`0 */6 * * *`）。Anthropic 默认请求模型与预期模型均为 `claude-opus-5-5`，OpenAI 均为 `gpt-6.1-sol`；混选平台时模型留空，建议按平台分批设置。指纹检测每次消耗 3 次上游请求，单账号约 12 次/天。
+
+覆盖模式按「账号 + 检测类型」保留最新创建的计划，更新配置，并删除同类型多余计划及其历史日志；其他检测类型保持原样。新增模式保留原计划，完全相同的配置会跳过。批量结果分别统计创建、更新、跳过和失败，失败账号可单独重试。
+
+接口 `POST /api/v1/admin/scheduled-test-plans/batch` 接受 `mode: "create" | "edit"`，省略时使用 `create`。预期模型属于候选库之外时，指纹结果为「无法判定」；当前 `gpt-6.1-sol` 尚未收录，可填写库内模型 ID 进行匹配判定。
+
+跨账号查询接口 `GET /api/v1/admin/scheduled-test-results` 支持 `platform`、`status`（`abnormal` 表示告警和失败）、`test_type`、`fingerprint_status`、正整数 `account_id`、RFC3339 格式的 `start_time` / `end_time`，时间范围按创建时间左闭右开。分页参数为 `page`（默认 1）和 `page_size`（默认 50，上限 200），返回 `{items,total,page,page_size}`；列表包含完整诊断信息，响应正文留空。
+
+管理后台「检测日志」（`/admin/detection-logs`）默认筛选「仅异常」，可按平台、状态、检测类型、指纹结果、账号 ID 和时间范围跨账号查看记录；点击行展开指纹与能力详情及错误信息。筛选变更会回到第一页，右上角可手动刷新。
+
 ---
 
 ## 部署方式

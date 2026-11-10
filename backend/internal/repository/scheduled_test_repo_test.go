@@ -97,3 +97,40 @@ func TestScheduledTestResultRepositoryDiagnosticsRoundTrip(t *testing.T) {
 		})
 	}
 }
+
+func TestScheduledTestResultRepositoryListLogs(t *testing.T) {
+	db, mock := newSQLMock(t)
+	repo := NewScheduledTestResultRepository(db)
+	filter := service.ScheduledTestLogFilter{
+		Platform: "openai", Status: "abnormal", FingerprintStatus: "mismatch", Page: 2, PageSize: 50,
+	}
+	from := ` FROM scheduled_test_results r JOIN scheduled_test_plans p ON p.id = r.plan_id
+		JOIN accounts a ON a.id = p.account_id WHERE a.platform = $1 AND r.status IN ('warning','failed')
+		AND r.diagnostics->'fingerprint'->>'status' = $2`
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(*)"+from)).
+		WithArgs("openai", "mismatch").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(51))
+	selection := `SELECT r.id, r.plan_id, r.status, r.error_message, r.latency_ms, r.started_at,
+		r.finished_at, r.created_at, r.diagnostics, p.account_id, p.model_id, p.test_type,
+		p.expected_model, a.name, a.platform`
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	columns := []string{"id", "plan_id", "status", "error_message", "latency_ms", "started_at",
+		"finished_at", "created_at", "diagnostics", "account_id", "model_id", "test_type", "expected_model", "name", "platform"}
+	mock.ExpectQuery(regexp.QuoteMeta(selection+from+" ORDER BY r.created_at DESC, r.id DESC LIMIT $3 OFFSET $4")).
+		WithArgs("openai", "mismatch", 50, 50).
+		WillReturnRows(sqlmock.NewRows(columns).AddRow(11, 7, "warning", "mismatch evidence", 120,
+			now, now, now, `{"version":"v1","test_type":"fingerprint","fingerprint":{"status":"mismatch","prediction":"other","probability":0.95}}`,
+			9, "requested", "fingerprint", "expected", "Account Nine", "openai"))
+	items, total, err := repo.ListLogs(context.Background(), filter)
+	require.NoError(t, err)
+	require.Equal(t, int64(51), total)
+	require.Len(t, items, 1)
+	require.Equal(t, int64(9), items[0].AccountID)
+	require.Equal(t, "Account Nine", items[0].AccountName)
+	require.Equal(t, "requested", items[0].ModelID)
+	require.Equal(t, "expected", items[0].ExpectedModel)
+	require.Equal(t, "mismatch", items[0].Diagnostics.Fingerprint.Status)
+	require.Equal(t, "other", items[0].Diagnostics.Fingerprint.Prediction)
+	require.Empty(t, items[0].ResponseText)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

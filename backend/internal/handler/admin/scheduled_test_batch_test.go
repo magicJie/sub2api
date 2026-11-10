@@ -16,6 +16,7 @@ import (
 func TestScheduledTestBatchRejectsInvalidRequests(t *testing.T) {
 	for _, body := range []string{
 		`{"cron_expression":"0 * * * *"}`,
+		`{"account_ids":[1],"mode":"bogus","cron_expression":"0 * * * *"}`,
 		`{"account_ids":[],"cron_expression":"0 * * * *"}`,
 		`{"account_ids":[0],"cron_expression":"0 * * * *"}`,
 		`{"account_ids":[1,-2],"cron_expression":"0 * * * *"}`,

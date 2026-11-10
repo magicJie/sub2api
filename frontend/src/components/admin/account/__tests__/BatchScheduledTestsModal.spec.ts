@@ -29,12 +29,12 @@ vi.mock('@/stores/app', () => ({
   useAppStore: () => ({ showError, showSuccess, showWarning })
 }))
 
-function mountModal(accountIds = [1, 2, 999, 2]) {
+function mountModal(accountIds = [1, 2, 999, 2], selectedPlatforms = ['anthropic']) {
   return mount(BatchScheduledTestsModal, {
     props: {
       show: true,
       accountIds,
-      selectedPlatforms: ['anthropic']
+      selectedPlatforms
     },
     global: {
       stubs: {
@@ -59,6 +59,7 @@ describe('BatchScheduledTestsModal', () => {
   it('keeps a stable target selection and retries only failed accounts after partial failure', async () => {
     const partialResponse: BatchCreateScheduledTestPlansResponse = {
       created: 1,
+      updated: 0,
       skipped: 1,
       failed: 1,
       results: [
@@ -69,6 +70,7 @@ describe('BatchScheduledTestsModal', () => {
     }
     const retryResponse: BatchCreateScheduledTestPlansResponse = {
       created: 1,
+      updated: 0,
       skipped: 0,
       failed: 0,
       results: [{ account_id: 999, status: 'created' }]
@@ -137,6 +139,7 @@ describe('BatchScheduledTestsModal', () => {
 
     pending.resolve({
       created: 2,
+      updated: 0,
       skipped: 0,
       failed: 0,
       results: [
@@ -148,5 +151,37 @@ describe('BatchScheduledTestsModal', () => {
 
     await wrapper.find('[data-testid="batch-schedule-close-btn"]').trigger('click')
     expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+
+  it.each([
+    { platforms: ['anthropic'], model: 'claude-opus-5-5' },
+    { platforms: ['openai'], model: 'gpt-6.1-sol' },
+    { platforms: ['anthropic', 'openai'], model: '' }
+  ])('prefills fingerprint configuration for $platforms', async ({ platforms, model }) => {
+    const wrapper = mountModal([1, 2], platforms)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="batch-schedule-model-input"] input').element).toHaveProperty('value', model)
+    expect(wrapper.find('[data-testid="batch-schedule-expected-model-input"] input').element).toHaveProperty('value', model)
+    expect(wrapper.find('[data-testid="batch-schedule-cron-input"] input').element).toHaveProperty('value', '0 */6 * * *')
+    expect(wrapper.find('[data-testid="batch-schedule-test-type"]').text()).toContain('admin.scheduledTests.testTypeFingerprint')
+  })
+
+  it.each(['edit', 'create'] as const)('submits %s mode and displays updated accounts', async (mode) => {
+    batchCreate.mockResolvedValue({
+      created: 0, updated: 2, skipped: 0, failed: 0,
+      results: [{ account_id: 1, status: 'updated' }, { account_id: 2, status: 'updated' }]
+    })
+    const wrapper = mountModal([1, 2])
+    await flushPromises()
+    if (mode === 'create') {
+      await wrapper.find('[data-testid="batch-schedule-mode-create"]').trigger('click')
+    }
+    await wrapper.find('[data-testid="batch-schedule-submit-btn"]').trigger('click')
+    await flushPromises()
+    expect(batchCreate).toHaveBeenCalledWith(expect.objectContaining({
+      mode, test_type: 'fingerprint', model_id: 'claude-opus-5-5', expected_model: 'claude-opus-5-5'
+    }))
+    expect(wrapper.find('[data-testid="batch-schedule-updated-count"]').text()).toBe('2')
+    expect(showSuccess).toHaveBeenCalledWith(expect.stringContaining('"updated":2'))
   })
 })

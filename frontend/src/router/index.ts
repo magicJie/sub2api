@@ -462,6 +462,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/detection-logs',
+    name: 'AdminDetectionLogs',
+    component: () => import('@/views/admin/ScheduledTestLogsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Detection Logs',
+      titleKey: 'admin.scheduledTests.logs.title',
+      descriptionKey: 'admin.scheduledTests.logs.description'
+    }
+  },
+  {
     path: '/admin/users',
     name: 'AdminUsers',
     component: () => import('@/views/admin/UsersView.vue'),

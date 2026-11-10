@@ -40,6 +40,13 @@ func (r *scheduledHandlerPlanRepo) Update(_ context.Context, plan *service.Sched
 	return plan, nil
 }
 
+func (r *scheduledHandlerPlanRepo) ListByAccountID(_ context.Context, _ int64) ([]*service.ScheduledTestPlan, error) {
+	if r.plan == nil {
+		return nil, nil
+	}
+	return []*service.ScheduledTestPlan{r.plan}, nil
+}
+
 func TestScheduledTestHandlerCreateDiagnostics(t *testing.T) {
 	for _, body := range []string{
 		`{"account_id":9,"cron_expression":"*/30 * * * *"}`,
@@ -122,4 +129,79 @@ func TestScheduledTestHandlerRunNowRejectsInvalidOrMissingPlan(t *testing.T) {
 			require.Equal(t, expected, recorder.Code, recorder.Body.String())
 		})
 	}
+}
+
+func TestScheduledTestHandlerBatchEdit(t *testing.T) {
+	repo := &scheduledHandlerPlanRepo{plan: &service.ScheduledTestPlan{
+		ID: 7, AccountID: 9, ModelID: "model", TestType: "fingerprint",
+		QualityThreshold: 80, CronExpression: "0 * * * *", Enabled: true, MaxResults: 50,
+	}}
+	h := NewScheduledTestHandler(service.NewScheduledTestService(repo, nil), nil)
+	router := gin.New()
+	router.POST("/plans/batch", h.BatchCreate)
+	request := httptest.NewRequest(http.MethodPost, "/plans/batch", strings.NewReader(
+		`{"account_ids":[9],"mode":"edit","test_type":"fingerprint","model_id":"model","cron_expression":"0 */6 * * *"}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	var result service.ScheduledTestBatchResult
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &result))
+	require.Equal(t, 1, result.Updated)
+	require.Zero(t, result.Created)
+	require.Equal(t, int64(7), repo.saved.ID)
+	require.Equal(t, "0 */6 * * *", repo.saved.CronExpression)
+}
+
+type scheduledHandlerResultRepo struct {
+	service.ScheduledTestResultRepository
+	filter service.ScheduledTestLogFilter
+}
+
+func (r *scheduledHandlerResultRepo) ListLogs(_ context.Context, filter service.ScheduledTestLogFilter) ([]*service.ScheduledTestLogItem, int64, error) {
+	r.filter = filter
+	return nil, 0, nil
+}
+
+func TestScheduledTestHandlerListLogsRejectsInvalidFilters(t *testing.T) {
+	for _, query := range []string{
+		"status=bogus", "test_type=bogus", "fingerprint_status=bogus",
+		"account_id=0", "account_id=-1", "account_id=abc",
+		"start_time=yesterday", "end_time=tomorrow",
+	} {
+		t.Run(query, func(t *testing.T) {
+			h := NewScheduledTestHandler(service.NewScheduledTestService(nil, nil), nil)
+			router := gin.New()
+			router.GET("/results", h.ListLogs)
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/results?"+query, nil))
+			require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+		})
+	}
+}
+
+func TestScheduledTestHandlerListLogsCapsPageSizeAndReturnsEmptyArray(t *testing.T) {
+	repo := &scheduledHandlerResultRepo{}
+	h := NewScheduledTestHandler(service.NewScheduledTestService(nil, repo), nil)
+	router := gin.New()
+	router.GET("/results", h.ListLogs)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet,
+		"/results?page_size=1000&status=abnormal&account_id=9&start_time=2026-11-01T00:00:00Z", nil))
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	var result struct {
+		Items    []service.ScheduledTestLogItem `json:"items"`
+		Total    int64                          `json:"total"`
+		Page     int                            `json:"page"`
+		PageSize int                            `json:"page_size"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &result))
+	require.Equal(t, 200, result.PageSize)
+	require.Equal(t, 1, result.Page)
+	require.NotNil(t, result.Items)
+	require.Empty(t, result.Items)
+	require.Equal(t, 200, repo.filter.PageSize)
+	require.Equal(t, "abnormal", repo.filter.Status)
+	require.Equal(t, int64(9), repo.filter.AccountID)
+	require.Equal(t, "2026-11-01T00:00:00Z", repo.filter.Start.Format("2006-01-02T15:04:05Z07:00"))
 }
