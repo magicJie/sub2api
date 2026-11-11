@@ -198,21 +198,19 @@ cd backend && go build ./... && go test -tags=unit ./...
 
 ## 链式代理（fork）
 
-代理支持前置代理（链式，最多 5 跳）与 ss / vmess / vless（含 Reality）/ trojan 加密协议，由进程内嵌的 Xray-core 承载：
+代理支持前置组与 ss / vmess / vless（含 Reality）/ trojan / anytls 加密协议，由进程内嵌的 mihomo outbound adapter 承载；单条内部链最多 5 跳：
 
-- 逻辑：`backend/internal/pkg/proxychain/`（Xray 配置、本地 SOCKS5 入口、分享链接解析）、`service/proxy_chain.go`、`handler/admin/proxy_chain_*.go`、`handler/dto/proxy_chain.go`、`repository/proxy_chain_repo.go`、`server/routes/proxy_chain.go`。
-- 与 Kiro 不同，这里**改了 ent schema 并新增迁移** `247_proxy_chain.sql`（`proxies.upstream_mode / upstream_proxy_id / options`）。上游若占用同号迁移，需要把本迁移改名为更大的编号（文件名排序执行，内容幂等）。
-- `Proxy.URL()` 在需要链路时返回本地 `socks5h://127.0.0.1:<port>` 入口；链路不可用时返回无法拨通的地址（fail-closed，绝不直连）。
-- 上游文件挂钩：`git grep -n '链式代理（fork）' -- backend`（`service/proxy.go`、`admin_proxy.go`、`admin_service.go`、`wire.go`，`repository/proxy_repo.go`，`handler/admin/{proxy_handler,proxy_data,account_data}.go`，`handler/{handler,wire}.go`，`dto/{types,mappers}.go`，`routes/admin.go`）。
-- Xray 版本固定在 v1.260206.0：更新的版本会把 `refraction-networking/utls` 升到预发布版，影响上游 TLS 指纹功能。
-
-- **mihomo 首跳组（方案 A）**：`github.com/metacubex/mihomo v1.19.33` 只负责链的第一跳，后续跳仍由 Xray 的 `sockopt.dialerProxy` 承载；AnyTLS 等机场协议从订阅加载。`config.Parse` 的 linkname 依赖要求 blank import `hub/executor`，不能删。
-- 迁移 **`249_proxy_hop_groups.sql`**（幂等）新增 `proxy_hop_groups` 表及 `proxies.upstream_hop_group_id`，Ent schema / 生成代码同步；`upstream_mode=hop_group` 引用组。手动成员必须是现有直连代理；组不能再有前置，链仍最多 5 跳（首跳组计 1 跳）。
-- 运行时：`pkg/mihomohop/` 进程内唯一配置，HTTP proxy-provider + fallback / url-test 组；每组通过复用 `proxychain/socks_bridge.go` 的随机认证回环 SOCKS5 入口成为 Xray 的第 0 跳。空组设 `empty-fallback=REJECT`，拨号前拒绝无健康节点，绝不走 DIRECT。配置变更关闭旧桥与旧连接，快照刷新继续通过 `Retain` 回收旧 Xray 链；组内健康切换/订阅节点更新不重建 Xray 链。
-- 新逻辑在 `service/proxy_hop_group*.go`、`repository/proxy_hop_groups_repo.go`、`handler/admin/proxy_hop_groups_handler.go` 与 `frontend/src/proxyHopGroups/`；`service/proxy_chain.go` / fork 路由与 DTO 承接挂钩，`repository/wire.go` 注册仓储，`service/wire.go` 注入仓储，`wire_gen.go` 重新生成。管理入口在代理页“首跳组”，API 为 `/api/v1/admin/proxy-hop-groups`。默认前置设置新增 `proxy_chain_default_upstream_hop_group_id`，与原默认代理设置原子互斥。
-- 组合根在 `cmd/server/proxy_hop_groups_wire.go` 将 `mihomohop.Default()` 注入 `pkg/hopgroup.Runtime`；service/DTO 只依赖无内核初始化副作用的契约。不要在 `service` 包重新 import mihomo：这会让所有业务调用方和单测提前装入 mihomo 的全局状态与后台任务。
-- 订阅 URL 视为凭据：Ent / service 模型不序列化原文，管理 DTO 只返回 `[REDACTED]` 与数量；更新省略 URL 列表表示保留。`service/audit_log.go` 追加敏感字段挂钩；mihomo 日志只转为不含 payload 的 slog Debug 事件，私有临时缓存目录权限 0700。原生 provider HTTP 客户端不读取环境代理，因此按 `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` 为订阅抓取生成显式 HTTP(S)/SOCKS 出站，不改变业务链路出口。
-- 代理导出只带首跳组名称，不导出组配置或订阅凭据；导入前需在目标实例手动建立同名首跳组，找不到时校验失败（不降级直连）。跨实例的默认首跳组也按同样规则恢复引用。
+- 逻辑：`backend/internal/pkg/proxychain/`（协议参数映射、传输、本地认证 SOCKS5 入口、分享链接解析）、`service/proxy_chain.go`、`handler/admin/proxy_chain_*.go`、`handler/dto/proxy_chain.go`、`repository/proxy_chain_repo.go`、`server/routes/proxy_chain.go`。
+- mihomo 固定 `v1.19.34`。应用直接组合 outbound／transport，不启动 mihomo 全局配置、TUN、DNS、订阅或控制服务；现有外部 AIO 继续管理机场订阅和前置 listener。主应用的 `refraction-networking/utls` 与 mihomo 的 `metacubex/utls` 是独立模块。
+- AnyTLS 的终结错误发布使用 `backend/third_party/mihomo/` 中的最小同步修复组件；保留上游帧、复用与默认行为，TLS／padding／pipe 等继续复用固定依赖。来源、差异和升级核对步骤见该目录的 `README.md`，GPL-3.0 文本随组件保留。
+- `Proxy.URL()` 在加密协议或有前置组时返回本地 `socks5h://127.0.0.1:<port>` 入口；同一链配置返回稳定 URL，以复用上层连接池。链路不可用时返回无法拨通的地址，保持 fail-closed。
+- 前置组解析仍由 sub2api 负责；应用将“当前端点 → 代理”组合为出站。账号绑定、池策略、静态 IP 去重和计数保持原行为。配置改变后 `Retain` 关闭旧链及连接，使后续拨号使用新配置。
+- AnyTLS 的密码沿用 `password`，`options` 接受 `sni`、逗号分隔的 `alpn`、`fingerprint`、字符串布尔 `skip_cert_verify`，以及整数秒字符串 `idle_session_check_interval`／`idle_session_timeout` 和整数串 `min_idle_session`。默认验证证书，跳过验证需显式设置；AnyTLS 固定使用 TLS。
+- 管理端支持创建、编辑、`anytls://` 分享链接和批量链接导入；数据导入／导出沿用既有协议及 `options` 字段，无新增数据库迁移。
+- TCP／WS／gRPC／HTTP Upgrade／XHTTP 及既有 TLS／Reality 参数由 mihomo adapter 或其传输组件承载。非空 `spider_x` 和 mihomo 无法表示的 Xray 专属指纹别名明确报错；常用指纹保留。AnyTLS 协议流不支持 TCP 半关闭，依赖 EOF 才响应的目标应选择支持半关闭的协议。
+- 迁移 `247_proxy_chain.sql` 与 `257_proxy_upstream_groups.sql` 记录现有链式代理及前置组结构。旧内嵌首跳组已由外部 AIO 和当前前置组替代，应用不恢复旧首跳组或 Xray 回退路径。
+- 聚焦验证：`go test -race ./internal/pkg/proxychain -count=1`，使用本地合成协议服务验证认证、链路、复用、配置切换和流式连接。
+- mihomo 使用 GPL-3.0；对外分发内嵌该依赖的合并产物前，需要核对完整对应源码、许可与告知义务。仓库原有许可证文件保留。
 
 ## 代理池（fork）
 

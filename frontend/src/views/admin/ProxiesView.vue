@@ -486,6 +486,7 @@
             v-model="createForm.protocol"
             :aria-label="t('admin.proxies.protocol')"
             :options="protocolSelectOptions"
+            @update:model-value="createForm.options = {}"
             @change="createForm.options = {}"
           />
         </div>
@@ -780,7 +781,7 @@
             v-model="editForm.protocol"
             :aria-label="t('admin.proxies.protocol')"
             :options="protocolSelectOptions"
-            @change="editForm.options = {}"
+            @update:model-value="handleEditProtocolChange"
           />
         </div>
         <div class="grid grid-cols-2 gap-4">
@@ -1571,7 +1572,8 @@ const protocolOptions = computed(() => [
   { value: 'ss', label: 'Shadowsocks' },
   { value: 'vmess', label: 'VMess' },
   { value: 'vless', label: 'VLESS' },
-  { value: 'trojan', label: 'Trojan' }
+  { value: 'trojan', label: 'Trojan' },
+  { value: 'anytls', label: 'AnyTLS' }
 ])
 
 const statusOptions = computed(() => [
@@ -1590,7 +1592,8 @@ const protocolSelectOptions = computed(() => [
   { value: 'ss', label: t('admin.proxies.protocols.ss') },
   { value: 'vmess', label: t('admin.proxies.protocols.vmess') },
   { value: 'vless', label: t('admin.proxies.protocols.vless') },
-  { value: 'trojan', label: t('admin.proxies.protocols.trojan') }
+  { value: 'trojan', label: t('admin.proxies.protocols.trojan') },
+  { value: 'anytls', label: t('admin.proxies.protocols.anytls') }
 ])
 
 // 前置组（fork）：前置只有直连或前置组
@@ -1605,7 +1608,7 @@ const protocolBadgeClass = (protocol: string) => {
   return 'badge-gray'
 }
 
-// vmess/vless 的密钥字段是 UUID；ss/trojan 为密码(必填)
+// vmess/vless 的密钥字段是 UUID；ss/trojan/anytls 为密码(必填)
 const secretLabel = (protocol: string) => {
   if (usesUuidSecret(protocol)) return 'UUID'
   if (isEncryptedProtocol(protocol)) return t('admin.proxies.secretPassword')
@@ -2110,6 +2113,17 @@ const closeEditModal = () => {
   editPasswordVisible.value = false
   editPasswordDirty.value = false
 }
+const handleEditProtocolChange = (nextProtocol: string | number | boolean | null) => {
+  if (typeof nextProtocol !== 'string') return
+  if (
+    editingProxy.value &&
+    !editPasswordDirty.value &&
+    usesUuidSecret(editingProxy.value.protocol) !== usesUuidSecret(nextProtocol)
+  ) {
+    editForm.password = ''
+  }
+  editForm.options = {}
+}
 
 const handleUpdateProxy = async () => {
   if (!editingProxy.value) return
@@ -2126,12 +2140,15 @@ const handleUpdateProxy = async () => {
     return
   }
   const editOptions = buildProxyOptions(editForm.protocol, editForm.options)
+  const canKeepExistingSecret =
+    (Boolean(editingProxy.value.password) || isEncryptedProtocol(editingProxy.value.protocol)) &&
+    usesUuidSecret(editingProxy.value.protocol) === usesUuidSecret(editForm.protocol)
   // 未修改密码时沿用已保存的密钥，交由后端校验
   const editSecretError = validateProxySecret(
     editForm.protocol,
     editForm.password,
     editOptions,
-    !editPasswordDirty.value
+    !editPasswordDirty.value && canKeepExistingSecret
   )
   if (editSecretError) {
     appStore.showError(t(editSecretError))

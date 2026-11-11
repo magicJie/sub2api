@@ -13,37 +13,52 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xtls/xray-core/core"
-	"github.com/xtls/xray-core/infra/conf/serial"
-
-	_ "github.com/xtls/xray-core/app/proxyman/inbound"
-	_ "github.com/xtls/xray-core/proxy/freedom"
+	sscore "github.com/metacubex/mihomo/transport/shadowsocks/core"
+	"github.com/metacubex/mihomo/transport/socks5"
 )
 
-// startSSServer 启动一个 Xray shadowsocks 服务端（测试用）。
-//
-// 注意：Xray 的 dialerProxy 依赖包级全局 outbound manager，最后启动的实例会覆盖它。
-// 因此测试服务端必须在 Manager 首次使用之前启动。
+// startSSServer serves real authenticated AEAD Shadowsocks on loopback.
 func startSSServer(t *testing.T, method, password string) (int, func()) {
 	t.Helper()
-	port := freePort(t)
-	cfgJSON := fmt.Sprintf(`{
-	  "inbounds": [{"listen":"127.0.0.1","port":%d,"protocol":"shadowsocks",
-	    "settings":{"method":%q,"password":%q,"network":"tcp"}}],
-	  "outbounds": [{"protocol":"freedom"}]
-	}`, port, method, password)
-	cfg, err := serial.LoadJSONConfig(strings.NewReader(cfgJSON))
+	// SS "none" carries the destination and payload without a cipher.
+	var cipher sscore.Cipher
+	if method != "none" {
+		var err error
+		cipher, err = sscore.PickCipher(method, nil, password)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("load ss server config: %v", err)
+		t.Fatal(err)
 	}
-	inst, err := core.New(cfg)
-	if err != nil {
-		t.Fatalf("new ss server: %v", err)
-	}
-	if err := inst.Start(); err != nil {
-		t.Fatalf("start ss server: %v", err)
-	}
-	return port, func() { _ = inst.Close() }
+	go func() {
+		for {
+			raw, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer raw.Close()
+				c := raw
+				if cipher != nil {
+					c = cipher.StreamConn(raw)
+				}
+				addr, err := socks5.ReadAddr0(c)
+				if err != nil {
+					return
+				}
+				up, err := net.Dial("tcp", addr.String())
+				if err != nil {
+					return
+				}
+				defer up.Close()
+				pipe(c, up)
+			}()
+		}
+	}()
+	return ln.Addr().(*net.TCPAddr).Port, func() { _ = ln.Close() }
 }
 
 // countingForwarder 在 target 前面加一层 TCP 转发并统计连接数，用来证明流量确实经过该跳。

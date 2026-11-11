@@ -1,10 +1,6 @@
-// Package proxychain 提供链式代理与加密代理（ss/vmess/vless/trojan）支持（fork）。
-//
-// 一条代理链由若干跳（Hop）组成，按拨号顺序排列：Hops[0] 最先被拨（通常是 ss/vmess
-// 等加密前置代理），Hops[len-1] 是落地出口。链路由进程内嵌的 Xray-core 实例完成：
-// 每跳翻译为一个 Xray outbound，后一跳通过 sockopt.dialerProxy 经前一跳拨出；
-// 实例对外只暴露一个 127.0.0.1 上带随机凭据的 SOCKS5 入口，调用方拿到的仍是
-// 普通 socks5h:// 代理 URL，现有 HTTP/WS/TLS 指纹等拨号路径无需改动。
+// Package proxychain provides reusable in-process mihomo proxy chains.
+// Hops are ordered from the first dialed proxy to the final exit. Callers use
+// an authenticated loopback socks5h URL, preserving existing HTTP/WS/TLS clients.
 package proxychain
 
 import (
@@ -27,26 +23,31 @@ const (
 	ProtocolVMess   = "vmess"
 	ProtocolVLESS   = "vless"
 	ProtocolTrojan  = "trojan"
+	ProtocolAnyTLS  = "anytls"
 )
 
 // Options 中使用的键。
 const (
-	OptMethod      = "method"       // ss 加密方式
-	OptSecurity    = "security"     // vmess 加密方式
-	OptFlow        = "flow"         // vless flow
-	OptEncryption  = "encryption"   // vless encryption
-	OptNetwork     = "network"      // 传输：tcp/ws/grpc/httpupgrade/xhttp
-	OptPath        = "path"         // ws/httpupgrade/xhttp 路径
-	OptHost        = "host"         // ws/httpupgrade/xhttp Host 头
-	OptServiceName = "service_name" // grpc serviceName
-	OptMode        = "mode"         // xhttp mode
-	OptTLS         = "tls"          // 传输层安全：none/tls/reality
-	OptSNI         = "sni"
-	OptALPN        = "alpn" // 逗号分隔
-	OptFingerprint = "fingerprint"
-	OptPublicKey   = "public_key" // reality
-	OptShortID     = "short_id"   // reality
-	OptSpiderX     = "spider_x"   // reality
+	OptMethod                   = "method"       // ss 加密方式
+	OptSecurity                 = "security"     // vmess 加密方式
+	OptFlow                     = "flow"         // vless flow
+	OptEncryption               = "encryption"   // vless encryption
+	OptNetwork                  = "network"      // 传输：tcp/ws/grpc/httpupgrade/xhttp
+	OptPath                     = "path"         // ws/httpupgrade/xhttp 路径
+	OptHost                     = "host"         // ws/httpupgrade/xhttp Host 头
+	OptServiceName              = "service_name" // grpc serviceName
+	OptMode                     = "mode"         // xhttp mode
+	OptTLS                      = "tls"          // 传输层安全：none/tls/reality
+	OptSNI                      = "sni"
+	OptALPN                     = "alpn" // 逗号分隔
+	OptFingerprint              = "fingerprint"
+	OptPublicKey                = "public_key" // reality
+	OptShortID                  = "short_id"   // reality
+	OptSpiderX                  = "spider_x"   // reality
+	OptSkipCertVerify           = "skip_cert_verify"
+	OptIdleSessionCheckInterval = "idle_session_check_interval"
+	OptIdleSessionTimeout       = "idle_session_timeout"
+	OptMinIdleSession           = "min_idle_session"
 )
 
 // Hop 是链中的一跳。
@@ -63,16 +64,16 @@ type Hop struct {
 func IsSupportedProtocol(protocol string) bool {
 	switch strings.ToLower(protocol) {
 	case ProtocolHTTP, ProtocolHTTPS, ProtocolSOCKS5, ProtocolSOCKS5H,
-		ProtocolSS, ProtocolVMess, ProtocolVLESS, ProtocolTrojan:
+		ProtocolSS, ProtocolVMess, ProtocolVLESS, ProtocolTrojan, ProtocolAnyTLS:
 		return true
 	}
 	return false
 }
 
-// IsXrayOnlyProtocol 报告协议是否只能经 Xray 承载（无法直接作为 http/socks 代理 URL 使用）。
-func IsXrayOnlyProtocol(protocol string) bool {
+// IsEngineProtocol reports protocols requiring an embedded outbound adapter.
+func IsEngineProtocol(protocol string) bool {
 	switch strings.ToLower(protocol) {
-	case ProtocolSS, ProtocolVMess, ProtocolVLESS, ProtocolTrojan:
+	case ProtocolSS, ProtocolVMess, ProtocolVLESS, ProtocolTrojan, ProtocolAnyTLS:
 		return true
 	}
 	return false
@@ -91,6 +92,7 @@ var allowedOptionKeys = map[string][]string{
 	ProtocolVMess:  {OptSecurity},
 	ProtocolVLESS:  {OptFlow, OptEncryption},
 	ProtocolTrojan: {},
+	ProtocolAnyTLS: {OptSNI, OptALPN, OptFingerprint, OptSkipCertVerify, OptIdleSessionCheckInterval, OptIdleSessionTimeout, OptMinIdleSession},
 }
 
 var transportOptionKeys = []string{
@@ -120,24 +122,12 @@ func NormalizeOptions(protocol string, opts map[string]string) map[string]string
 	return out
 }
 
-// Validate 校验单跳的基础字段与协议参数（通过构建 Xray outbound 做最终校验）。
+// Validate checks boundary fields and constructs then closes an outbound adapter.
 func (h Hop) Validate() error {
-	if !IsSupportedProtocol(h.Protocol) {
-		return fmt.Errorf("unsupported proxy protocol %q", h.Protocol)
+	adapter, err := buildAdapter(h, "validate", nil)
+	if err == nil {
+		_ = adapter.Close()
 	}
-	if strings.TrimSpace(h.Host) == "" {
-		return fmt.Errorf("proxy host is required")
-	}
-	if h.Port <= 0 || h.Port > 65535 {
-		return fmt.Errorf("proxy port is invalid")
-	}
-	if IsXrayOnlyProtocol(h.Protocol) && strings.TrimSpace(h.Password) == "" {
-		return fmt.Errorf("%s proxy requires password/uuid", h.Protocol)
-	}
-	if strings.EqualFold(h.Protocol, ProtocolSS) && strings.TrimSpace(h.Options[OptMethod]) == "" {
-		return fmt.Errorf("ss proxy requires method")
-	}
-	_, err := buildOutbound(h, "validate", 0)
 	return err
 }
 

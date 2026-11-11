@@ -67,8 +67,7 @@ func (m *Manager) handleConn(conn net.Conn) {
 		return
 	}
 
-	// core.Dial 异步派发：上下文贯穿整个连接生命周期，连接结束时才取消。
-	// 链路是否打通要到首次读写才知道，失败时客户端看到的是连接被关闭（EOF）。
+	// Keep the context alive until the stream closes; setup has a separate timeout.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	upstream, err := m.dial(ctx, exitTag, host, port)
@@ -78,6 +77,7 @@ func (m *Manager) handleConn(conn net.Conn) {
 		return
 	}
 	defer func() { _ = upstream.Close() }()
+	defer m.untrackConn(user, upstream)
 	if err := writeReply(conn, socksRepSucceeded); err != nil {
 		return
 	}
@@ -209,7 +209,7 @@ func writeReply(conn net.Conn, rep byte) error {
 }
 
 // pipe 双向转发直到两个方向都结束。一侧 EOF 时尽量半关闭对端写方向；
-// 对端不支持半关闭（如 Xray 的连接）时保持连接，由另一方向结束或 Xray 的 uplinkOnly/downlinkOnly 超时收尾，
+// 对端无半关闭接口时保持连接，等待另一方向结束或 halfCloseGrace 到期，
 // 避免客户端 shutdown(SHUT_WR) 后响应被截断。
 func pipe(a, b net.Conn) {
 	done := make(chan struct{}, 2)

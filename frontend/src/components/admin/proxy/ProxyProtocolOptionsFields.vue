@@ -1,5 +1,5 @@
 <template>
-  <!-- 加密协议参数（ss/vmess/vless/trojan），按协议/传输/TLS 模式条件展示 -->
+  <!-- 加密协议参数（ss/vmess/vless/trojan/anytls），按协议/传输/TLS 模式条件展示 -->
   <fieldset
     v-if="isEncryptedProtocol(protocol)"
     class="space-y-4 rounded-lg border border-gray-200 p-4 dark:border-dark-600"
@@ -21,7 +21,110 @@
       />
     </div>
 
-    <template v-if="hasTransport(protocol)">
+    <!-- anytls（固定 TLS，不暴露 network/flow/reality） -->
+    <template v-else-if="protocol === 'anytls'">
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label :for="fid('sni')" class="input-label">{{ t('admin.proxies.opt.sni') }}</label>
+          <input
+            :id="fid('sni')"
+            :value="effective.sni"
+            type="text"
+            class="input"
+            :placeholder="t('admin.proxies.opt.optional')"
+            @input="onInput('sni', $event)"
+          />
+        </div>
+        <div>
+          <label :for="fid('alpn')" class="input-label">{{ t('admin.proxies.opt.alpn') }}</label>
+          <input
+            :id="fid('alpn')"
+            :value="effective.alpn"
+            type="text"
+            class="input"
+            placeholder="h2,http/1.1"
+            @input="onInput('alpn', $event)"
+          />
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label :for="fid('fingerprint')" class="input-label">{{ t('admin.proxies.opt.fingerprint') }}</label>
+          <Select
+            :id="fid('fingerprint')"
+            :aria-label="t('admin.proxies.opt.fingerprint')"
+            :model-value="effective.fingerprint"
+            :options="fingerprintOptions"
+            @update:model-value="(v) => setField('fingerprint', v)"
+          />
+        </div>
+        <div>
+          <label :for="fid('skip_cert_verify')" class="input-label">{{ t('admin.proxies.opt.certVerify') }}</label>
+          <Select
+            :id="fid('skip_cert_verify')"
+            :aria-label="t('admin.proxies.opt.certVerify')"
+            :model-value="effective.skip_cert_verify"
+            :options="certVerifyOptions"
+            @update:model-value="(v) => setField('skip_cert_verify', v)"
+          />
+        </div>
+      </div>
+      <p
+        v-if="effective.skip_cert_verify === 'true'"
+        class="text-xs text-amber-600 dark:text-amber-400"
+      >
+        {{ t('admin.proxies.opt.skipCertVerifyWarning') }}
+      </p>
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div>
+          <label :for="fid('idle_session_check_interval')" class="input-label">
+            {{ t('admin.proxies.opt.idleSessionCheckInterval') }}
+          </label>
+          <input
+            :id="fid('idle_session_check_interval')"
+            :value="effective.idle_session_check_interval"
+            type="number"
+            min="0"
+            step="1"
+            class="input"
+            :placeholder="t('admin.proxies.opt.optional')"
+            @input="onInput('idle_session_check_interval', $event)"
+          />
+        </div>
+        <div>
+          <label :for="fid('idle_session_timeout')" class="input-label">
+            {{ t('admin.proxies.opt.idleSessionTimeout') }}
+          </label>
+          <input
+            :id="fid('idle_session_timeout')"
+            :value="effective.idle_session_timeout"
+            type="number"
+            min="0"
+            step="1"
+            class="input"
+            :placeholder="t('admin.proxies.opt.optional')"
+            @input="onInput('idle_session_timeout', $event)"
+          />
+        </div>
+        <div>
+          <label :for="fid('min_idle_session')" class="input-label">
+            {{ t('admin.proxies.opt.minIdleSession') }}
+          </label>
+          <input
+            :id="fid('min_idle_session')"
+            :value="effective.min_idle_session"
+            type="number"
+            min="0"
+            step="1"
+            class="input"
+            :placeholder="t('admin.proxies.opt.optional')"
+            @input="onInput('min_idle_session', $event)"
+          />
+        </div>
+      </div>
+    </template>
+
+    <template v-else-if="hasTransport(protocol)">
       <!-- vmess -->
       <div v-if="protocol === 'vmess'">
         <label :for="fid('security')" class="input-label">{{ t('admin.proxies.opt.security') }}</label>
@@ -174,29 +277,30 @@
             @input="onInput('public_key', $event)"
           />
         </div>
-        <div class="grid grid-cols-2 gap-4">
-          <div>
-            <label :for="fid('short_id')" class="input-label">{{ t('admin.proxies.opt.shortId') }}</label>
-            <input
-              :id="fid('short_id')"
-              :value="effective.short_id"
-              type="text"
-              class="input font-mono"
-              :placeholder="t('admin.proxies.opt.optional')"
-              @input="onInput('short_id', $event)"
-            />
-          </div>
-          <div>
-            <label :for="fid('spider_x')" class="input-label">{{ t('admin.proxies.opt.spiderX') }}</label>
-            <input
-              :id="fid('spider_x')"
-              :value="effective.spider_x"
-              type="text"
-              class="input"
-              :placeholder="t('admin.proxies.opt.optional')"
-              @input="onInput('spider_x', $event)"
-            />
-          </div>
+        <div>
+          <label :for="fid('short_id')" class="input-label">{{ t('admin.proxies.opt.shortId') }}</label>
+          <input
+            :id="fid('short_id')"
+            :value="effective.short_id"
+            type="text"
+            class="input font-mono"
+            :placeholder="t('admin.proxies.opt.optional')"
+            @input="onInput('short_id', $event)"
+          />
+        </div>
+        <div
+          v-if="effective.spider_x"
+          class="flex items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/30 dark:text-amber-300"
+        >
+          <span>{{ t('admin.proxies.opt.spiderXUnsupportedHint', { value: effective.spider_x }) }}</span>
+          <button
+            :id="fid('clear-spider-x')"
+            type="button"
+            class="btn btn-secondary btn-sm shrink-0"
+            @click="setField('spider_x', '')"
+          >
+            {{ t('admin.proxies.opt.clearUnsupportedSpiderX') }}
+          </button>
         </div>
       </template>
     </template>
@@ -259,10 +363,20 @@ const fingerprintOptions = computed(() => {
   return [{ value: '', label: t('admin.proxies.opt.default') }, ...opts]
 })
 
-const setField = (key: string, value: unknown) => {
-  emit('update:modelValue', { ...props.modelValue, [key]: value == null ? '' : String(value) })
-}
+const certVerifyOptions = computed(() => [
+  { value: 'false', label: t('admin.proxies.opt.verifyCertDefault') },
+  { value: 'true', label: t('admin.proxies.opt.skipCertVerifyDanger') }
+])
 
+const setField = (key: string, value: unknown) => {
+  emit(
+    'update:modelValue',
+    resolveProxyOptions(props.protocol, {
+      ...props.modelValue,
+      [key]: value == null ? '' : String(value)
+    })
+  )
+}
 const onInput = (key: string, event: Event) => {
   setField(key, (event.target as HTMLInputElement).value)
 }

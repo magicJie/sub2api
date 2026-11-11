@@ -64,7 +64,7 @@ func (Proxy) Fields() []ent.Field {
 		field.Int("expiry_warn_days").
 			Default(7).
 			Comment("Days before expiry to flag as expiring-soon (per proxy)."),
-		// 链式代理（fork）：前置组与 Xray 协议参数，见 internal/pkg/proxychain 与迁移 257。
+		// 链式代理（fork）：前置组与 mihomo 协议参数，见 internal/pkg/proxychain 与迁移 257。
 		// upstream_proxy_id / upstream_hop_group_id / role 列保留在库中供回滚，应用不再读写。
 		field.String("upstream_mode").
 			MaxLen(20).Default("direct").
@@ -74,7 +74,7 @@ func (Proxy) Fields() []ent.Field {
 			Comment("链式代理（fork）：upstream group id when upstream_mode=group."),
 		field.JSON("options", map[string]string{}).
 			Optional().
-			Comment("Protocol/transport options for ss/vmess/vless/trojan (cipher, network, security, sni ...)."),
+			Comment("Protocol/transport options for ss/vmess/vless/trojan/anytls (cipher, network, security, sni ...)."),
 		// 代理池（fork）：所属代理池分组，见 internal/service/proxy_pool.go。
 		field.Int64("pool_id").
 			Optional().Nillable().

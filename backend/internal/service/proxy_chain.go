@@ -4,7 +4,7 @@ package service
 //
 // Proxy.URL() 没有 ctx/仓储依赖，且被 60+ 处调用；为了不改这些调用点，这里维护一个
 // 进程级的代理快照（id -> Proxy），由 ProxyChainService 定期刷新、并在管理端增删改代理或前置组后立即刷新。
-// 需要链路的代理（前置组，或协议是 ss/vmess/vless/trojan）的 URL() 返回本地 Xray 入口的 socks5h:// 地址；
+// 需要链路的代理（前置组，或协议是 ss/vmess/vless/trojan/anytls）的 URL() 返回本地 mihomo 入口的 socks5h:// 地址；
 // 普通直连 http/socks 代理的 URL() 保持不变。
 //
 // 前置只有两种：直连，或前置组。前置组由 ProxyUpstreamRuntime 选出当前端点，链路为「端点 → 落地」。
@@ -106,8 +106,8 @@ func (c resolvedProxyChain) hops(p *Proxy) []proxychain.Hop {
 	return []proxychain.Hop{c.Upstream.chainHop(), p.chainHop()}
 }
 
-func (c resolvedProxyChain) needsXray(p *Proxy) bool {
-	return c.Upstream != nil || proxychain.IsXrayOnlyProtocol(p.Protocol)
+func (c resolvedProxyChain) needsEngine(p *Proxy) bool {
+	return c.Upstream != nil || proxychain.IsEngineProtocol(p.Protocol)
 }
 
 // resolveProxyChain 解析 p 的前置：前置组模式下由运行时按 rendezvous hash 选槽位当前端点。
@@ -147,7 +147,7 @@ func proxyChainURL(p *Proxy) (string, bool) {
 		self = &fresh
 	}
 	mode := NormalizeUpstreamMode(self.UpstreamMode)
-	if mode == UpstreamModeDirect && !proxychain.IsXrayOnlyProtocol(self.Protocol) {
+	if mode == UpstreamModeDirect && !proxychain.IsEngineProtocol(self.Protocol) {
 		if self != p {
 			// 快照里是直连普通代理：用快照值构造 URL，避免沿用缓存里过期的链配置。
 			return self.directURL(), true
@@ -167,7 +167,7 @@ func proxyChainURL(p *Proxy) (string, bool) {
 	}
 	p = self
 	chain, err := resolveProxyChain(p, activeUpstreamRuntime())
-	if err == nil && !chain.needsXray(p) {
+	if err == nil && !chain.needsEngine(p) {
 		return p.directURL(), true
 	}
 	if err == nil {
@@ -370,8 +370,8 @@ func validateProxyChainConfig(ctx context.Context, p *Proxy) error {
 		return infraerrors.BadRequest("PROXY_UPSTREAM_REQUIRED", "upstream group required when upstream_mode=group")
 	}
 	p.Options = proxychain.NormalizeOptions(p.Protocol, p.Options)
-	// 基础字段（协议白名单、host、port）由 handler binding 校验；这里只校验需要 Xray 承载的协议参数。
-	if proxychain.IsXrayOnlyProtocol(p.Protocol) {
+	// 基础字段（协议白名单、host、port）由 handler binding 校验；这里只校验需要 mihomo 承载的协议参数。
+	if proxychain.IsEngineProtocol(p.Protocol) {
 		p.Username = ""
 		if err := p.chainHop().Validate(); err != nil {
 			return infraerrors.BadRequest("PROXY_CONFIG_INVALID", err.Error())
@@ -430,13 +430,13 @@ func (s *ProxyChainService) Refresh(ctx context.Context) error {
 	return nil
 }
 
-// activeChainHops 收集当前所有需要 Xray 的链，供 Manager 回收过期链。
+// activeChainHops 收集当前所有需要 mihomo 的链，供 Manager 回收过期链。
 func activeChainHops(byID map[int64]Proxy, rt *ProxyUpstreamRuntime) [][]proxychain.Hop {
 	var out [][]proxychain.Hop
 	for id := range byID {
 		p := byID[id]
 		chain, err := resolveProxyChain(&p, rt)
-		if err != nil || !chain.needsXray(&p) {
+		if err != nil || !chain.needsEngine(&p) {
 			continue
 		}
 		out = append(out, chain.hops(&p))

@@ -676,7 +676,7 @@ func validateDataProxy(item DataProxy) error {
 	}
 	switch item.Protocol {
 	case "http", "https", "socks5", "socks5h":
-	case "ss", "vmess", "vless", "trojan": // 链式代理（fork）
+	case "ss", "vmess", "vless", "trojan", "anytls": // 链式代理（fork）
 	default:
 		return fmt.Errorf("proxy protocol is invalid: %s", item.Protocol)
 	}

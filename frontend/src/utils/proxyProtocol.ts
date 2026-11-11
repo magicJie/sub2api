@@ -1,9 +1,9 @@
-// 代理协议(含加密协议 ss/vmess/vless/trojan)的表单字段规则。
+// 代理协议(含加密协议 ss/vmess/vless/trojan/anytls)的表单字段规则。
 // 纯函数,无 i18n/组件依赖:ProxiesView 与 ProxyProtocolOptionsFields 共用,便于单测。
 import type { ProxyProtocol } from '@/types'
 
 export const PLAIN_PROTOCOLS = ['http', 'https', 'socks5', 'socks5h'] as const
-export const ENCRYPTED_PROTOCOLS = ['ss', 'vmess', 'vless', 'trojan'] as const
+export const ENCRYPTED_PROTOCOLS = ['ss', 'vmess', 'vless', 'trojan', 'anytls'] as const
 export const ALL_PROXY_PROTOCOLS: ProxyProtocol[] = [...PLAIN_PROTOCOLS, ...ENCRYPTED_PROTOCOLS]
 
 export const isEncryptedProtocol = (protocol: string): boolean =>
@@ -32,10 +32,15 @@ export const NETWORKS = ['tcp', 'ws', 'grpc', 'httpupgrade', 'xhttp']
 export const XHTTP_MODES = ['auto', 'packet-up', 'stream-up', 'stream-one']
 export const TLS_MODES = ['none', 'tls', 'reality']
 export const FINGERPRINTS = ['chrome', 'firefox', 'safari', 'edge', 'ios', 'android', 'random', 'randomized']
+export const ANYTLS_SESSION_INT_KEYS = [
+  'idle_session_check_interval',
+  'idle_session_timeout',
+  'min_idle_session'
+] as const
 
-export const SHARE_LINK_PREFIXES = ['ss://', 'vmess://', 'vless://', 'trojan://']
+export const SHARE_LINK_PREFIXES = ['ss://', 'vmess://', 'vless://', 'trojan://', 'anytls://']
 
-/** 是否为加密协议分享链接(ss:// vmess:// vless:// trojan://),大小写不敏感。 */
+/** 是否为加密协议分享链接(ss:// vmess:// vless:// trojan:// anytls://),大小写不敏感。 */
 export const isShareLink = (line: string): boolean => {
   const lower = line.trim().toLowerCase()
   return SHARE_LINK_PREFIXES.some((prefix) => lower.startsWith(prefix))
@@ -52,6 +57,17 @@ export function resolveProxyOptions(protocol: string, raw?: ProxyOptions | null)
   const out: ProxyOptions = {}
   if (protocol === 'ss') {
     out.method = pick('method', '')
+    return out
+  }
+  if (protocol === 'anytls') {
+    out.sni = pick('sni', '')
+    out.alpn = pick('alpn', '')
+    out.fingerprint = pick('fingerprint', '')
+    const skipCertVerify = pick('skip_cert_verify', '').trim().toLowerCase()
+    out.skip_cert_verify = skipCertVerify === 'true' ? 'true' : 'false'
+    out.idle_session_check_interval = pick('idle_session_check_interval', '')
+    out.idle_session_timeout = pick('idle_session_timeout', '')
+    out.min_idle_session = pick('min_idle_session', '')
     return out
   }
   if (!hasTransport(protocol)) return out
@@ -80,7 +96,10 @@ export function resolveProxyOptions(protocol: string, raw?: ProxyOptions | null)
   if (out.tls === 'reality') {
     out.public_key = pick('public_key', '')
     out.short_id = pick('short_id', '')
-    out.spider_x = pick('spider_x', '')
+    const legacySpiderX = pick('spider_x', '').trim()
+    if (legacySpiderX) {
+      out.spider_x = legacySpiderX
+    }
   }
   return out
 }
@@ -111,6 +130,15 @@ export function validateProxySecret(
     return usesUuidSecret(protocol) ? 'admin.proxies.uuidRequired' : 'admin.proxies.secretRequired'
   }
   if (protocol === 'ss' && !options.method) return 'admin.proxies.ssMethodRequired'
+  if (protocol === 'anytls') {
+    for (const key of ANYTLS_SESSION_INT_KEYS) {
+      const val = options[key]?.trim()
+      if (val && !/^\d+$/.test(val)) {
+        return 'admin.proxies.anytlsSessionIntInvalid'
+      }
+    }
+  }
   if (options.tls === 'reality' && !options.public_key) return 'admin.proxies.realityPublicKeyRequired'
+  if (options.spider_x?.trim()) return 'admin.proxies.realitySpiderXUnsupported'
   return null
 }

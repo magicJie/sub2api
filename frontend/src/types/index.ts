@@ -420,7 +420,7 @@ export interface ProxyNode {
   id: number
   subscription_id: number
   name: string
-  type: 'ss' | 'ssr' | 'vmess' | 'vless' | 'trojan' | 'hysteria' | 'hysteria2'
+  type: 'ss' | 'ssr' | 'vmess' | 'vless' | 'trojan' | 'anytls' | 'hysteria' | 'hysteria2'
   server: string
   port: number
   config: Record<string, unknown> // JSON configuration specific to proxy type
@@ -959,6 +959,7 @@ export type ProxyProtocol =
   | 'vmess'
   | 'vless'
   | 'trojan'
+  | 'anytls'
 /** 前置组（fork）：落地代理的前置只有直连，或经 upstream_group_id 指定的前置组 */
 export type ProxyUpstreamMode = 'direct' | 'group'
 
@@ -1008,7 +1009,7 @@ export interface Proxy {
   expiry_warn_days: number
   upstream_mode?: ProxyUpstreamMode
   upstream_group_id?: number | null // 前置组（fork）
-  /** 加密协议参数（ss/vmess/vless/trojan），可能缺失或为 null */
+  /** 加密协议参数（ss/vmess/vless/trojan/anytls），可能缺失或为 null */
   options?: Record<string, string> | null
   /** 当前实际前置端点（直连时为空） */
   chain?: ProxyChainHop[]

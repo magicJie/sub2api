@@ -29,7 +29,7 @@ type Proxy struct {
 	BackupProxyID  *int64
 	ExpiryWarnDays int
 
-	// 链式代理（fork）：前置组与 ss/vmess/vless/trojan 协议参数，见 proxy_chain.go。
+	// 链式代理（fork）：前置组与 ss/vmess/vless/trojan/anytls 协议参数，见 proxy_chain.go。
 	UpstreamMode    string
 	UpstreamGroupID *int64
 	Options         map[string]string

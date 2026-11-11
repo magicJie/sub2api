@@ -29,7 +29,7 @@ func (l *ParsedLink) Hop() Hop {
 // IsShareLink 报告字符串是否像受支持的分享链接。
 func IsShareLink(s string) bool {
 	s = strings.ToLower(strings.TrimSpace(s))
-	for _, p := range []string{"ss://", "vmess://", "vless://", "trojan://"} {
+	for _, p := range []string{"ss://", "vmess://", "vless://", "trojan://", "anytls://"} {
 		if strings.HasPrefix(s, p) {
 			return true
 		}
@@ -37,7 +37,7 @@ func IsShareLink(s string) bool {
 	return false
 }
 
-// ParseLink 解析 ss:// vmess:// vless:// trojan:// 分享链接，并校验结果。
+// ParseLink parses SS, VMess, VLESS, Trojan and AnyTLS share links.
 // 错误信息不包含链接原文（可能含凭据）。
 func ParseLink(raw string) (*ParsedLink, error) {
 	raw = strings.TrimSpace(raw)
@@ -56,6 +56,8 @@ func ParseLink(raw string) (*ParsedLink, error) {
 		l, err = parseVMess(raw)
 	case "vless", "trojan":
 		l, err = parseURLStyle(strings.ToLower(scheme), raw)
+	case "anytls":
+		l, err = parseAnyTLS(raw)
 	default:
 		return nil, fmt.Errorf("unsupported share link scheme %q", scheme)
 	}
@@ -229,6 +231,37 @@ func parseURLStyle(protocol, raw string) (*ParsedLink, error) {
 		Name: strings.TrimSpace(name), Protocol: protocol, Host: u.Hostname(), Port: port,
 		Password: u.User.Username(), Options: opts,
 	}, nil
+}
+
+func parseAnyTLS(raw string) (*ParsedLink, error) {
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		return nil, fmt.Errorf("invalid anytls link")
+	}
+	if _, hasPassword := u.User.Password(); hasPassword {
+		return nil, fmt.Errorf("invalid anytls link: password must be percent-encoded userinfo")
+	}
+	port, err := parsePort(u.Port())
+	if err != nil {
+		return nil, err
+	}
+	q := u.Query()
+	opts := map[string]string{
+		OptSNI:                      firstNonEmpty(q.Get("sni"), q.Get("peer")),
+		OptALPN:                     q.Get("alpn"),
+		OptFingerprint:              firstNonEmpty(q.Get("fp"), q.Get("fingerprint")),
+		OptSkipCertVerify:           firstNonEmpty(q.Get("skip_cert_verify"), q.Get("skip-cert-verify"), q.Get("insecure")),
+		OptIdleSessionCheckInterval: firstNonEmpty(q.Get("idle_session_check_interval"), q.Get("idle-session-check-interval")),
+		OptIdleSessionTimeout:       firstNonEmpty(q.Get("idle_session_timeout"), q.Get("idle-session-timeout")),
+		OptMinIdleSession:           firstNonEmpty(q.Get("min_idle_session"), q.Get("min-idle-session")),
+	}
+	if opts[OptSkipCertVerify] == "1" {
+		opts[OptSkipCertVerify] = "true"
+	}
+	if opts[OptSkipCertVerify] == "0" {
+		opts[OptSkipCertVerify] = "false"
+	}
+	return &ParsedLink{Name: strings.TrimSpace(u.Fragment), Protocol: ProtocolAnyTLS, Host: u.Hostname(), Port: port, Password: u.User.Username(), Options: opts}, nil
 }
 
 func firstNonEmpty(vals ...string) string {

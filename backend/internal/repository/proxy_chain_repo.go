@@ -15,7 +15,7 @@ import (
 // 仅在代理（更新后）涉及链路时触发，普通直连代理的更新路径保持上游行为不变。
 func enqueueProxyChainAccountChanges(ctx context.Context, client *dbent.Client, p *service.Proxy) error {
 	if service.NormalizeUpstreamMode(p.UpstreamMode) == service.UpstreamModeDirect &&
-		!proxychain.IsXrayOnlyProtocol(p.Protocol) && len(p.Options) == 0 {
+		!proxychain.IsEngineProtocol(p.Protocol) && len(p.Options) == 0 {
 		return nil
 	}
 	rows, err := client.QueryContext(ctx, `SELECT id FROM accounts WHERE proxy_id = $1 AND deleted_at IS NULL`, p.ID)

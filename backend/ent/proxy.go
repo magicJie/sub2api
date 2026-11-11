@@ -50,7 +50,7 @@ type Proxy struct {
 	UpstreamMode string `json:"upstream_mode,omitempty"`
 	// 链式代理（fork）：upstream group id when upstream_mode=group.
 	UpstreamGroupID *int64 `json:"upstream_group_id,omitempty"`
-	// Protocol/transport options for ss/vmess/vless/trojan (cipher, network, security, sni ...).
+	// Protocol/transport options for ss/vmess/vless/trojan/anytls (cipher, network, security, sni ...).
 	Options map[string]string `json:"options,omitempty"`
 	// Proxy pool id (proxy_pools, app-level checked). NULL is treated as the default pool.
 	PoolID *int64 `json:"pool_id,omitempty"`

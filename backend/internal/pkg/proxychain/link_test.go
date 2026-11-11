@@ -57,6 +57,12 @@ func TestParseLink(t *testing.T) {
 			want: ParsedLink{Name: "TJ", Protocol: "trojan", Host: "tj.example.com", Port: 443, Password: "secret",
 				Options: map[string]string{OptTLS: "tls", OptNetwork: "grpc", OptServiceName: "gun", OptSNI: "tj.example.com"}},
 		},
+		{
+			name: "anytls escaped password and TLS options",
+			link: "anytls://pa%3Ass%40word@[2001:db8::2]:443?sni=tls.example.com&alpn=h2%2Chttp%2F1.1&fp=chrome&insecure=1&idle-session-check-interval=45&idle-session-timeout=60&min-idle-session=2#HK%20AnyTLS",
+			want: ParsedLink{Name: "HK AnyTLS", Protocol: ProtocolAnyTLS, Host: "2001:db8::2", Port: 443, Password: "pa:ss@word",
+				Options: map[string]string{OptSNI: "tls.example.com", OptALPN: "h2,http/1.1", OptFingerprint: "chrome", OptSkipCertVerify: "true", OptIdleSessionCheckInterval: "45", OptIdleSessionTimeout: "60", OptMinIdleSession: "2"}},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -137,5 +143,48 @@ func TestValidateErrorRedactsSecret(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "secretpk") || strings.Contains(err.Error(), testUUID) {
 		t.Fatalf("error leaks secret: %v", err)
+	}
+}
+
+func TestAnyTLSValidation(t *testing.T) {
+	for _, options := range []map[string]string{
+		{OptSkipCertVerify: "1"},
+		{OptSkipCertVerify: "TRUE"},
+		{OptIdleSessionCheckInterval: "-1"},
+		{OptIdleSessionTimeout: "1.5"},
+		{OptIdleSessionTimeout: "9223372036854775807"},
+		{OptMinIdleSession: "-1"},
+	} {
+		h := Hop{Protocol: ProtocolAnyTLS, Host: "synthetic.invalid", Port: 443, Password: "synthetic-secret", Options: options}
+		if err := h.Validate(); err == nil {
+			t.Fatalf("accepted invalid options %v", options)
+		}
+	}
+	for _, options := range []map[string]string{nil, {OptSkipCertVerify: "false"}, {OptMinIdleSession: "0"}, {OptIdleSessionTimeout: "60"}} {
+		h := Hop{Protocol: ProtocolAnyTLS, Host: "synthetic.invalid", Port: 443, Password: "synthetic-secret", Options: options}
+		if err := h.Validate(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestAnyTLSShareLinkErrorsRedactPassword(t *testing.T) {
+	for _, link := range []string{
+		"anytls://synthetic-secret@host:invalid",
+		"anytls://synthetic-secret@host:443?skip_cert_verify=invalid",
+		"anytls://synthetic-secret@host:443?idle_session_timeout=invalid",
+		"anytls://synthetic-secret:%zz@host:443",
+	} {
+		_, err := ParseLink(link)
+		if err == nil || strings.Contains(err.Error(), "synthetic-secret") {
+			t.Fatalf("invalid or leaking error: %v", err)
+		}
+	}
+}
+
+func TestRealitySpiderXRejected(t *testing.T) {
+	_, err := ParseLink("vless://" + testUUID + "@host:443?security=reality&sni=example.com&pbk=Z84J2IelR9ch3k8VtlVhhs5ycBUlXA7wHBWcBrjqnAw&spx=%2F")
+	if err == nil || !strings.Contains(err.Error(), "spider_x") {
+		t.Fatalf("expected explicit spider_x error, got %v", err)
 	}
 }
