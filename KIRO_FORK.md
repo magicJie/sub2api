@@ -124,6 +124,12 @@ git merge upstream/main
 cd backend && go build ./... && go test -tags=unit ./...
 ```
 
+v0.2.23 集成保留 Ollama 的 OpenAI 兼容身份，并接入上游透传模型过滤、
+模型级容量冷却和 Fast／Ultrafast 策略。共享 Anthropic 缓冲读取器继续要求
+`message_stop` 与最终停止原因，同时逐帧记录上游模型与服务档位，错误路径保留部分用量及显式零用量。
+前端额度展示保留未满额向下取一位小数的规则，并支持上游的未知用量占位。
+上游新增迁移按完整文件名登记；已应用的维护线迁移保持原名与内容。
+
 建议开启 `git config rerere.enabled true`，同一冲突只需解决一次。
 
 ## Kiro 深度审查修复与回滚索引

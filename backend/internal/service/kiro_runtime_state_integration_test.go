@@ -27,7 +27,7 @@ func TestRedisKiroCooldownStoreSharesCooldownAcrossInstances(t *testing.T) {
 
 	cooldown, err := storeA.Mark429(ctx, "token-shared")
 	require.NoError(t, err)
-	require.Equal(t, time.Minute, cooldown)
+	require.Equal(t, 5*time.Second, cooldown)
 
 	wait, err := storeB.ReserveRequest(ctx, "token-shared")
 	require.Zero(t, wait)
@@ -89,7 +89,7 @@ func TestRedisKiroCooldownStoreSuspendedResetsFailCount(t *testing.T) {
 
 	cooldown, err = store.Mark429(ctx, "token-reset")
 	require.NoError(t, err)
-	require.Equal(t, time.Minute, cooldown)
+	require.Equal(t, 5*time.Second, cooldown)
 }
 
 func TestRedisKiroCooldownStoreReserveDifferentTokenIgnoresOldCooldown(t *testing.T) {

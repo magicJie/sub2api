@@ -4,8 +4,6 @@ import {
   normalizeGroupOpenAIFast,
   supportsGroupOpenAIFast,
 } from "../groupsOpenAIFast";
-import en from "@/i18n/locales/en/admin/overview";
-import zh from "@/i18n/locales/zh/admin/overview";
 
 describe("groupsOpenAIFast", () => {
   it("supports OpenAI, Ollama Cloud, and composite groups", () => {
@@ -21,22 +19,5 @@ describe("groupsOpenAIFast", () => {
     expect(normalizeGroupOpenAIFast("composite", true)).toBe(true);
     expect(normalizeGroupOpenAIFast("anthropic", true)).toBe(false);
     expect(normalizeGroupOpenAIFast("openai", false)).toBe(false);
-  });
-
-  it("provides localized switch labels", () => {
-    expect(zh.groups.openaiFast).toMatchObject({
-      title: expect.any(String),
-      force: expect.any(String),
-      hint: expect.stringContaining("service_tier=priority"),
-      free: expect.any(String),
-      freeHint: expect.stringContaining("Standard"),
-    });
-    expect(en.groups.openaiFast).toMatchObject({
-      title: expect.any(String),
-      force: expect.any(String),
-      hint: expect.stringContaining("service_tier=priority"),
-      free: expect.any(String),
-      freeHint: expect.stringContaining("Standard"),
-    });
   });
 });

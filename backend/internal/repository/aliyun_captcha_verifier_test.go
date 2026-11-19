@@ -89,5 +89,5 @@ func TestAliyunCaptchaVerifier_TransportError(t *testing.T) {
 	_, err := verifier.VerifyCaptcha(context.Background(), cred, "param")
 	require.Error(t, err)
 	var apiErr *service.AliyunCaptchaAPIError
-	require.False(t, errors.As(err, &apiErr), "transport errors must not be normalized to API errors")
+	require.False(t, errors.As(err, &apiErr), "transport errors must not be normalized to API errors: %T %v", err, err)
 }
