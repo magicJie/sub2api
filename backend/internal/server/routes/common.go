@@ -19,7 +19,7 @@ func RegisterCommonRoutes(r *gin.Engine, readyMaxWait time.Duration) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	// 就绪检查（readiness）：前置组启动首轮探测完成才 200，供 K8s readinessProbe 使用。
+	// 就绪检查（readiness）：所有启用前置组的每个槽位都选中了探测健康的当前端点才 200，供 K8s readinessProbe 使用。
 	r.GET("/ready", readyHandler(processStartedAt, readyMaxWait, time.Now, service.ProxyUpstreamStartupReadiness))
 
 	// Claude Code 遥测日志（忽略，直接返回200）
@@ -40,7 +40,9 @@ func RegisterCommonRoutes(r *gin.Engine, readyMaxWait time.Duration) {
 	})
 }
 
-// readyHandler 返回就绪检查处理器：所有启用前置组的每个槽位都探测过一轮才返回 200，否则 503 并列出未完成的槽位。
+// readyHandler 返回就绪检查处理器：每个启用槽位的当前端点已探测健康才返回 200，
+// 否则 503 并列出不可服务槽位。探测过但全挂的槽位不会让实例提前就绪，
+// 防止流量被切进「upstream group has no available slot」的 502。
 // 自 startedAt 起超过 maxWait 后无论探测状态都返回 200（AIO 全挂时不让实例永远不就绪；请求本身由槽位 fail-closed）。
 func readyHandler(startedAt time.Time, maxWait time.Duration, now func() time.Time,
 	check func() (ready, loaded bool, pending []service.UpstreamPendingSlot)) gin.HandlerFunc {

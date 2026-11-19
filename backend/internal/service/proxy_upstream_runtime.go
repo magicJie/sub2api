@@ -13,7 +13,7 @@ package service
 //
 // 运行时只影响「新连接走哪个端点」：切换后 ProxyChainService 刷新快照，旧链由 proxychain.Manager.Retain 回收。
 //
-// 启动就绪（/ready）：所有启用组的每个槽位都探测过一轮才算就绪，就绪后锁存不再回落。
+// 启动就绪（/ready）：所有启用组的每个槽位都选中了探测健康的当前端点才就绪，就绪后锁存不再回落。
 // 就绪前（启动首轮）状态未知的端点本轮含重试仍失败，直接判不可用，不等 fail_threshold；就绪后恢复正常计数。
 
 import (
@@ -105,7 +105,7 @@ type ProxyUpstreamRuntime struct {
 	now       func() time.Time
 	onChange  func() // 槽位当前端点或可用性变化时调用（刷新链路快照）
 	loaded    bool   // 已加载过一次配置
-	ready     bool   // 启动首轮探测已完成（锁存）
+	ready     bool   // 启动后所有启用槽位已可服务流量（锁存）
 
 	probing sync.Mutex // 同一时刻只跑一轮探测
 }
@@ -221,13 +221,10 @@ func (r *ProxyUpstreamRuntime) reconcileSlotLocked(g ProxyUpstreamGroup, slot Pr
 		// 首次加载：直接可用，不等 failback。
 		st.available, st.everAvailable, st.availableSince = true, true, now
 	case !st.available:
-		// 从故障恢复：当前端点稳定满 failback 时长后才重新参与选择。
-		if st.availableSince.IsZero() {
-			st.availableSince = now
-		}
-		if now.Sub(st.availableSince) >= time.Duration(g.FailbackSeconds)*time.Second {
-			st.available = true
-		}
+		// 恢复即重新参与：端点健康已按 recover_threshold 连续成功防抖，
+		// 槽位不再叠加 failback 等待——否则 aio 重启这类秒级端口中断
+		// 会把全组落地出口的不可用拉长到 failback 时长（2026-11-19 事故）。
+		st.available, st.availableSince = true, now
 	}
 	return prevCurrent != st.current || prevAvailable != st.available
 }
@@ -504,14 +501,15 @@ func (r *ProxyUpstreamRuntime) recordProbeLocked(g ProxyUpstreamGroup, e ProxyUp
 	}
 }
 
-// UpstreamPendingSlot 是启动首轮尚未探测完的槽位（/ready 展示用）。
+// UpstreamPendingSlot 是启动后尚未可服务流量的槽位（/ready 展示用）。
 type UpstreamPendingSlot struct {
 	GroupID int64 `json:"group_id"`
 	SlotID  int64 `json:"slot_id"`
 }
 
-// StartupReadiness 报告启动首轮探测是否完成：配置已加载，且所有启用组的每个槽位里启用的端点都探测过（不论结果）。
-// 没有启用的端点可探的槽位不阻塞就绪。一旦就绪即锁存，之后新增的组或槽位不会让实例回到未就绪。
+// StartupReadiness 报告本实例前置组是否可以接流量：配置已加载，且所有启用组的每个槽位
+// 都已选中一个探测为健康的当前端点。没有启用端点可探的槽位不阻塞就绪。
+// 就绪锁存：之后端点故障或新增组/槽位不会让实例回到未就绪（请求由槽位 fail-closed 兜底）。
 // loaded 为 false 表示配置还没加载成功（此时 pending 为空）。
 func (r *ProxyUpstreamRuntime) StartupReadiness() (ready, loaded bool, pending []UpstreamPendingSlot) {
 	r.mu.Lock()
@@ -520,7 +518,9 @@ func (r *ProxyUpstreamRuntime) StartupReadiness() (ready, loaded bool, pending [
 	return r.ready, r.loaded, pending
 }
 
-// startupPendingLocked 返回未探测完的槽位，全部完成时锁存 ready。
+// startupPendingLocked 返回尚未可服务流量的槽位，全部完成时锁存 ready。
+// 判定条件：槽位已选中当前端点且其健康记录为「已探测且健康」——2026-11-19 事故前
+// 本函数只要求每个启用端点「探测过」，首轮全挂时实例仍会 ready，流量切进全 502 的槽位。
 func (r *ProxyUpstreamRuntime) startupPendingLocked() []UpstreamPendingSlot {
 	if r.ready || !r.loaded {
 		return nil
@@ -531,15 +531,25 @@ func (r *ProxyUpstreamRuntime) startupPendingLocked() []UpstreamPendingSlot {
 			continue
 		}
 		for _, slot := range g.Slots {
+			hasActive := false
 			for _, eid := range slot.EndpointIDs {
-				e, ok := r.endpoints[eid]
-				if !ok || !e.active() {
-					continue
-				}
-				if h := r.health[endpointHealthKey{g.ID, eid}]; h == nil || h.lastChecked.IsZero() {
-					pending = append(pending, UpstreamPendingSlot{GroupID: g.ID, SlotID: slot.ID})
+				if e, ok := r.endpoints[eid]; ok && e.active() {
+					hasActive = true
 					break
 				}
+			}
+			if !hasActive {
+				continue
+			}
+			st := r.slots[slot.ID]
+			serving := false
+			if st != nil && st.available && st.current != 0 {
+				if h := r.health[endpointHealthKey{g.ID, st.current}]; h != nil && h.known && h.healthy {
+					serving = true
+				}
+			}
+			if !serving {
+				pending = append(pending, UpstreamPendingSlot{GroupID: g.ID, SlotID: slot.ID})
 			}
 		}
 	}

@@ -210,20 +210,56 @@ func TestUpstreamSlotFailureReassignsOnlyAffectedProxies(t *testing.T) {
 		}
 	}
 
-	// 槽位恢复后要稳定满 failback 时长才重新参与，之后落地回到原槽位。
+	// 槽位在端点恢复（recover_threshold 连续成功）后立即重新参与，不再等 failback：
+	// failback 只用于「切回更靠前的端点」防抖，不应延长全组落地中断。
 	env.probe.set(2, false)
 	env.tick(30 * time.Second)
 	env.tick(30 * time.Second)
-	if env.rt.SlotRuntime(11).Available {
-		t.Fatalf("recovered slot must wait for failback period")
-	}
-	for i := 0; i < 10; i++ {
-		env.tick(30 * time.Second)
+	if !env.rt.SlotRuntime(11).Available {
+		t.Fatalf("slot must rejoin once its endpoint is healthy again")
 	}
 	for pid, prev := range before {
 		if _, slot, _ := env.rt.SelectEndpoint(1, pid); slot.ID != prev {
 			t.Fatalf("proxy %d did not return to slot %d after recovery (got %d)", pid, prev, slot.ID)
 		}
+	}
+}
+
+// 2026-11-19 事故复现：启动首轮全部端点探测失败（aio/mihomo 慢启动），
+// 实例不就绪；端点恢复后槽位立即重新参与，不等 failback（300s）。
+func TestUpstreamStartupAllDownThenSlotRecoversWithoutFailback(t *testing.T) {
+	g := testUpstreamGroup(1,
+		ProxyUpstreamSlot{ID: 10, Name: "a", EndpointIDs: []int64{1}},
+		ProxyUpstreamSlot{ID: 11, Name: "b", EndpointIDs: []int64{2}},
+	)
+	rt := NewProxyUpstreamRuntime()
+	probe := &fakeUpstreamProbe{down: map[int64]bool{1: true, 2: true}}
+	now := time.Unix(1_800_000_000, 0)
+	rt.probe = probe.probe
+	rt.now = func() time.Time { return now }
+	rt.Replace([]ProxyUpstreamGroup{g}, upstreamEndpoints(1, 2))
+
+	// 首轮全挂（aio/mihomo 慢启动）：不就绪、选端点 fail-closed。
+	rt.ProbeAll(context.Background())
+	if ready, _, pending := rt.StartupReadiness(); ready || len(pending) != 2 {
+		t.Fatalf("all endpoints down: ready=%v pending=%+v, want not ready with 2 pending slots", ready, pending)
+	}
+	if _, _, err := rt.SelectEndpoint(1, 42); err == nil {
+		t.Fatalf("all slots down: select must fail closed")
+	}
+
+	// 端点恢复（recover_threshold=2）后槽位立即重新参与，不等 failback，就绪锁存。
+	probe.set(1, false)
+	probe.set(2, false)
+	now = now.Add(30 * time.Second)
+	rt.ProbeDue(context.Background())
+	now = now.Add(30 * time.Second)
+	rt.ProbeDue(context.Background())
+	if ready, _, _ := rt.StartupReadiness(); !ready {
+		t.Fatalf("after endpoints recover: want ready")
+	}
+	if _, _, err := rt.SelectEndpoint(1, 42); err != nil {
+		t.Fatalf("slots must rejoin immediately after endpoint recovery: %v", err)
 	}
 }
 
@@ -486,11 +522,21 @@ func TestUpstreamStartupReadinessWaitsForFirstProbe(t *testing.T) {
 		t.Fatalf("before probe: ready=%v loaded=%v pending=%+v, want 2 pending slots of group 1 sorted", ready, loaded, pending)
 	}
 
-	// 探测结果不论成败都算完成。
+	// 探测完成但端点不健康不算就绪：槽位 11 唯一端点挂掉后仍 pending，
+	// 避免流量切进全 502 的槽位（2026-11-19 事故）。
 	probe.set(1, true)
 	rt.ProbeAll(context.Background())
+	ready, _, pending = rt.StartupReadiness()
+	if ready || len(pending) != 1 || pending[0].SlotID != 11 {
+		t.Fatalf("with endpoint 1 down: ready=%v pending=%+v, want pending slot 11 only", ready, pending)
+	}
+
+	// 端点恢复健康（recover_threshold=2，fake 每轮即成功）：槽位 11 可服务后就绪。
+	probe.set(1, false)
+	rt.ProbeAll(context.Background())
+	rt.ProbeAll(context.Background())
 	if ready, _, pending := rt.StartupReadiness(); !ready || len(pending) != 0 {
-		t.Fatalf("after probe: ready=%v pending=%+v, want ready", ready, pending)
+		t.Fatalf("after endpoint recovery: ready=%v pending=%+v, want ready", ready, pending)
 	}
 
 	// 锁存：就绪后新增的槽位不让实例回到未就绪。

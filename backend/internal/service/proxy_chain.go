@@ -282,7 +282,7 @@ func (s *ProxyChainService) Start() {
 	}()
 }
 
-// ProxyUpstreamStartupReadiness 报告本实例前置组启动首轮探测是否完成（/ready 用）。
+// ProxyUpstreamStartupReadiness 报告本实例前置组是否已可服务流量（/ready 用）。
 // 链式代理服务未启动时视为就绪。
 func ProxyUpstreamStartupReadiness() (ready, loaded bool, pending []UpstreamPendingSlot) {
 	rt := activeUpstreamRuntime()
