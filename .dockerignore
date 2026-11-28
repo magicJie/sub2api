@@ -83,3 +83,6 @@ deploy/redis_data/
 .claude/
 issues/
 CLAUDE.md
+
+# pnpm 11 local-only install config (untracked; breaks Docker builds if copied in)
+frontend/pnpm-workspace.yaml
