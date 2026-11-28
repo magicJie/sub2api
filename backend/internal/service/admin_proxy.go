@@ -341,6 +341,8 @@ func (s *adminServiceImpl) CheckProxyQuality(ctx context.Context, id int64) (*Pr
 	result.ExitIP = exitInfo.IP
 	result.Country = exitInfo.Country
 	result.CountryCode = exitInfo.CountryCode
+	result.Region = exitInfo.Region
+	result.City = exitInfo.City
 	result.BaseLatencyMs = latencyMs
 	result.Items = append(result.Items, ProxyQualityCheckItem{
 		Target:    "base_connectivity",
@@ -684,6 +686,10 @@ func (s *adminServiceImpl) attachProxyLatency(ctx context.Context, proxies []Pro
 			proxies[i].QualityScore = nil
 			proxies[i].QualityGrade = "Unknown"
 			proxies[i].QualitySummary = "质量证据已失效或代理配置已变化，暂不推荐优先分配；可重新检测更新推荐"
+		}
+		if !info.UpdatedAt.IsZero() {
+			checkedAt := info.UpdatedAt
+			proxies[i].LatencyChecked = &checkedAt
 		}
 	}
 }

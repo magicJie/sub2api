@@ -35,7 +35,7 @@
 
     <!-- Progress bar row -->
     <div class="flex items-center gap-1">
-      <!-- Label badge (label-width: fixed = 定宽居中, auto = 限宽截断左对齐) -->
+      <!-- Label badge: minimum width for compact labels, or capped/truncated auto mode. -->
       <span :class="[labelSizeClass, labelClass]">
         {{ label }}
       </span>
@@ -82,8 +82,9 @@ const props = withDefaults(
     remainingCapacity?: boolean
     /** 倒计时后附实际重置日期（如 "19d 5h · 11-18"），用于周期较长的窗口 */
     showResetDate?: boolean
-    /** fixed: 定宽居中徽章（账号页纵向对齐）；auto: 限宽截断左对齐（监控页组合标签） */
+    /** fixed: 最小宽度居中徽章；auto: 限宽截断左对齐（监控页组合标签） */
     labelWidth?: 'fixed' | 'auto'
+    precisePercent?: boolean
   }>(),
   { labelWidth: 'fixed' }
 )
@@ -129,12 +130,11 @@ const labelClass = computed(() => {
   return colors[props.color]
 })
 
-// Label badge width mode: fixed 定宽保证账号页纵向对齐；auto 限宽截断适配
-// 监控页「Pro/7 天」类组合标签。百分比列在两种模式下保持不变。
+// Keep short labels aligned, but let longer labels reserve space before the bar.
 const labelSizeClass = computed(() =>
   props.labelWidth === 'auto'
     ? 'max-w-[72px] shrink-0 truncate rounded px-1 text-left text-[10px] font-medium'
-    : 'w-[32px] shrink-0 rounded px-1 text-center text-[10px] font-medium'
+    : 'min-w-[32px] shrink-0 whitespace-nowrap rounded px-1 text-center text-[10px] font-medium'
 )
 
 // Progress bar color based on utilization
@@ -185,6 +185,9 @@ const barWidth = computed(() => {
 // 未满 100 时向下取一位小数且最多 99.9%，避免 99.77% 被四舍五入成看似用尽的 100%。
 const displayPercent = computed(() => {
   if (props.utilizationUnknown) return '—'
+  if (props.precisePercent && props.utilization > 0 && props.utilization < 100) {
+    return props.utilization < 0.01 ? '<0.01%' : `${props.utilization.toFixed(2)}%`
+  }
   const value = props.remainingCapacity
     ? Math.min(Math.max(props.utilization, 0), 100)
     : props.utilization
